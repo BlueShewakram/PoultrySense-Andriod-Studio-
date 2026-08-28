@@ -1,0 +1,75 @@
+<resources>
+    <string name="app_name">PoultrySense</string>
+    <string name="title_home">Home</string>
+    <string name="title_monitor">Monitor</string>
+    <string name="title_alerts">Alerts</string>
+    <string name="title_history">History</string>
+    <string name="title_profile">Profile</string>
+
+    <string name="tagline">AI-POWERED ANOMALY &amp; ENVIRONMENT MONITOR</string>
+    <string name="powered_by">v1.0.0 • Powered by PoultrySense AI</string>
+
+    <string name="environment_overview">Live Environment Overview</string>
+    <string name="live_badge">LIVE</string>
+    <string name="camera_offline_text">AI Camera Stream Offline</string>
+    <string name="camera_subtext">Camera 1 (Barn A) • 1080p AI</string>
+    <string name="view_stream">View Full Feed</string>
+
+    <string name="total_flock">Total Flock Count</string>
+    <string name="total_flock_sub">Barn A Capacity: 85%</string>
+    <string name="active_healthy">Active &amp; Normal</string>
+    <string name="active_healthy_sub">AI scan verified</string>
+    <string name="attention_needed">Flagged for Review</string>
+    <string name="attention_needed_sub">Requires inspection</string>
+    <string name="active_alerts">Active Alerts</string>
+    <string name="active_alerts_sub">Environment warning</string>
+
+    <string name="health_index_title">Flock Activity Index</string>
+    <string name="health_index_desc">Overall flock behavior is within normal parameters.</string>
+    <string name="optimal_range">Normal Range</string>
+
+    <string name="quick_actions_title">Quick Actions</string>
+    <string name="action_start_monitoring">Start New Monitoring</string>
+    <string name="action_view_report">View Activity Report</string>
+    <string name="action_scan_history">Scan History</string>
+
+    <string name="alerts_title">Flock &amp; System Alerts</string>
+    <string name="mark_all_read">Mark All Read</string>
+    <string name="no_alerts">No active alerts recorded.</string>
+
+    <string name="history_title">Scan History Log</string>
+
+    <string name="profile_name">Sarah Jenkins</string>
+    <string name="profile_role">Lead Farm Specialist • Green Valley Poultry Farm</string>
+    <string name="scans_completed">Scans Completed</string>
+    <string name="active_system">Active System</string>
+    <string name="system_settings">System Settings</string>
+    <string name="notification_preferences">Notification Preferences</string>
+    <string name="privacy_security">Privacy &amp; Security</string>
+    <string name="help_diagnostics">Help &amp; Diagnostics</string>
+    <string name="sign_out">Sign Out</string>
+    <string name="app_build_info">PoultrySense Mobile v1.0.0 (Build 101)</string>
+
+    <!-- Auth Strings -->
+    <string name="login_title">Welcome Back</string>
+    <string name="login_subtitle">Sign in to manage and monitor your poultry flocks in real-time.</string>
+    <string name="sign_up_title">Create Account</string>
+    <string name="sign_up_subtitle">Join PoultrySense AI to monitor flock behavior and environmental telemetry.</string>
+    <string name="first_name">First Name</string>
+    <string name="last_name">Last Name</string>
+    <string name="email_address">Email Address</string>
+    <string name="password">Password</string>
+    <string name="confirm_password">Confirm Password</string>
+    <string name="farm_name">Farm / Facility Name</string>
+    <string name="forgot_password">Forgot Password?</string>
+    <string name="sign_in_btn">Sign In</string>
+    <string name="create_account_btn">Create Account</string>
+    <string name="dont_have_account">Don\'t have an account? </string>
+    <string name="already_have_account">Already have an account? </string>
+    <string name="sign_up_link">Sign Up</string>
+    <string name="sign_in_link">Sign In</string>
+    <string name="terms_agreement">I agree to the Terms of Service &amp; Privacy Policy</string>
+    <string name="reset_password_instructions">Enter your registered email address to receive password reset instructions.</string>
+    <string name="send_reset_link">Send Reset Link</string>
+    <string name="cancel">Cancel</string>
+</resources>

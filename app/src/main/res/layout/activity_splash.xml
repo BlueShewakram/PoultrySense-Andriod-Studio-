@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_splash_gradient">
+
+    <!-- Ambient Glowing Ring 1 (Sonar Pulse 1) -->
+    <View
+        android:id="@+id/pulseRing1"
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        android:background="@drawable/bg_sonar_ring"
+        app:layout_constraintBottom_toBottomOf="@id/logoContainer"
+        app:layout_constraintEnd_toEndOf="@id/logoContainer"
+        app:layout_constraintStart_toStartOf="@id/logoContainer"
+        app:layout_constraintTop_toTopOf="@id/logoContainer" />
+
+    <!-- Ambient Glowing Ring 2 (Sonar Pulse 2) -->
+    <View
+        android:id="@+id/pulseRing2"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
+        android:background="@drawable/bg_sonar_ring"
+        app:layout_constraintBottom_toBottomOf="@id/logoContainer"
+        app:layout_constraintEnd_toEndOf="@id/logoContainer"
+        app:layout_constraintStart_toStartOf="@id/logoContainer"
+        app:layout_constraintTop_toTopOf="@id/logoContainer" />
+
+    <!-- Center Content -->
+    <LinearLayout
+        android:id="@+id/centerContent"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:paddingHorizontal="32dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- Logo Container -->
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/logoContainer"
+            android:layout_width="110dp"
+            android:layout_height="110dp"
+            android:elevation="8dp"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_poultry_logo"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Large"
+            tools:ignore="ContentDescription" />
+
+        <!-- Title -->
+        <TextView
+            android:id="@+id/tvSplashTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:fontFamily="sans-serif-black"
+            android:letterSpacing="-0.03"
+            android:text="@string/app_name"
+            android:textColor="@color/white"
+            android:textSize="32sp" />
+
+        <!-- Tagline -->
+        <TextView
+            android:id="@+id/tvSplashTagline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:letterSpacing="0.08"
+            android:text="ANOMALY DETECTION &amp; FLOCK TELEMETRY"
+            android:textColor="#D9CBFFC2"
+            android:textSize="10sp"
+            android:textStyle="bold" />
+
+        <!-- Live Status Pill (Pulsing Beacon) -->
+        <LinearLayout
+            android:id="@+id/layoutStatusPill"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="32dp"
+            android:background="@drawable/bg_date_chip"
+            android:backgroundTint="#26FFFFFF"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="7dp">
+
+            <View
+                android:id="@+id/viewStatusDot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/bg_notification_dot"
+                android:backgroundTint="#00E676" />
+
+            <TextView
+                android:id="@+id/tvStatusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:fontFamily="sans-serif-bold"
+                android:letterSpacing="0.02"
+                android:text="AI Vision Engine Ready"
+                android:textColor="@color/white"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvSplashFooter"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="24dp"
+        android:text="@string/powered_by"
+        android:textColor="#66FFFFFF"
+        android:textSize="11sp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

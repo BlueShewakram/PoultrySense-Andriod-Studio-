@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand Farm Greens -->
+    <color name="primary">#0E5924</color>
+    <color name="primary_dark">#063914</color>
+    <color name="primary_light">#238636</color>
+    <color name="primary_container">#D4F8DE</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="on_primary_container">#02290B</color>
+
+    <color name="accent_green">#00E676</color>
+    <color name="accent_mint">#E3F9E9</color>
+
+    <!-- Farm Canvas & Card Surfaces -->
+    <color name="background">#F5F8F5</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_container">#EDF3ED</color>
+    <color name="surface_light">#F8FAF8</color>
+    <color name="surface_stroke">#1A0E5924</color>
+    <color name="card_elevated">#FFFFFF</color>
+
+    <!-- Typography Colors -->
+    <color name="text_primary">#142417</color>
+    <color name="text_secondary">#435447</color>
+    <color name="text_muted">#7C8E80</color>
+    <color name="text_hint">#A3B2A6</color>
+
+    <!-- Borders & Dividers -->
+    <color name="border_color">#DCE8DC</color>
+    <color name="border_light">#EAF2EA</color>
+
+    <!-- Capsule Card Gradients & Accents -->
+    <!-- 1. Morning Egg & Feed Capsule (Warm Apricot / Amber) -->
+    <color name="capsule_morning_start">#FF7B54</color>
+    <color name="capsule_morning_end">#FFB26B</color>
+    <color name="capsule_morning_bg">#FFF3ED</color>
+    <color name="capsule_morning_accent">#E65100</color>
+
+    <!-- 2. AI Vision & Flock Capsule (Deep Forest / Royal Emerald) -->
+    <color name="capsule_ai_start">#1B6E32</color>
+    <color name="capsule_ai_end">#2E9447</color>
+    <color name="capsule_ai_bg">#E8F8ED</color>
+    <color name="capsule_ai_accent">#00C853</color>
+
+    <!-- 3. Health & Bio-Audit Capsule (Sunset Coral / Rose) -->
+    <color name="capsule_health_start">#FF4D6D</color>
+    <color name="capsule_health_end">#FF758F</color>
+    <color name="capsule_health_bg">#FFF0F3</color>
+    <color name="capsule_health_accent">#C9184A</color>
+
+    <!-- 4. Coop Hydration & Climate Capsule (Ocean Sky) -->
+    <color name="capsule_coop_start">#0288D1</color>
+    <color name="capsule_coop_end">#26C6DA</color>
+    <color name="capsule_coop_bg">#E1F5FE</color>
+    <color name="capsule_coop_accent">#01579B</color>
+
+    <!-- Status Tones -->
+    <color name="critical">#D32F2F</color>
+    <color name="critical_container">#FFEBEE</color>
+    <color name="critical_stroke">#33D32F2F</color>
+
+    <color name="warning">#E65100</color>
+    <color name="warning_container">#FFF3E0</color>
+    <color name="warning_stroke">#33E65100</color>
+
+    <color name="healthy">#2E7D32</color>
+    <color name="healthy_container">#E8F5E9</color>
+
+    <color name="blue_action">#1976D2</color>
+    <color name="orange_action">#E64A19</color>
+
+    <!-- Basic -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="transparent">#00000000</color>
+</resources>

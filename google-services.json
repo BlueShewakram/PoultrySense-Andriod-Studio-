@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "740991511797",
+    "project_id": "poultrysense-app",
+    "storage_bucket": "poultrysense-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:740991511797:android:6f5087b83c18ae31fae9bc",
+        "android_client_info": {
+          "package_name": "com.poultrysense.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBR6ipmJ7fDANLAafQZe7u01FrwpFysgCg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

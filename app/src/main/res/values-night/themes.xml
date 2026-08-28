@@ -1,0 +1,22 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.PoultrySense" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary_light</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">@color/accent_mint</item>
+        <item name="colorOnSecondary">@color/black</item>
+        <item name="android:statusBarColor">@color/background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/surface_container</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+
+    <style name="Theme.PoultrySense.Splash" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:statusBarColor">@color/primary_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/primary_dark</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowBackground">@color/primary_dark</item>
+    </style>
+</resources>
