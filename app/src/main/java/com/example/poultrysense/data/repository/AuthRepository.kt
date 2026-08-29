@@ -94,7 +94,14 @@ class AuthRepository {
                 pError.printStackTrace()
             }
 
-            // 3. Construct user model
+            // 3. Construct user model with exact day, month, year
+            val cal = java.util.Calendar.getInstance()
+            val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
+            val month = cal.get(java.util.Calendar.MONTH) + 1
+            val monthName = java.text.SimpleDateFormat("MMMM", java.util.Locale.getDefault()).format(java.util.Date())
+            val year = cal.get(java.util.Calendar.YEAR)
+            val formattedDate = java.text.SimpleDateFormat("MMMM d, yyyy", java.util.Locale.getDefault()).format(java.util.Date())
+
             val userModel = User(
                 uid = firebaseUser.uid,
                 firstName = cleanFirstName,
@@ -104,6 +111,11 @@ class AuthRepository {
                 role = "Lead Farm Specialist",
                 avatarUrl = "",
                 createdAt = System.currentTimeMillis(),
+                createdDay = day,
+                createdMonth = month,
+                createdMonthName = monthName,
+                createdYear = year,
+                formattedDate = formattedDate,
                 scansCount = 0,
                 activeDays = 1
             )
@@ -119,6 +131,24 @@ class AuthRepository {
             }
 
             Result.success(userModel)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateAvatarUrl(uid: String, avatarUrl: String): Result<Unit> {
+        return try {
+            realtimeDb.getReference("users").child(uid).child("avatarUrl").setValue(avatarUrl).await()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updateUserProfile(uid: String, updates: Map<String, Any?>): Result<Unit> {
+        return try {
+            realtimeDb.getReference("users").child(uid).updateChildren(updates).await()
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -140,6 +170,11 @@ class AuthRepository {
                     role = map?.get("role") as? String ?: "Lead Farm Specialist",
                     avatarUrl = map?.get("avatarUrl") as? String ?: "",
                     createdAt = (map?.get("createdAt") as? Long) ?: System.currentTimeMillis(),
+                    createdDay = (map?.get("createdDay") as? Long)?.toInt() ?: (map?.get("day") as? Long)?.toInt() ?: 1,
+                    createdMonth = (map?.get("createdMonth") as? Long)?.toInt() ?: (map?.get("month") as? Long)?.toInt() ?: 1,
+                    createdMonthName = map?.get("createdMonthName") as? String ?: "",
+                    createdYear = (map?.get("createdYear") as? Long)?.toInt() ?: (map?.get("year") as? Long)?.toInt() ?: 2026,
+                    formattedDate = map?.get("formattedDate") as? String ?: (map?.get("date") as? String ?: ""),
                     scansCount = (map?.get("scansCount") as? Long)?.toInt() ?: 0,
                     activeDays = (map?.get("activeDays") as? Long)?.toInt() ?: 1
                 )

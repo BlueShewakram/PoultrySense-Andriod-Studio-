@@ -17,17 +17,40 @@
         android:paddingEnd="20dp"
         android:paddingBottom="120dp">
 
-        <!-- Avatar Image -->
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/ivProfileAvatar"
-            android:layout_width="92dp"
-            android:layout_height="92dp"
+        <!-- Avatar Container with Edit Camera Badge -->
+        <FrameLayout
+            android:id="@+id/layoutAvatarContainer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:scaleType="centerCrop"
-            android:src="@drawable/ic_person"
-            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full"
-            app:strokeColor="@color/primary"
-            app:strokeWidth="3dp" />
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true">
+
+            <com.google.android.material.imageview.ShapeableImageView
+                android:id="@+id/ivProfileAvatar"
+                android:layout_width="94dp"
+                android:layout_height="94dp"
+                android:padding="3dp"
+                android:scaleType="centerCrop"
+                android:src="@drawable/ic_person"
+                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full"
+                app:strokeColor="@color/primary"
+                app:strokeWidth="3dp" />
+
+            <ImageView
+                android:id="@+id/btnEditAvatarBadge"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_gravity="bottom|end"
+                android:background="@drawable/bg_notification_dot"
+                android:backgroundTint="@color/primary"
+                android:elevation="4dp"
+                android:padding="6dp"
+                android:src="@drawable/ic_photo_camera"
+                app:tint="@color/white"
+                tools:ignore="ContentDescription" />
+        </FrameLayout>
 
         <TextView
             android:id="@+id/tvProfileName"

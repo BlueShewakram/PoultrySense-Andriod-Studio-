@@ -128,6 +128,20 @@ class LoginActivity : AppCompatActivity() {
             setLoading(false)
 
             result.onSuccess { user ->
+                val displayName = user.displayName ?: ""
+                val parts = displayName.split(" ")
+                val fName = if (parts.isNotEmpty()) parts[0] else ""
+                val lName = if (parts.size > 1) parts.subList(1, parts.size).joinToString(" ") else ""
+                val initialUser = com.example.poultrysense.data.models.User(
+                    uid = user.uid,
+                    firstName = fName,
+                    lastName = lName,
+                    email = user.email ?: "",
+                    farmName = "Poultry Farm",
+                    role = "Lead Farm Specialist"
+                )
+                com.example.poultrysense.data.UserPreferences.saveUser(this@LoginActivity, initialUser)
+
                 val greeting = user.displayName?.ifEmpty { null } ?: "Specialist"
                 Toast.makeText(this@LoginActivity, "👋 Welcome back, $greeting!", Toast.LENGTH_SHORT).show()
 

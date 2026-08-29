@@ -207,6 +207,7 @@ class SignUpActivity : AppCompatActivity() {
             setLoading(false)
 
             result.onSuccess { user ->
+                com.example.poultrysense.data.UserPreferences.saveUser(this@SignUpActivity, user)
                 Toast.makeText(
                     this@SignUpActivity,
                     "🎉 Account created! Welcome, ${user.firstName}.",

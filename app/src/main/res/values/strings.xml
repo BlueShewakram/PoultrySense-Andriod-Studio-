@@ -39,8 +39,8 @@
 
     <string name="history_title">Scan History Log</string>
 
-    <string name="profile_name">Sarah Jenkins</string>
-    <string name="profile_role">Lead Farm Specialist • Green Valley Poultry Farm</string>
+    <string name="profile_name">Farm Specialist</string>
+    <string name="profile_role">Lead Farm Specialist • Poultry Farm</string>
     <string name="scans_completed">Scans Completed</string>
     <string name="active_system">Active System</string>
     <string name="ai_server_settings">AI Server Settings</string>
@@ -51,7 +51,7 @@
     <string name="connection_ok">Connected — server is reachable</string>
     <string name="connection_failed">Cannot reach server — check IP and WiFi</string>
     <string name="save">Save</string>
-    <string name="system_settings">System Settings</string>
+    <string name="system_settings">Profile Settings</string>
     <string name="notification_preferences">Notification Preferences</string>
     <string name="privacy_security">Privacy &amp; Security</string>
     <string name="help_diagnostics">Help &amp; Diagnostics</string>

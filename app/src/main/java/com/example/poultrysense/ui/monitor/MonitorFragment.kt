@@ -71,6 +71,13 @@ class MonitorFragment : Fragment() {
 
         setupSourceToggle()
         setupCameraSwitchButton()
+
+        // Pop up in the center when Monitor is opened, scan with back-and-forth/up-and-down motion, then disappear
+        binding.mascotPopupScanner.showPopupAndScan(2800L)
+
+        binding.layoutConnectionBadge.setOnClickListener {
+            binding.mascotPopupScanner.showPopupAndScan(2500L)
+        }
     }
 
     override fun onResume() {
@@ -84,6 +91,7 @@ class MonitorFragment : Fragment() {
 
     override fun onPause() {
         super.onPause()
+        binding.mascotPopupScanner.stopAllAnimations()
         stopLaptopStream()
         stopPhoneCamera()
     }
