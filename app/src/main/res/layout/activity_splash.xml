@@ -4,123 +4,114 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/bg_splash_gradient">
+    android:background="@color/splash_golden_bg">
 
-    <!-- Ambient Glowing Ring 1 (Sonar Pulse 1) -->
-    <View
-        android:id="@+id/pulseRing1"
-        android:layout_width="220dp"
-        android:layout_height="220dp"
-        android:background="@drawable/bg_sonar_ring"
-        app:layout_constraintBottom_toBottomOf="@id/logoContainer"
-        app:layout_constraintEnd_toEndOf="@id/logoContainer"
-        app:layout_constraintStart_toStartOf="@id/logoContainer"
-        app:layout_constraintTop_toTopOf="@id/logoContainer" />
-
-    <!-- Ambient Glowing Ring 2 (Sonar Pulse 2) -->
-    <View
-        android:id="@+id/pulseRing2"
-        android:layout_width="160dp"
-        android:layout_height="160dp"
-        android:background="@drawable/bg_sonar_ring"
-        app:layout_constraintBottom_toBottomOf="@id/logoContainer"
-        app:layout_constraintEnd_toEndOf="@id/logoContainer"
-        app:layout_constraintStart_toStartOf="@id/logoContainer"
-        app:layout_constraintTop_toTopOf="@id/logoContainer" />
-
-    <!-- Center Content -->
-    <LinearLayout
-        android:id="@+id/centerContent"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:paddingHorizontal="32dp"
+    <!-- 1. Full-Bleed High-Res Cinematic Warm Golden Artwork -->
+    <ImageView
+        android:id="@+id/ivSplashArtwork"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        android:src="@drawable/bg_splash_artwork"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
+        app:layout_constraintTop_toTopOf="parent" />
 
-        <!-- Logo Container -->
-        <com.google.android.material.imageview.ShapeableImageView
-            android:id="@+id/logoContainer"
-            android:layout_width="110dp"
-            android:layout_height="110dp"
-            android:elevation="8dp"
-            android:scaleType="centerCrop"
-            android:src="@drawable/ic_poultry_logo"
-            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Large"
-            tools:ignore="ContentDescription" />
+    <!-- 2. Ambient Warm Radial Shimmer around telemetry tree center -->
+    <View
+        android:id="@+id/viewTreeShimmer"
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        android:background="@drawable/bg_sonar_ring"
+        android:backgroundTint="#40FFD54F"
+        app:layout_constraintBottom_toTopOf="@+id/guidelineCenter"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0.95" />
 
-        <!-- Title -->
+    <!-- Center Guideline for golden ratio alignment -->
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/guidelineCenter"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        app:layout_constraintGuide_percent="0.54" />
+
+    <!-- 3. Floating Live AI Neural Telemetry Status Capsule -->
+    <LinearLayout
+        android:id="@+id/layoutStatusPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_splash_golden_pill"
+        android:elevation="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="9dp"
+        app:layout_constraintBottom_toTopOf="@+id/layoutFooterBanner"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/guidelineCenter"
+        app:layout_constraintVertical_bias="0.55">
+        <View
+            android:id="@+id/viewStatusDot"
+            android:layout_width="9dp"
+            android:layout_height="9dp"
+            android:background="@drawable/bg_notification_dot"
+            android:backgroundTint="#00E676" />
+
         <TextView
-            android:id="@+id/tvSplashTitle"
+            android:id="@+id/tvStatusText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:fontFamily="sans-serif-black"
-            android:letterSpacing="-0.03"
-            android:text="@string/app_name"
-            android:textColor="@color/white"
-            android:textSize="32sp" />
-
-        <!-- Tagline -->
-        <TextView
-            android:id="@+id/tvSplashTagline"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:gravity="center"
-            android:letterSpacing="0.08"
-            android:text="ANOMALY DETECTION &amp; FLOCK TELEMETRY"
-            android:textColor="#D9CBFFC2"
-            android:textSize="10sp"
-            android:textStyle="bold" />
-
-        <!-- Live Status Pill (Pulsing Beacon) -->
-        <LinearLayout
-            android:id="@+id/layoutStatusPill"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="32dp"
-            android:background="@drawable/bg_date_chip"
-            android:backgroundTint="#26FFFFFF"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="14dp"
-            android:paddingVertical="7dp">
-
-            <View
-                android:id="@+id/viewStatusDot"
-                android:layout_width="8dp"
-                android:layout_height="8dp"
-                android:background="@drawable/bg_notification_dot"
-                android:backgroundTint="#00E676" />
-
-            <TextView
-                android:id="@+id/tvStatusText"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:fontFamily="sans-serif-bold"
-                android:letterSpacing="0.02"
-                android:text="AI Vision Engine Ready"
-                android:textColor="@color/white"
-                android:textSize="11sp" />
-        </LinearLayout>
-
+            android:layout_marginStart="10dp"
+            android:fontFamily="sans-serif-bold"
+            android:letterSpacing="0.03"
+            android:shadowColor="#80000000"
+            android:shadowDx="0"
+            android:shadowDy="1"
+            android:shadowRadius="2"
+            android:text="AI Neural Vision Ready"
+            android:textColor="#FFFDF0"
+            android:textSize="12sp" />
     </LinearLayout>
 
-    <TextView
-        android:id="@+id/tvSplashFooter"
+    <!-- 4. Rustic Wooden Footer Banner with Golden Emblem -->
+    <LinearLayout
+        android:id="@+id/layoutFooterBanner"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="24dp"
-        android:text="@string/powered_by"
-        android:textColor="#66FFFFFF"
-        android:textSize="11sp"
+        android:background="@drawable/bg_splash_wood_plank"
+        android:elevation="4dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent" />
+        app:layout_constraintStart_toStartOf="parent">
+
+        <ImageView
+            android:id="@+id/ivFooterCrest"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_marginEnd="8dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_brain_wheat_crest" />
+
+        <TextView
+            android:id="@+id/tvSplashFooter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.04"
+            android:text="@string/powered_by"
+            android:textColor="#FFE4A0"
+            android:textSize="11sp" />
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

@@ -177,7 +177,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
                         android:fontFamily="sans-serif"
-                        android:text="http://192.168.254.106:5000"
+                        android:text="Set server IP in Profile → AI Server Settings"
                         android:textColor="#B3FFFFFF"
                         android:textSize="11sp" />
                 </LinearLayout>

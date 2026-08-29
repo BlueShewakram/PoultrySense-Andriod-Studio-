@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="28dp"
+    android:height="28dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Brain left hemisphere / neural node -->
+    <path
+        android:fillColor="#E6B762"
+        android:pathData="M10.5,4.5C9.7,4.5 9,5.2 9,6C9,6.2 9,6.4 9.1,6.6C8.2,7 7.5,8 7.5,9.1C7.5,9.6 7.6,10 7.9,10.4C7.1,10.9 6.5,11.9 6.5,13C6.5,14.4 7.4,15.6 8.7,15.9C8.6,16.3 8.5,16.6 8.5,17C8.5,18.4 9.6,19.5 11,19.5L11,4.5C10.8,4.5 10.7,4.5 10.5,4.5Z" />
+    <!-- Wheat sheaf right side -->
+    <path
+        android:fillColor="#FAD078"
+        android:pathData="M13,4.5L13,19.5C14.4,19.5 15.5,18.4 15.5,17C15.5,16.6 15.4,16.3 15.3,15.9C16.6,15.6 17.5,14.4 17.5,13C17.5,11.9 16.9,10.9 16.1,10.4C16.4,10 16.5,9.6 16.5,9.1C16.5,8 15.8,7 14.9,6.6C15,6.4 15,6.2 15,6C15,5.2 14.3,4.5 13.5,4.5C13.3,4.5 13.2,4.5 13,4.5Z" />
+    <!-- Center divider stem -->
+    <path
+        android:fillColor="#FFF1B8"
+        android:pathData="M11.5,3L12.5,3L12.5,21L11.5,21Z" />
+</vector>

@@ -49,7 +49,6 @@ dependencies {
     // Firebase BoM and Libraries
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.auth.ktx)
-    implementation(libs.firebase.firestore.ktx)
     implementation(libs.firebase.database.ktx)
 
     // Network & JSON

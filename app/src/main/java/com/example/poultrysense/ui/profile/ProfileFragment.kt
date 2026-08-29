@@ -6,14 +6,23 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
 import com.example.poultrysense.R
+import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.repository.AuthRepository
+import com.example.poultrysense.databinding.DialogAiServerSettingsBinding
 import com.example.poultrysense.databinding.FragmentProfileBinding
 import com.example.poultrysense.ui.auth.LoginActivity
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 class ProfileFragment : Fragment() {
 
@@ -68,6 +77,11 @@ class ProfileFragment : Fragment() {
     }
 
     private fun setupClickListeners() {
+        // AI Server Settings
+        binding.btnAiServerSettings.setOnClickListener {
+            showAiServerSettingsDialog()
+        }
+
         // Settings items
         binding.btnSystemSettings.setOnClickListener {
             Toast.makeText(context, "System Settings", Toast.LENGTH_SHORT).show()
@@ -96,6 +110,91 @@ class ProfileFragment : Fragment() {
             requireActivity().finish()
             requireActivity().overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }
+    }
+
+    private fun showAiServerSettingsDialog() {
+        val ctx = context ?: return
+        val dialog = BottomSheetDialog(ctx)
+        val dialogBinding = DialogAiServerSettingsBinding.inflate(layoutInflater)
+        dialog.setContentView(dialogBinding.root)
+
+        // Pre-fill current IP
+        dialogBinding.etServerIp.setText(ServerPreferences.getIp(ctx))
+
+        val testClient = OkHttpClient.Builder()
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
+            .build()
+
+        // Test Connection
+        dialogBinding.btnTestConnection.setOnClickListener {
+            val ip = dialogBinding.etServerIp.text?.toString()?.trim() ?: ""
+            if (ip.isEmpty()) {
+                dialogBinding.tilServerIp.error = "Please enter an IP address"
+                return@setOnClickListener
+            }
+            dialogBinding.tilServerIp.error = null
+            dialogBinding.btnTestConnection.isEnabled = false
+            dialogBinding.btnTestConnection.text = "Testing…"
+            dialogBinding.layoutConnectionStatus.visibility = View.GONE
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                val url = "http://$ip:5000/status"
+                val success = try {
+                    val request = Request.Builder().url(url).build()
+                    val response = testClient.newCall(request).execute()
+                    val ok = response.isSuccessful
+                    response.close()
+                    ok
+                } catch (e: Exception) {
+                    false
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (_binding == null) return@withContext
+                    dialogBinding.btnTestConnection.isEnabled = true
+                    dialogBinding.btnTestConnection.text = getString(R.string.test_connection)
+                    dialogBinding.layoutConnectionStatus.visibility = View.VISIBLE
+                    if (success) {
+                        dialogBinding.ivConnectionStatusIcon.setImageResource(R.drawable.ic_check_circle)
+                        dialogBinding.ivConnectionStatusIcon.imageTintList =
+                            ContextCompat.getColorStateList(ctx, R.color.primary)
+                        dialogBinding.tvConnectionStatus.text = getString(R.string.connection_ok)
+                        dialogBinding.tvConnectionStatus.setTextColor(
+                            ContextCompat.getColor(ctx, R.color.primary)
+                        )
+                    } else {
+                        dialogBinding.ivConnectionStatusIcon.setImageResource(R.drawable.ic_error)
+                        dialogBinding.ivConnectionStatusIcon.imageTintList =
+                            ContextCompat.getColorStateList(ctx, R.color.critical)
+                        dialogBinding.tvConnectionStatus.text = getString(R.string.connection_failed)
+                        dialogBinding.tvConnectionStatus.setTextColor(
+                            ContextCompat.getColor(ctx, R.color.critical)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Save
+        dialogBinding.btnSaveServerSettings.setOnClickListener {
+            val ip = dialogBinding.etServerIp.text?.toString()?.trim() ?: ""
+            if (ip.isEmpty()) {
+                dialogBinding.tilServerIp.error = "Please enter an IP address"
+                return@setOnClickListener
+            }
+            dialogBinding.tilServerIp.error = null
+            ServerPreferences.saveIp(ctx, ip)
+            Toast.makeText(ctx, "Server IP saved: $ip", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        // Cancel
+        dialogBinding.btnCancelServerSettings.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.show()
     }
 
     override fun onDestroyView() {

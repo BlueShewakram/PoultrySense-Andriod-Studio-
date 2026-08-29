@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.example.poultrysense.R
+import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.models.AiStatusResponse
 import com.example.poultrysense.databinding.FragmentMonitorBinding
 import com.google.gson.Gson
@@ -42,7 +43,6 @@ class MonitorFragment : Fragment() {
     private var streamJob: Job? = null
     private var statusJob: Job? = null
 
-    private val baseUrl = "http://192.168.254.106:5000"
     private var isLaptopSource = true
 
     // CameraX
@@ -130,7 +130,7 @@ class MonitorFragment : Fragment() {
 
     private fun startLaptopStream() {
         stopLaptopStream()
-
+        val baseUrl = ServerPreferences.getBaseUrl(requireContext())
         // 1. Frame Poller
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val request = Request.Builder().url("$baseUrl/frame.jpg").build()

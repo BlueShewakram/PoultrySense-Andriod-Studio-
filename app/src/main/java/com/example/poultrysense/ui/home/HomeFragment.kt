@@ -11,6 +11,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.example.poultrysense.R
 import com.example.poultrysense.databinding.FragmentHomeBinding
+import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.ui.MainActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +37,6 @@ class HomeFragment : Fragment() {
         .build()
 
     private var streamJob: Job? = null
-    private val serverUrl = "http://192.168.254.106:5000/frame.jpg"
     private val calendar = Calendar.getInstance()
     private val dateFormat = SimpleDateFormat("dd MMM", Locale.getDefault())
 
@@ -212,6 +212,7 @@ class HomeFragment : Fragment() {
 
     private fun startStreamPolling() {
         stopStreamPolling()
+        val serverUrl = ServerPreferences.getBaseUrl(requireContext()) + "/frame.jpg"
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val request = Request.Builder().url(serverUrl).build()
             while (isActive) {
