@@ -17,7 +17,7 @@ except ImportError:
 
 # --- 2. Import Flask ---
 try:
-    from flask import Flask, Response, jsonify
+    from flask import Flask, Response, jsonify, request
 except ImportError:
     print("[ERROR] Flask is required. Install it with: pip install flask")
     sys.exit(1)
@@ -25,8 +25,10 @@ except ImportError:
 # --- Global shared state ---
 latest_frame = None
 latest_jpeg_bytes = None
+latest_source_label = "Waiting for Camera..."
 latest_status = {
     "active": False,
+    "source": "Laptop Webcam",
     "fps": 0.0,
     "person_count": 0,
     "hand_count": 0,
@@ -36,6 +38,7 @@ latest_status = {
     "detections": []
 }
 frame_lock = threading.Lock()
+last_phone_frame_time = 0.0
 
 # --- Visual Appearance Re-Identification (Re-ID) Tracker ---
 class PersonReIDTracker:
@@ -179,8 +182,176 @@ class PersonReIDTracker:
 
 reid_tracker = PersonReIDTracker(reid_thresh=0.62)
 
+# Load global YOLO model once
+yolo_model = None
+if HAS_YOLO:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    model_path = os.path.join(script_dir, "yolo11n.pt")
+    if not os.path.exists(model_path):
+        model_path = "yolo11n.pt"
+    try:
+        print(f"[INFO] Loading YOLO model from: {model_path}")
+        yolo_model = YOLO(model_path)
+        print("[INFO] YOLO11 Person Detection Engine initialized!")
+    except Exception as e:
+        print(f"[WARN] Could not load YOLO model: {e}")
+
+# Color palette for person IDs
+ID_COLORS = [
+    (0, 230, 118), (255, 170, 0), (0, 215, 255), (235, 100, 255),
+    (255, 120, 0), (100, 255, 200), (180, 255, 100), (255, 100, 100),
+]
+
+def get_id_color(track_id):
+    return ID_COLORS[(track_id - 1) % len(ID_COLORS)]
+
+def draw_hud_box(img, pt1, pt2, color, thickness=2, line_len=20):
+    x1, y1 = int(pt1[0]), int(pt1[1])
+    x2, y2 = int(pt2[0]), int(pt2[1])
+    overlay = img.copy()
+    cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
+    cv2.addWeighted(overlay, 0.10, img, 0.90, 0, img)
+    cv2.rectangle(img, (x1, y1), (x2, y2), color, 1)
+    cv2.line(img, (x1, y1), (x1 + line_len, y1), color, thickness + 1)
+    cv2.line(img, (x1, y1), (x1, y1 + line_len), color, thickness + 1)
+    cv2.line(img, (x2, y1), (x2 - line_len, y1), color, thickness + 1)
+    cv2.line(img, (x2, y1), (x2, y2 + line_len), color, thickness + 1)
+    cv2.line(img, (x1, y2), (x1 + line_len, y2), color, thickness + 1)
+    cv2.line(img, (x1, y2), (x1, y2 - line_len), color, thickness + 1)
+    cv2.line(img, (x2, y2), (x2 - line_len, y2), color, thickness + 1)
+    cv2.line(img, (x2, y2), (x2, y2 - line_len), color, thickness + 1)
+
+# Timers for FPS calculation per source
+fps_records = defaultdict(lambda: {"prev_time": time.time(), "fps": 30.0})
+
+def process_ai_frame(frame, source_label="Phone Camera HD"):
+    """
+    Core AI Processing function:
+    - Runs YOLO11 person detection (class 0)
+    - Updates persistent Re-ID tracker
+    - Draws HUD overlays, ID tags, motion trails
+    - Updates global telemetry and encoded JPEG bytes
+    """
+    global latest_frame, latest_jpeg_bytes, latest_status, latest_source_label
+
+    curr_time = time.time()
+    rec = fps_records[source_label]
+    dt = curr_time - rec["prev_time"]
+    rec["prev_time"] = curr_time
+    if dt > 0:
+        rec["fps"] = 0.85 * rec["fps"] + 0.15 * (1.0 / dt)
+    fps = rec["fps"]
+
+    h_frame, w_frame, _ = frame.shape
+    detection_list = []
+    raw_person_detections = []
+
+    if yolo_model is not None:
+        try:
+            results = yolo_model(frame, classes=[0], conf=0.40, iou=0.45, verbose=False)
+            if results and len(results) > 0:
+                boxes = results[0].boxes
+                if boxes is not None and len(boxes) > 0:
+                    confs = boxes.conf.cpu().tolist()
+                    xyxys = boxes.xyxy.cpu().tolist()
+                    for box, conf in zip(xyxys, confs):
+                        raw_person_detections.append((box, conf))
+        except Exception:
+            pass
+
+    active_tracks = reid_tracker.update(frame, raw_person_detections)
+    person_count = len(active_tracks)
+
+    for track_id, trk in active_tracks.items():
+        x1, y1, x2, y2 = trk['bbox']
+        conf = trk['conf']
+        trail = trk.get('trail', [])
+        color = get_id_color(track_id)
+        badge_bg = (int(color[0] * 0.25), int(color[1] * 0.25), int(color[2] * 0.25))
+
+        if len(trail) > 1:
+            pts = np.array(trail, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(frame, [pts], isClosed=False, color=color, thickness=2)
+            cv2.circle(frame, trail[-1], 4, color, -1)
+
+        draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=20)
+        label = f" Person #{track_id} ({int(conf * 100)}%) "
+        (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.52, 1)
+        label_y = max(y1 - 10, text_h + 10)
+        cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), badge_bg, -1)
+        cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), color, 1)
+        cv2.putText(frame, label, (x1 + 4, label_y - 2), cv2.FONT_HERSHEY_DUPLEX, 0.52, (255, 255, 255), 1)
+
+        detection_list.append({
+            "track_id": track_id,
+            "class": "person",
+            "confidence": round(conf, 2),
+            "status": "HEALTHY",
+            "bbox": [x1, y1, x2, y2]
+        })
+
+    # Top HUD Banner
+    cv2.putText(frame, f"POULTRYSENSE AI  |  {source_label.upper()}", (16, 26), cv2.FONT_HERSHEY_DUPLEX, 0.45, (0, 230, 118), 1)
+    # Bottom HUD Status
+    stats_text = f"FPS: {fps:.1f}  |  Active Persons: {person_count}  |  Gallery IDs: {len(reid_tracker.gallery)}"
+    cv2.putText(frame, stats_text, (16, h_frame - 14), cv2.FONT_HERSHEY_DUPLEX, 0.45, (200, 200, 200), 1)
+
+    _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    jpeg_bytes = jpeg.tobytes()
+
+    with frame_lock:
+        latest_frame = frame
+        latest_jpeg_bytes = jpeg_bytes
+        latest_source_label = source_label
+        latest_status = {
+            "active": True,
+            "source": source_label,
+            "fps": round(fps, 1),
+            "person_count": person_count,
+            "hand_count": person_count,
+            "flock_count": person_count,
+            "track_count": person_count,
+            "health_index": 100 if person_count > 0 else 95,
+            "detections": detection_list
+        }
+
+    return frame, jpeg_bytes, active_tracks, fps
+
+
 # --- Flask Application ---
 flask_app = Flask(__name__)
+
+@flask_app.route('/upload_frame', methods=['POST'])
+def upload_frame():
+    """
+    Receives high-clarity camera frames from the Android Phone CameraX,
+    runs YOLO11 Person Detection + Persistent Re-ID, and returns the
+    AI-annotated frame back to the phone in real time!
+    """
+    global last_phone_frame_time
+
+    raw_bytes = None
+    if request.files and 'frame' in request.files:
+        raw_bytes = request.files['frame'].read()
+    else:
+        raw_bytes = request.get_data()
+
+    if not raw_bytes:
+        return "No image data provided", 400
+
+    np_arr = np.frombuffer(raw_bytes, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        return "Failed to decode image", 400
+
+    last_phone_frame_time = time.time()
+    _, processed_jpeg, active_tracks, fps = process_ai_frame(frame, source_label="Phone Camera HD")
+
+    resp = Response(processed_jpeg, mimetype='image/jpeg')
+    resp.headers['X-Person-Count'] = str(len(active_tracks))
+    resp.headers['X-FPS'] = f"{fps:.1f}"
+    resp.headers['X-Gallery-Count'] = str(len(reid_tracker.gallery))
+    return resp
 
 @flask_app.route('/video_feed')
 def video_feed():
@@ -229,47 +400,10 @@ a{color:#00E676;text-decoration:none;font-weight:bold;margin:0 10px}</style></he
 <a href="/reset_ids" onclick="fetch('/reset_ids');alert('IDs Reset!');return false;">Reset IDs</a></div>
 </div></body></html>"""
 
-# --- Color palette for person IDs ---
-ID_COLORS = [
-    (0, 230, 118), (255, 170, 0), (0, 215, 255), (235, 100, 255),
-    (255, 120, 0), (100, 255, 200), (180, 255, 100), (255, 100, 100),
-]
-
-def get_id_color(track_id):
-    return ID_COLORS[(track_id - 1) % len(ID_COLORS)]
-
-def draw_hud_box(img, pt1, pt2, color, thickness=2, line_len=20):
-    x1, y1 = int(pt1[0]), int(pt1[1])
-    x2, y2 = int(pt2[0]), int(pt2[1])
-    overlay = img.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
-    cv2.addWeighted(overlay, 0.10, img, 0.90, 0, img)
-    cv2.rectangle(img, (x1, y1), (x2, y2), color, 1)
-    cv2.line(img, (x1, y1), (x1 + line_len, y1), color, thickness + 1)
-    cv2.line(img, (x1, y1), (x1, y1 + line_len), color, thickness + 1)
-    cv2.line(img, (x2, y1), (x2 - line_len, y1), color, thickness + 1)
-    cv2.line(img, (x2, y1), (x2, y1 + line_len), color, thickness + 1)
-    cv2.line(img, (x1, y2), (x1 + line_len, y2), color, thickness + 1)
-    cv2.line(img, (x1, y2), (x1, y2 - line_len), color, thickness + 1)
-    cv2.line(img, (x2, y2), (x2 - line_len, y2), color, thickness + 1)
-    cv2.line(img, (x2, y2), (x2, y2 - line_len), color, thickness + 1)
-
-# --- Main Camera Loop ---
+# --- Laptop Camera Loop ---
 def camera_loop():
-    global latest_frame, latest_jpeg_bytes, latest_status
-    print("[INFO] Initializing PoultrySense AI (Person-Only Detection + Persistent Re-ID)...")
-    yolo_model = None
-    if HAS_YOLO:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(script_dir, "yolo11n.pt")
-        if not os.path.exists(model_path):
-            model_path = "yolo11n.pt"
-        try:
-            print(f"[INFO] Loading YOLO model from: {model_path}")
-            yolo_model = YOLO(model_path)
-            print("[INFO] YOLO11 Person Detection Engine initialized!")
-        except Exception as e:
-            print(f"[WARN] Could not load YOLO model: {e}")
+    global last_phone_frame_time
+    print("[INFO] Starting Laptop Camera Monitor...")
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     if not cap.isOpened():
         cap = cv2.VideoCapture(0)
@@ -278,67 +412,25 @@ def camera_loop():
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap.set(cv2.CAP_PROP_FPS, 30)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    prev_time = time.time()
+
     while True:
+        # If phone is streaming frames actively, pause PC webcam AI inference to save CPU
+        if (time.time() - last_phone_frame_time) < 2.5:
+            time.sleep(0.05)
+            continue
+
+        if not cap.isOpened():
+            time.sleep(0.1)
+            continue
+
         ret, frame = cap.read()
         if not ret:
             time.sleep(0.03)
             continue
+
         frame = cv2.flip(frame, 1)
-        h_frame, w_frame, _ = frame.shape
-        curr_time = time.time()
-        fps = 1.0 / (curr_time - prev_time + 1e-5)
-        prev_time = curr_time
-        detection_list = []
-        raw_person_detections = []
-        if yolo_model is not None:
-            try:
-                results = yolo_model(frame, classes=[0], conf=0.40, iou=0.45, verbose=False)
-                if results and len(results) > 0:
-                    boxes = results[0].boxes
-                    if boxes is not None and len(boxes) > 0:
-                        confs = boxes.conf.cpu().tolist()
-                        xyxys = boxes.xyxy.cpu().tolist()
-                        for box, conf in zip(xyxys, confs):
-                            raw_person_detections.append((box, conf))
-            except Exception:
-                pass
-        active_tracks = reid_tracker.update(frame, raw_person_detections)
-        person_count = len(active_tracks)
-        for track_id, trk in active_tracks.items():
-            x1, y1, x2, y2 = trk['bbox']
-            conf = trk['conf']
-            trail = trk.get('trail', [])
-            color = get_id_color(track_id)
-            badge_bg = (int(color[0] * 0.25), int(color[1] * 0.25), int(color[2] * 0.25))
-            if len(trail) > 1:
-                pts = np.array(trail, dtype=np.int32).reshape((-1, 1, 2))
-                cv2.polylines(frame, [pts], isClosed=False, color=color, thickness=2)
-                cv2.circle(frame, trail[-1], 4, color, -1)
-            draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=20)
-            label = f" Person #{track_id} ({int(conf * 100)}%) "
-            (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.52, 1)
-            label_y = max(y1 - 10, text_h + 10)
-            cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), badge_bg, -1)
-            cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), color, 1)
-            cv2.putText(frame, label, (x1 + 4, label_y - 2), cv2.FONT_HERSHEY_DUPLEX, 0.52, (255, 255, 255), 1)
-            detection_list.append({"track_id": track_id, "class": "person", "confidence": round(conf, 2), "status": "HEALTHY", "bbox": [x1, y1, x2, y2]})
-        cv2.putText(frame, "POULTRYSENSE AI  |  PERSISTENT PERSON TRACKING & RE-ID", (16, 26), cv2.FONT_HERSHEY_DUPLEX, 0.45, (0, 230, 118), 1)
-        stats_text = f"FPS: {fps:.1f}  |  Active Persons: {person_count}  |  Gallery IDs: {len(reid_tracker.gallery)}"
-        cv2.putText(frame, stats_text, (16, h_frame - 14), cv2.FONT_HERSHEY_DUPLEX, 0.45, (200, 200, 200), 1)
-        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-        with frame_lock:
-            latest_frame = frame
-            latest_jpeg_bytes = jpeg.tobytes()
-            latest_status = {
-                "active": True, "fps": round(fps, 1),
-                "person_count": person_count,
-                "hand_count": person_count,
-                "flock_count": person_count,
-                "track_count": person_count,
-                "health_index": 100 if person_count > 0 else 95,
-                "detections": detection_list
-            }
+        process_ai_frame(frame, source_label="Laptop Webcam")
+
     cap.release()
 
 def main():
