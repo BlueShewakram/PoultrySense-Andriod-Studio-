@@ -1,18 +1,14 @@
-﻿package com.example.poultrysense.ui.monitor
+package com.example.poultrysense.ui.monitor
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.os.Bundle
-import android.util.Size
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
@@ -29,14 +25,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import java.io.ByteArrayOutputStream
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 class MonitorFragment : Fragment() {
 
@@ -48,19 +39,11 @@ class MonitorFragment : Fragment() {
         .readTimeout(600, TimeUnit.MILLISECONDS)
         .build()
 
-    private val uploadClient = OkHttpClient.Builder()
-        .connectTimeout(1500, TimeUnit.MILLISECONDS)
-        .readTimeout(1500, TimeUnit.MILLISECONDS)
-        .writeTimeout(1500, TimeUnit.MILLISECONDS)
-        .build()
-
     private val gson = Gson()
     private var streamJob: Job? = null
     private var statusJob: Job? = null
 
     private var isLaptopSource = true
-    private val isUploadingFrame = AtomicBoolean(false)
-    private val cameraExecutor = Executors.newSingleThreadExecutor()
 
     // CameraX
     private var cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -89,6 +72,7 @@ class MonitorFragment : Fragment() {
         setupSourceToggle()
         setupCameraSwitchButton()
 
+        // Pop up in the center when Monitor is opened, scan with back-and-forth/up-and-down motion, then disappear
         binding.mascotPopupScanner.showPopupAndScan(2800L)
 
         binding.layoutConnectionBadge.setOnClickListener {
@@ -121,17 +105,18 @@ class MonitorFragment : Fragment() {
                     binding.ivMonitorStream.visibility = View.VISIBLE
                     binding.viewCameraX.visibility = View.GONE
                     binding.fabSwitchCameraLens.visibility = View.GONE
-                    binding.tvHudSource.text = "Laptop AI Vision"
+                    binding.tvHudSource.text = "1080p AI Vision"
                     startLaptopStream()
                 } else {
                     isLaptopSource = false
                     stopLaptopStream()
-                    binding.ivMonitorStream.visibility = View.VISIBLE
+                    binding.ivMonitorStream.visibility = View.GONE
                     binding.layoutMonitorOffline.visibility = View.GONE
-                    binding.viewCameraX.visibility = View.GONE
+                    binding.viewCameraX.visibility = View.VISIBLE
                     binding.fabSwitchCameraLens.visibility = View.VISIBLE
-                    binding.tvHudSource.text = "Phone HD Sensor (AI Streaming)"
-                    updateStatusBadge(true, "Phone AI Active")
+                    binding.tvHudSource.text = "Phone Sensor"
+                    binding.tvHudFps.text = "60.0 FPS"
+                    updateStatusBadge(true, "Phone Cam Active")
                     checkPermissionAndStartCamera()
                 }
             }
@@ -153,12 +138,10 @@ class MonitorFragment : Fragment() {
 
     private fun startLaptopStream() {
         stopLaptopStream()
-        val context = context ?: return
-        val baseUrl = ServerPreferences.getBaseUrl(context)
-
+        val baseUrl = ServerPreferences.getBaseUrl(requireContext())
         // 1. Frame Poller
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val request = Request.Builder().url("/frame.jpg").build()
+            val request = Request.Builder().url("$baseUrl/frame.jpg").build()
             while (isActive && isLaptopSource) {
                 try {
                     val response = httpClient.newCall(request).execute()
@@ -186,7 +169,7 @@ class MonitorFragment : Fragment() {
 
         // 2. Status Poller
         statusJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val request = Request.Builder().url("/status").build()
+            val request = Request.Builder().url("$baseUrl/status").build()
             while (isActive && isLaptopSource) {
                 try {
                     val response = httpClient.newCall(request).execute()
@@ -198,11 +181,11 @@ class MonitorFragment : Fragment() {
                                 if (_binding != null && isLaptopSource) {
                                     val isConnected = status.active == true
                                     val fps = status.fps ?: 0.0
-                                    val count = status.personCount ?: status.handCount ?: (status.detections?.size ?: 0)
+                                    val count = status.handCount ?: (status.detections?.size ?: 0)
 
                                     updateStatusBadge(isConnected, if (isConnected) "AI Connected" else "AI Offline")
                                     binding.tvHudFps.text = String.format("%.1f FPS", fps)
-                                    binding.tvDetectionCount.text = " Subjects"
+                                    binding.tvDetectionCount.text = "$count Subjects"
                                 }
                             }
                         }
@@ -256,7 +239,7 @@ class MonitorFragment : Fragment() {
         statusJob = null
     }
 
-    // ─── Phone Camera (CameraX Streaming to YOLO AI Server) ───
+    // ─── Phone Camera (CameraX) ───
 
     private fun checkPermissionAndStartCamera() {
         val context = context ?: return
@@ -276,93 +259,11 @@ class MonitorFragment : Fragment() {
         cameraProviderFuture.addListener({
             try {
                 cameraProvider = cameraProviderFuture.get()
-
-                // Preview
                 val preview = Preview.Builder().build().also {
                     it.setSurfaceProvider(binding.viewCameraX.surfaceProvider)
                 }
-
-                // ImageAnalysis captures frames and streams them to YOLO AI Server
-                val imageAnalysis = ImageAnalysis.Builder()
-                    .setTargetResolution(Size(640, 480))
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .build()
-
-                imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                    val appContext = context ?: return@setAnalyzer
-                    val baseUrl = ServerPreferences.getBaseUrl(appContext)
-
-                    if (isLaptopSource || !isResumed) {
-                        imageProxy.close()
-                        return@setAnalyzer
-                    }
-
-                    if (isUploadingFrame.compareAndSet(false, true)) {
-                        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-                            try {
-                                val bitmap = imageProxy.toBitmap()
-                                val rotation = imageProxy.imageInfo.rotationDegrees
-                                val finalBitmap = if (rotation != 0) {
-                                    val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
-                                    Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                                } else {
-                                    bitmap
-                                }
-
-                                val stream = ByteArrayOutputStream()
-                                finalBitmap.compress(Bitmap.CompressFormat.JPEG, 75, stream)
-                                val jpegBytes = stream.toByteArray()
-
-                                val requestBody = jpegBytes.toRequestBody("image/jpeg".toMediaTypeOrNull())
-                                val request = Request.Builder()
-                                    .url("/upload_frame")
-                                    .post(requestBody)
-                                    .build()
-
-                                val response = uploadClient.newCall(request).execute()
-                                if (response.isSuccessful) {
-                                    val respBytes = response.body?.bytes()
-                                    val personCount = response.header("X-Person-Count") ?: "0"
-                                    val fps = response.header("X-FPS") ?: "30.0"
-
-                                    if (respBytes != null && respBytes.isNotEmpty()) {
-                                        val aiAnnotatedBitmap = BitmapFactory.decodeByteArray(respBytes, 0, respBytes.size)
-                                        withContext(Dispatchers.Main) {
-                                            if (_binding != null && !isLaptopSource) {
-                                                binding.ivMonitorStream.setImageBitmap(aiAnnotatedBitmap)
-                                                binding.layoutMonitorOffline.visibility = View.GONE
-                                                updateStatusBadge(true, "Phone AI Active")
-                                                binding.tvHudFps.text = " FPS"
-                                                binding.tvDetectionCount.text = " Subjects"
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    withContext(Dispatchers.Main) {
-                                        if (_binding != null && !isLaptopSource) {
-                                            updateStatusBadge(false, "AI Offline")
-                                        }
-                                    }
-                                }
-                                response.close()
-                            } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
-                                    if (_binding != null && !isLaptopSource) {
-                                        updateStatusBadge(false, "AI Offline")
-                                    }
-                                }
-                            } finally {
-                                isUploadingFrame.set(false)
-                                imageProxy.close()
-                            }
-                        }
-                    } else {
-                        imageProxy.close()
-                    }
-                }
-
                 cameraProvider?.unbindAll()
-                cameraProvider?.bindToLifecycle(viewLifecycleOwner, cameraSelector, preview, imageAnalysis)
+                cameraProvider?.bindToLifecycle(viewLifecycleOwner, cameraSelector, preview)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -371,7 +272,6 @@ class MonitorFragment : Fragment() {
 
     private fun stopPhoneCamera() {
         cameraProvider?.unbindAll()
-        isUploadingFrame.set(false)
     }
 
     override fun onDestroyView() {
@@ -379,10 +279,5 @@ class MonitorFragment : Fragment() {
         stopLaptopStream()
         stopPhoneCamera()
         _binding = null
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        cameraExecutor.shutdown()
     }
 }
