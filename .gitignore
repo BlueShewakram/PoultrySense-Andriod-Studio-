@@ -1,5 +1,6 @@
+# Android / Gradle
 *.iml
-.gradle
+.gradle/
 /local.properties
 /.idea/caches
 /.idea/libraries
@@ -13,3 +14,34 @@
 .externalNativeBuild
 .cxx
 local.properties
+*.apk
+*.aab
+
+# Firebase — DO NOT commit your real google-services.json
+# Users must supply their own from Firebase Console
+# Uncomment the line below if you want to protect it (not recommended for open-source setup guides)
+# google-services.json
+
+# Python AI Server
+poultrysense_ai/venv/
+poultrysense_ai/__pycache__/
+poultrysense_ai/*.pyc
+poultrysense_ai/*.log
+poultrysense_ai/out.log
+poultrysense_ai/err.log
+
+# YOLO model weights (large binary — users download separately)
+# poultrysense_ai/yolo11n.pt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android Studio AGP internal dirs
+8.4/
+vcs-1/
+buildOutputCleanup/
+file-system.probe
+
+# AGY / Antigravity IDE
+.agents/
