@@ -1,33 +1,43 @@
 @echo off
-REM ──────────────────────────────────────────────────────
-REM  PoultrySense AI Server Auto-Launcher
-REM  Starts the ByteTrack AI server if not already running
-REM ──────────────────────────────────────────────────────
+TITLE PoultrySense AI Vision Server
+COLOR 0A
 
-REM Check if the server is already running on port 5000
-netstat -ano | findstr ":5000" | findstr "LISTENING" >nul 2>&1
-if %ERRORLEVEL% == 0 (
-    echo [PoultrySense AI] Server is already running on port 5000. Skipping.
-    exit /b 0
+echo =================================================================
+echo        POULTRYSENSE AI - CHICKEN VISION AND TELEMETRY SERVER       
+echo =================================================================
+echo.
+
+REM 1. Check if port 5000 is occupied and cleanly terminate old instances
+echo [1/3] Checking port 5000 status...
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5000" ^| findstr "LISTENING"') do (
+    echo [INFO] Stopping previous server instance PID %%a
+    taskkill /PID %%a /F >nul 2>&1
 )
 
-echo [PoultrySense AI] Starting ByteTrack AI Server...
-
-REM Navigate to the AI directory
+REM 2. Navigate to poultrysense_ai directory
 cd /d "%~dp0poultrysense_ai"
 
-REM Start the server in background (new minimized window)
-start "PoultrySense AI Server" /min cmd /c ".\venv\Scripts\python.exe poultrysense_ai.py"
-
-REM Wait briefly for the server to initialize (using ping for redirection safety)
-ping -n 4 127.0.0.1 >nul 2>&1
-
-REM Verify it started
-netstat -ano | findstr ":5000" | findstr "LISTENING" >nul 2>&1
-if %ERRORLEVEL% == 0 (
-    echo [PoultrySense AI] Server started successfully on http://localhost:5000
-) else (
-    echo [PoultrySense AI] Warning: Server may still be initializing...
+if not exist ".\venv\Scripts\python.exe" (
+    echo [ERROR] Virtual environment not found at poultrysense_ai\venv
+    echo Please make sure the Python venv is installed.
+    pause
+    exit /b 1
 )
 
-exit /b 0
+REM 3. Launch the AI Server
+echo [2/3] Initializing YOLOv8 Models and Camera Feed...
+echo [3/3] Starting Flask Stream on port 5000...
+echo.
+echo -----------------------------------------------------------------
+echo  Live Web Stream: http://localhost:5000
+echo  Press Ctrl+C in this window at any time to stop the AI server.
+echo -----------------------------------------------------------------
+echo.
+
+.\venv\Scripts\python.exe poultrysense_ai.py
+
+if %ERRORLEVEL% NEQ 0 (
+    echo.
+    echo [ERROR] AI Server exited with code %ERRORLEVEL%.
+    pause
+)

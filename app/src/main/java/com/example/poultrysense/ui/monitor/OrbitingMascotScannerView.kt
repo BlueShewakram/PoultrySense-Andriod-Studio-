@@ -16,15 +16,14 @@ import android.view.animation.AccelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
-import androidx.core.content.ContextCompat
 import com.example.poultrysense.R
 
 /**
  * Ultra-Clean Modern 3D AI Chicken Mascot Scanner View.
- * - Displays ONLY the cute 3D cartoon chicken and searching magnifying glass (zero words/text).
- * - Smooth spring pop-up in the center when Monitor is opened.
- * - Magnifying glass smoothly searches back & forth, up & down across the chicken with natural tilt and optical pulse.
- * - Automatically fades and shrinks away smoothly after scanning.
+ * - Displays ONLY the cute 3D cartoon chicken and searching magnifying glass (zero words/text, zero light bulbs/sparkles).
+ * - Extra-large size for high visual impact.
+ * - Appears while waiting for the AI stream signal, scanning back & forth.
+ * - Smoothly shrinks and fades away as soon as the video signal is received.
  */
 class OrbitingMascotScannerView @JvmOverloads constructor(
     context: Context,
@@ -35,8 +34,6 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
     private val mascotContainer: FrameLayout
     private val chickenImageView: ImageView
     private val magnifierImageView: ImageView
-    private val sparkleView1: ImageView
-    private val sparkleView2: ImageView
 
     private var searchAnimatorX: ObjectAnimator? = null
     private var searchAnimatorY: ObjectAnimator? = null
@@ -45,6 +42,7 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
     private var searchAnimatorScaleY: ObjectAnimator? = null
     private var chickenBobAnimator: ObjectAnimator? = null
     private var autoDismissRunnable: Runnable? = null
+    private var isDismissing = false
     private val handler = Handler(Looper.getMainLooper())
 
     private val density = context.resources.displayMetrics.density
@@ -55,43 +53,18 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
         clipChildren = false
         clipToPadding = false
 
-        // Centered Floating Mascot Container (NO green circle, NO box, NO words)
+        // Centered Floating Mascot Container (No background boxes, no words, no bulbs)
         mascotContainer = FrameLayout(context).apply {
             clipChildren = false
             clipToPadding = false
-            val size = (190 * density).toInt()
+            val size = (260 * density).toInt()
             layoutParams = LayoutParams(size, size, Gravity.CENTER)
         }
         addView(mascotContainer)
 
-        // 1. Subtle Sparkle Accents
-        sparkleView1 = ImageView(context).apply {
-            val size = (22 * density).toInt()
-            layoutParams = LayoutParams(size, size, Gravity.TOP or Gravity.START).apply {
-                marginStart = (15 * density).toInt()
-                topMargin = (15 * density).toInt()
-            }
-            setImageResource(R.drawable.ic_sparkles)
-            setColorFilter(0xFFFFD54F.toInt())
-            alpha = 0.85f
-        }
-        mascotContainer.addView(sparkleView1)
-
-        sparkleView2 = ImageView(context).apply {
-            val size = (18 * density).toInt()
-            layoutParams = LayoutParams(size, size, Gravity.BOTTOM or Gravity.END).apply {
-                marginEnd = (15 * density).toInt()
-                bottomMargin = (20 * density).toInt()
-            }
-            setImageResource(R.drawable.ic_sparkles)
-            setColorFilter(0xFF80D8A7.toInt())
-            alpha = 0.75f
-        }
-        mascotContainer.addView(sparkleView2)
-
-        // 3. Cute 3D Smiling Chicken (Clean high-res asset)
+        // 1. Cute 3D Smiling Chicken (Large clean high-res asset)
         chickenImageView = ImageView(context).apply {
-            val size = (125 * density).toInt()
+            val size = (185 * density).toInt()
             layoutParams = LayoutParams(size, size, Gravity.CENTER)
             setImageResource(R.drawable.img_mascot_chicken_clean)
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -99,9 +72,9 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
         }
         mascotContainer.addView(chickenImageView)
 
-        // 4. Glossy 3D Searching Magnifying Glass
+        // 2. Glossy 3D Searching Magnifying Glass (Enlarged)
         magnifierImageView = ImageView(context).apply {
-            val size = (72 * density).toInt()
+            val size = (110 * density).toInt()
             layoutParams = LayoutParams(size, size, Gravity.CENTER)
             setImageResource(R.drawable.img_mascot_magnifier_clean)
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -116,10 +89,17 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
     }
 
     /**
-     * Shows the clean pop-up in center with smooth spring entrance,
-     * performs the search animation, and smoothly disappears.
+     * Shows the mascot in center while waiting for AI signal,
+     * continuously scanning until signal arrives.
      */
-    fun showPopupAndScan(durationMs: Long = 2400L) {
+    fun showSearchingUntilSignal() {
+        if (visibility == View.VISIBLE && alpha > 0f && !isDismissing) {
+            return
+        }
+        isDismissing = false
+        autoDismissRunnable?.let { handler.removeCallbacks(it) }
+        autoDismissRunnable = null
+
         visibility = View.VISIBLE
         alpha = 0f
         scaleX = 0.25f
@@ -141,13 +121,28 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
             })
             start()
         }
+    }
 
-        // Auto-dismiss smoothly after scan completion
+    /**
+     * Shows the clean pop-up in center with smooth spring entrance,
+     * performs the search animation, and smoothly disappears after durationMs.
+     */
+    fun showPopupAndScan(durationMs: Long = 2600L) {
+        showSearchingUntilSignal()
         autoDismissRunnable?.let { handler.removeCallbacks(it) }
         autoDismissRunnable = Runnable {
             dismissPopup()
         }
         handler.postDelayed(autoDismissRunnable!!, durationMs)
+    }
+
+    /**
+     * Called when the live AI video stream signal is successfully received.
+     */
+    fun hideWhenSignalReceived() {
+        if (visibility == View.VISIBLE && !isDismissing) {
+            dismissPopup()
+        }
     }
 
     /**
@@ -160,10 +155,10 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
         searchAnimatorX = ObjectAnimator.ofFloat(
             magnifierImageView,
             "translationX",
-            -34f * density,
-            34f * density
+            -50f * density,
+            50f * density
         ).apply {
-            duration = 850L
+            duration = 880L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
             interpolator = AccelerateDecelerateInterpolator()
@@ -174,10 +169,10 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
         searchAnimatorY = ObjectAnimator.ofFloat(
             magnifierImageView,
             "translationY",
-            -26f * density,
-            24f * density
+            -38f * density,
+            36f * density
         ).apply {
-            duration = 1200L
+            duration = 1250L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
             interpolator = AccelerateDecelerateInterpolator()
@@ -188,10 +183,10 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
         searchAnimatorRot = ObjectAnimator.ofFloat(
             magnifierImageView,
             "rotation",
-            -16f,
-            16f
+            -18f,
+            18f
         ).apply {
-            duration = 950L
+            duration = 980L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
             interpolator = AccelerateDecelerateInterpolator()
@@ -203,9 +198,9 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
             magnifierImageView,
             "scaleX",
             0.96f,
-            1.14f
+            1.15f
         ).apply {
-            duration = 750L
+            duration = 780L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
             interpolator = AccelerateDecelerateInterpolator()
@@ -216,9 +211,9 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
             magnifierImageView,
             "scaleY",
             0.96f,
-            1.14f
+            1.15f
         ).apply {
-            duration = 750L
+            duration = 780L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
             interpolator = AccelerateDecelerateInterpolator()
@@ -229,10 +224,10 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
         chickenBobAnimator = ObjectAnimator.ofFloat(
             chickenImageView,
             "translationY",
-            -3.5f * density,
-            3.5f * density
+            -4.5f * density,
+            4.5f * density
         ).apply {
-            duration = 650L
+            duration = 680L
             repeatCount = ValueAnimator.INFINITE
             repeatMode = ValueAnimator.REVERSE
             interpolator = AccelerateDecelerateInterpolator()
@@ -259,6 +254,9 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
      * Smoothly shrink and fade away.
      */
     fun dismissPopup() {
+        if (isDismissing || visibility != View.VISIBLE) return
+        isDismissing = true
+
         autoDismissRunnable?.let { handler.removeCallbacks(it) }
         autoDismissRunnable = null
 
@@ -273,6 +271,7 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
             addListener(object : AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: Animator) {
                     visibility = View.GONE
+                    isDismissing = false
                     stopSearchAnimation()
                     onDismissListener?.invoke()
                 }
@@ -282,7 +281,7 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
     }
 
     fun startAllAnimations() {
-        showPopupAndScan()
+        showSearchingUntilSignal()
     }
 
     fun stopAllAnimations() {

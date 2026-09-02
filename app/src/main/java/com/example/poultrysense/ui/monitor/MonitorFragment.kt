@@ -72,11 +72,10 @@ class MonitorFragment : Fragment() {
         setupSourceToggle()
         setupCameraSwitchButton()
 
-        // Pop up in the center when Monitor is opened, scan with back-and-forth/up-and-down motion, then disappear
-        binding.mascotPopupScanner.showPopupAndScan(2800L)
-
         binding.layoutConnectionBadge.setOnClickListener {
-            binding.mascotPopupScanner.showPopupAndScan(2500L)
+            if (isLaptopSource && binding.layoutMonitorOffline.visibility == View.VISIBLE) {
+                binding.mascotPopupScanner.showSearchingUntilSignal()
+            }
         }
     }
 
@@ -110,6 +109,7 @@ class MonitorFragment : Fragment() {
                 } else {
                     isLaptopSource = false
                     stopLaptopStream()
+                    binding.mascotPopupScanner.dismissPopup()
                     binding.ivMonitorStream.visibility = View.GONE
                     binding.layoutMonitorOffline.visibility = View.GONE
                     binding.viewCameraX.visibility = View.VISIBLE
@@ -138,6 +138,7 @@ class MonitorFragment : Fragment() {
 
     private fun startLaptopStream() {
         stopLaptopStream()
+        binding.mascotPopupScanner.showSearchingUntilSignal()
         val baseUrl = ServerPreferences.getBaseUrl(requireContext())
         // 1. Frame Poller
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
@@ -153,6 +154,7 @@ class MonitorFragment : Fragment() {
                                 if (_binding != null && isLaptopSource) {
                                     binding.ivMonitorStream.setImageBitmap(bitmap)
                                     binding.layoutMonitorOffline.visibility = View.GONE
+                                    binding.mascotPopupScanner.hideWhenSignalReceived()
                                 }
                             }
                         }
@@ -205,6 +207,7 @@ class MonitorFragment : Fragment() {
         withContext(Dispatchers.Main) {
             if (_binding != null && isLaptopSource) {
                 binding.layoutMonitorOffline.visibility = View.VISIBLE
+                binding.mascotPopupScanner.showSearchingUntilSignal()
             }
         }
     }

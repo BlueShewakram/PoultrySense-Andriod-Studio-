@@ -1,14 +1,25 @@
 @echo off
-REM ──────────────────────────────────────────────────────
-REM  PoultrySense AI Server - Stop Script
-REM  Finds and terminates the AI server to release the camera
-REM ──────────────────────────────────────────────────────
+TITLE Stop PoultrySense AI Server
+COLOR 0E
 
+echo =================================================================
+echo             POULTRYSENSE AI - SERVER STOP UTILITY               
+echo =================================================================
+echo.
 echo [PoultrySense AI] Stopping AI server and releasing camera...
 
+set FOUND=0
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5000" ^| findstr "LISTENING"') do (
     taskkill /PID %%a /F >nul 2>&1
+    set FOUND=1
+    echo [OK] Terminated AI server process (PID: %%a).
 )
 
-echo [PoultrySense AI] Server stopped. Camera released.
-timeout /t 2 /nobreak >nul
+if "%FOUND%"=="0" (
+    echo [INFO] No running AI server was found on port 5000.
+) else (
+    echo [OK] Camera released and port 5000 is now free.
+)
+
+echo.
+timeout /t 3 /nobreak >nul
