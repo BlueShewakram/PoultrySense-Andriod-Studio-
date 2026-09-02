@@ -33,7 +33,7 @@ class OrbitingMascotScannerView @JvmOverloads constructor(
 
     private val mascotContainer: FrameLayout
     private val chickenImageView: ImageView
-    private val magnifierImageView: ImageView
+    private val magnifierImageView: ImageView       
 
     private var searchAnimatorX: ObjectAnimator? = null
     private var searchAnimatorY: ObjectAnimator? = null
