@@ -2,11 +2,11 @@ package com.example.poultrysense.data
 
 import android.content.Context
 
-object ServerPreferences {
+object  ServerPreferences {
 
     private const val PREFS_NAME = "poultrysense_server_prefs"
     private const val KEY_SERVER_IP = "server_ip"
-    private const val DEFAULT_IP = "192.168.254.106"
+    private const val DEFAULT_IP = "192.168.137.1"
     private const val PORT = "5000"
 
     /** Returns the full base URL, e.g. "http://192.168.1.50:5000" */

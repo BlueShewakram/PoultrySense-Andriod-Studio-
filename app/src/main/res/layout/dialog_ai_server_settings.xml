@@ -20,7 +20,7 @@
             android:layout_height="40dp"
             android:background="@drawable/bg_capsule_ai"
             android:padding="9dp"
-            android:src="@drawable/ic_sensors"
+            android:src="@drawable/ic_sparkles"
             app:tint="@color/primary"
             android:contentDescription="@null" />
 
@@ -35,7 +35,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="sans-serif-bold"
-                android:text="@string/ai_server_settings"
+                android:text="PoultrySense AI Vision Hub"
                 android:textColor="@color/text_primary"
                 android:textSize="16sp" />
 
@@ -43,7 +43,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="sans-serif"
-                android:text="@string/ai_server_settings_subtitle"
+                android:text="Pair your camera &amp; YOLO detection server"
                 android:textColor="@color/text_muted"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -53,17 +53,125 @@
     <com.google.android.material.divider.MaterialDivider
         android:layout_width="match_parent"
         android:layout_height="1dp"
-        android:layout_marginBottom="20dp"
+        android:layout_marginBottom="16dp"
         app:dividerColor="@color/border_light" />
 
-    <!-- IP Address Input Label -->
+    <!-- ─── 1-TAP AUTO-DISCOVERY CARD (RECOMMENDED FOR USERS) ─── -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardAutoDiscovery"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="18dp"
+        app:cardBackgroundColor="@color/background"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/primary"
+        app:strokeWidth="1.2dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-bold"
+                android:text="Zero-Setup Auto-Detection"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:layout_marginBottom="12dp"
+                android:fontFamily="sans-serif"
+                android:text="Tap below to automatically detect your AI Vision Hub on your Wi-Fi network without typing an IP."
+                android:textColor="@color/text_muted"
+                android:textSize="12sp" />
+
+            <!-- Big Friendly 1-Tap Button -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnAutoScanHub"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:backgroundTint="@color/primary"
+                android:fontFamily="sans-serif-bold"
+                android:text="Auto-Detect AI Hub (1-Tap)"
+                android:textColor="@color/white"
+                android:textSize="13sp"
+                app:cornerRadius="14dp" />
+
+            <!-- Scanning in progress view (hidden by default) -->
+            <LinearLayout
+                android:id="@+id/layoutAutoScanning"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <ProgressBar
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:indeterminateTint="@color/primary" />
+
+                <TextView
+                    android:id="@+id/tvScanProgress"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="Searching local Wi-Fi for AI Hub..."
+                    android:textColor="@color/primary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- Discovered Hub Banner (hidden by default) -->
+            <LinearLayout
+                android:id="@+id/layoutDiscoveredBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_dock_btn_circle"
+                android:backgroundTint="@color/healthy"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="10dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_check_circle"
+                    app:tint="@color/white"
+                    android:contentDescription="@null" />
+
+                <TextView
+                    android:id="@+id/tvDiscoveredMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:fontFamily="sans-serif-bold"
+                    android:text="Connected to PoultrySense AI Hub!"
+                    android:textColor="@color/white"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- ─── MANUAL IP SECTION (OPTIONAL / ADVANCED) ─── -->
     <TextView
+        android:id="@+id/tvManualToggle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:fontFamily="sans-serif-medium"
-        android:text="@string/ai_server_ip_label"
-        android:textColor="@color/text_primary"
-        android:textSize="13sp"
+        android:text="Advanced: Manual IP Address"
+        android:textColor="@color/text_muted"
+        android:textSize="12sp"
         android:layout_marginBottom="8dp" />
 
     <!-- IP Address EditText -->
@@ -87,7 +195,7 @@
             android:hint="@string/ai_server_ip_hint"
             android:inputType="text"
             android:textColor="@color/text_primary"
-            android:textSize="15sp" />
+            android:textSize="14sp" />
     </com.google.android.material.textfield.TextInputLayout>
 
     <!-- Connection Status Badge (hidden by default) -->
@@ -95,15 +203,15 @@
         android:id="@+id/layoutConnectionStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="8dp"
         android:gravity="center_vertical"
         android:orientation="horizontal"
         android:visibility="gone">
 
         <ImageView
             android:id="@+id/ivConnectionStatusIcon"
-            android:layout_width="18dp"
-            android:layout_height="18dp"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
             android:src="@drawable/ic_check_circle"
             android:contentDescription="@null" />
 
@@ -121,15 +229,13 @@
         android:id="@+id/btnTestConnection"
         style="@style/Widget.Material3.Button.OutlinedButton"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:layout_marginTop="14dp"
+        android:layout_height="42dp"
+        android:layout_marginTop="10dp"
         android:fontFamily="sans-serif-bold"
         android:text="@string/test_connection"
-        android:textSize="13sp"
-        app:cornerRadius="14dp"
-        app:icon="@drawable/ic_sensors"
-        app:iconTint="@color/primary"
-        app:strokeColor="@color/primary" />
+        android:textSize="12sp"
+        app:cornerRadius="12dp"
+        app:strokeColor="@color/border_light" />
 
     <!-- Action Buttons Row -->
     <LinearLayout

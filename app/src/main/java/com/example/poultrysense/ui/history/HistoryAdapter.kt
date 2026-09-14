@@ -6,10 +6,15 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.poultrysense.data.models.ScanSession
 import com.example.poultrysense.databinding.ItemHistoryBinding
 
-class HistoryAdapter(private val sessions: List<ScanSession>) :
+class HistoryAdapter(private var sessions: List<ScanSession>) :
     RecyclerView.Adapter<HistoryAdapter.HistoryViewHolder>() {
 
     class HistoryViewHolder(val binding: ItemHistoryBinding) : RecyclerView.ViewHolder(binding.root)
+
+    fun updateData(newSessions: List<ScanSession>) {
+        sessions = newSessions
+        notifyDataSetChanged()
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): HistoryViewHolder {
         val binding = ItemHistoryBinding.inflate(LayoutInflater.from(parent.context), parent, false)

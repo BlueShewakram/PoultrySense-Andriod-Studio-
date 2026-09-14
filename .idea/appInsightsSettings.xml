@@ -8,10 +8,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.poultrysense.app" />
+                  <option name="mobileSdkAppId" value="1:740991511797:android:6f5087b83c18ae31fae9bc" />
+                  <option name="projectId" value="poultrysense-app" />
+                  <option name="projectNumber" value="740991511797" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />

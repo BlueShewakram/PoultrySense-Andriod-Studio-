@@ -11,6 +11,7 @@ import os
 import threading
 import numpy as np
 import sys
+import socket
 from collections import defaultdict, deque
 
 # --- 1. Import Ultralytics YOLO ---
@@ -23,7 +24,7 @@ except ImportError:
 
 # --- 2. Import Flask ---
 try:
-    from flask import Flask, Response, jsonify
+    from flask import Flask, Response, jsonify, request
 except ImportError:
     print("[ERROR] Flask is required. Install it with: pip install flask")
     sys.exit(1)
@@ -71,7 +72,16 @@ latest_status = {
     "isolated_count": 0,
     "health_index": 100,
     "track_count": 0,
+    "temperature": 24.5,
+    "humidity": 62.0,
+    "ammonia": 12,
     "detections": []
+}
+latest_sensor_data = {
+    "temperature": 24.5,
+    "humidity": 62.0,
+    "ammonia": 12,
+    "last_updated": 0
 }
 frame_lock = threading.Lock()
 
@@ -187,6 +197,47 @@ def status():
     """Real-time JSON telemetry endpoint for PoultrySense."""
     with frame_lock:
         return jsonify(latest_status)
+
+
+@flask_app.route('/api/discover')
+def api_discover():
+    """Lightweight endpoint for app auto-discovery."""
+    return jsonify({
+        "service": "poultrysense_ai",
+        "name": "PoultrySense AI Vision Hub",
+        "version": "2.0",
+        "status": "online"
+    })
+
+
+@flask_app.route('/api/sensor', methods=['GET', 'POST'])
+def handle_sensor():
+    """Receive or retrieve live environmental sensor data from ESP32."""
+    global latest_sensor_data
+    if request.method == 'POST':
+        try:
+            data = request.get_json(force=True)
+            if data:
+                with frame_lock:
+                    if "temperature" in data:
+                        latest_sensor_data["temperature"] = float(data["temperature"])
+                        latest_status["temperature"] = latest_sensor_data["temperature"]
+                    if "humidity" in data:
+                        latest_sensor_data["humidity"] = float(data["humidity"])
+                        latest_status["humidity"] = latest_sensor_data["humidity"]
+                    if "ammonia" in data:
+                        latest_sensor_data["ammonia"] = int(data["ammonia"])
+                        latest_status["ammonia"] = latest_sensor_data["ammonia"]
+                    latest_sensor_data["last_updated"] = time.time()
+                print(f"[ESP32] Live Sensor: Temp={latest_sensor_data['temperature']:.1f}°C, "
+                      f"Hum={latest_sensor_data['humidity']:.1f}%, Ammonia={latest_sensor_data['ammonia']}ppm")
+                return jsonify({"status": "success", "received": latest_sensor_data}), 200
+        except Exception as e:
+            return jsonify({"status": "error", "message": str(e)}), 400
+        return jsonify({"status": "error", "message": "Invalid JSON"}), 400
+    else:
+        with frame_lock:
+            return jsonify(latest_sensor_data), 200
 
 
 @flask_app.route('/reset_ids')
@@ -436,6 +487,7 @@ def camera_loop():
     det_model = None
     behavior_model = None
     health_model = None
+    chicken_classes = [0]
 
     if HAS_YOLO:
         # 1. Chicken Detection Model
@@ -445,6 +497,26 @@ def camera_loop():
                 print(f"[INFO] Loading Detection Model from: {det_path}")
                 det_model = YOLO(det_path)
                 print("[INFO] YOLO Detection Model loaded successfully!")
+
+                # Determine strict chicken class ID(s)
+                found_classes = []
+                if hasattr(det_model, 'names') and det_model.names:
+                    for cid, cname in det_model.names.items():
+                        name_str = str(cname).lower()
+                        if any(k in name_str for k in ["chicken", "poultry", "hen", "rooster", "bird"]):
+                            found_classes.append(int(cid))
+
+                    # If using standard COCO model (like yolo11n.pt), class 14 is bird.
+                    if not found_classes and 14 in det_model.names:
+                        found_classes = [14]
+                    elif not found_classes and len(det_model.names) == 1:
+                        found_classes = [0]
+
+                if found_classes:
+                    chicken_classes = found_classes
+
+                class_labels = [det_model.names.get(c, 'chicken') for c in chicken_classes]
+                print(f"[INFO] STRICT CHICKEN FILTER: Tracking only class IDs {chicken_classes} -> {class_labels}")
             except Exception as e:
                 print(f"[WARN] Failed to load Detection Model: {e}")
 
@@ -497,37 +569,51 @@ def camera_loop():
         raw_boxes = []
         raw_confs = []
 
-        # 1. Run YOLOv8 Tracking
+        # 1. Run YOLOv8 Tracking with STRICT Chicken Filtering
         if det_model is not None:
             try:
-                # Use ByteTrack tracking if available, otherwise regular inference
-                if os.path.exists(TRACKER_YAML):
-                    results = det_model.track(
-                        frame, persist=True, tracker=TRACKER_YAML,
-                        conf=0.35, iou=0.45, imgsz=640, verbose=False
-                    )[0]
-                else:
-                    results = det_model.track(
-                        frame, persist=True, conf=0.35, iou=0.45, imgsz=640, verbose=False
-                    )[0]
+                # Use ByteTrack tracking restricted ONLY to chicken class IDs
+                tracker_cfg = TRACKER_YAML if os.path.exists(TRACKER_YAML) else "bytetrack.yaml"
+                results = det_model.track(
+                    frame,
+                    persist=True,
+                    tracker=tracker_cfg,
+                    classes=chicken_classes,
+                    conf=0.35,
+                    iou=0.45,
+                    imgsz=640,
+                    verbose=False
+                )[0]
 
                 boxes = results.boxes
                 if boxes is not None and len(boxes) > 0:
                     xyxys = boxes.xyxy.cpu().numpy()
                     confs = boxes.conf.cpu().numpy()
                     ids = boxes.id.cpu().numpy() if boxes.id is not None else np.arange(len(xyxys))
+                    cls_ids = boxes.cls.cpu().numpy() if boxes.cls is not None else np.zeros(len(xyxys))
 
-                    for box, conf, raw_id in zip(xyxys, confs, ids):
+                    for box, conf, raw_id, c_id in zip(xyxys, confs, ids, cls_ids):
+                        if int(c_id) not in chicken_classes:
+                            continue
                         raw_boxes.append(box)
                         raw_confs.append(float(conf))
                         active_raw_ids.append(int(raw_id))
             except Exception as e:
-                # Fallback to standard detect
+                # Fallback to standard detect strictly filtered for chicken classes
                 try:
-                    results = det_model(frame, conf=0.35, iou=0.45, verbose=False)[0]
+                    results = det_model(
+                        frame,
+                        classes=chicken_classes,
+                        conf=0.35,
+                        iou=0.45,
+                        verbose=False
+                    )[0]
                     boxes = results.boxes
                     if boxes is not None and len(boxes) > 0:
-                        for i, (b, c) in enumerate(zip(boxes.xyxy.cpu().numpy(), boxes.conf.cpu().numpy())):
+                        cls_ids = boxes.cls.cpu().numpy() if boxes.cls is not None else np.zeros(len(boxes))
+                        for i, (b, c, c_id) in enumerate(zip(boxes.xyxy.cpu().numpy(), boxes.conf.cpu().numpy(), cls_ids)):
+                            if int(c_id) not in chicken_classes:
+                                continue
                             raw_boxes.append(b)
                             raw_confs.append(float(c))
                             active_raw_ids.append(i + 1)
@@ -681,18 +767,51 @@ def camera_loop():
                 "isolated_count": isolated_count,
                 "health_index": health_index,
                 "track_count": flock_count,
+                "temperature": latest_sensor_data["temperature"],
+                "humidity": latest_sensor_data["humidity"],
+                "ammonia": latest_sensor_data["ammonia"],
                 "detections": detection_list
             }
 
     cap.release()
 
 
+def udp_discovery_loop():
+    """Listens for UDP discovery broadcasts from PoultrySense Android app and replies with server info."""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(('0.0.0.0', 5005))
+        print("[INFO] PoultrySense Auto-Discovery listening on UDP port 5005")
+        while True:
+            data, addr = sock.recvfrom(1024)
+            message = data.decode('utf-8', errors='ignore').strip()
+            if "POULTRYSENSE_DISCOVER" in message:
+                response = json.dumps({
+                    "service": "poultrysense_ai",
+                    "name": "PoultrySense AI Vision Hub",
+                    "port": 5000,
+                    "version": "2.0"
+                })
+                sock.sendto(response.encode('utf-8'), addr)
+                print(f"[DISCOVERY] Discovered by PoultrySense app at {addr[0]}")
+    except Exception as e:
+        print(f"[DISCOVERY] UDP notice: {e}")
+
+
 def main():
     print("=" * 65)
     print("   POULTRYSENSE AI - CHICKEN HEALTH & BEHAVIOR MONITORING SERVER   ")
     print("=" * 65)
+    
+    # 1. Start AI Camera loop
     cam_thread = threading.Thread(target=camera_loop, daemon=True)
     cam_thread.start()
+
+    # 2. Start One-Tap Auto-Discovery broadcast responder
+    disc_thread = threading.Thread(target=udp_discovery_loop, daemon=True)
+    disc_thread.start()
+
     print("[INFO] PoultrySense AI Server running at http://0.0.0.0:5000")
     flask_app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
 

@@ -26,15 +26,27 @@ class SignUpActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivitySignUpBinding
     private val authRepository = AuthRepository()
+    private var flyingChickenAnimator: FlyingChickenAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivitySignUpBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        flyingChickenAnimator = FlyingChickenAnimator(binding.ivFlyingChickenSignUp)
         playEntranceAnimation()
         setupValidationListeners()
         setupClickListeners()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        flyingChickenAnimator?.start()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        flyingChickenAnimator?.stop()
     }
 
     private fun playEntranceAnimation() {
@@ -210,7 +222,7 @@ class SignUpActivity : AppCompatActivity() {
                 com.example.poultrysense.data.UserPreferences.saveUser(this@SignUpActivity, user)
                 Toast.makeText(
                     this@SignUpActivity,
-                    "🎉 Account created! Welcome, ${user.firstName}.",
+                    "Account created! Welcome, ${user.firstName}.",
                     Toast.LENGTH_SHORT
                 ).show()
 
@@ -236,7 +248,7 @@ class SignUpActivity : AppCompatActivity() {
     private fun setLoading(loading: Boolean) {
         binding.btnCreateAccount.isEnabled = !loading
         binding.btnCreateAccount.text = if (loading) "" else getString(R.string.create_account_btn)
-        binding.btnCreateAccount.icon = if (loading) null else getDrawable(R.drawable.ic_check_circle)
+        binding.btnCreateAccount.icon = null
         binding.progressBarSignUp.visibility = if (loading) View.VISIBLE else View.GONE
 
         binding.etFirstName.isEnabled = !loading

@@ -503,7 +503,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="28dp"
                             android:fontFamily="sans-serif-black"
-                            android:text="Normal"
+                            android:text="Monitor"
                             android:textColor="@color/white"
                             android:textSize="13sp" />
 
@@ -571,6 +571,7 @@
                             android:textSize="13sp" />
 
                         <TextView
+                            android:id="@+id/tvClimateCapsuleDesc"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
@@ -585,10 +586,11 @@
                             android:layout_weight="1" />
 
                         <TextView
+                            android:id="@+id/tvClimateCapsuleStatus"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif-black"
-                            android:text="NORMAL"
+                            android:text="Active"
                             android:textColor="#FFE0B2"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -879,6 +881,7 @@
                                 android:textSize="14sp" />
 
                             <TextView
+                                android:id="@+id/tvBarnHumidity"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
@@ -890,6 +893,7 @@
 
                         <!-- Status Label: Normal -->
                         <TextView
+                            android:id="@+id/tvBarnHumidityStatus"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:background="@drawable/bg_healthy_badge"
@@ -944,6 +948,7 @@
                                 android:textSize="14sp" />
 
                             <TextView
+                                android:id="@+id/tvBarnTemperature"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
@@ -955,6 +960,7 @@
 
                         <!-- Status Label: Normal -->
                         <TextView
+                            android:id="@+id/tvBarnTempStatus"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:background="@drawable/bg_healthy_badge"

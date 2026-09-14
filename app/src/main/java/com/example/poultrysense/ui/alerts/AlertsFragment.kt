@@ -72,6 +72,14 @@ class AlertsFragment : Fragment() {
         binding.tvEmptyAlerts.visibility = if (hasAlerts) View.GONE else View.VISIBLE
     }
 
+    override fun onResume() {
+        super.onResume()
+        val mainActivity = activity as? MainActivity
+        val alerts = mainActivity?.farmAlerts ?: emptyList()
+        alertsAdapter.updateData(alerts)
+        updateEmptyState()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         _binding = null

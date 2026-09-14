@@ -29,8 +29,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.poultrysense.data.CheckupSessionManager
+import com.example.poultrysense.databinding.DialogScheduleCheckupBinding
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.timepicker.MaterialTimePicker
+import com.google.android.material.timepicker.TimeFormat
+import android.animation.ValueAnimator
+import android.view.animation.OvershootInterpolator
+import com.example.poultrysense.data.AiServerScanner
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class MonitorFragment : Fragment() {
@@ -46,6 +55,7 @@ class MonitorFragment : Fragment() {
     private val gson = Gson()
     private var streamJob: Job? = null
     private var statusJob: Job? = null
+    private var sessionTickerJob: Job? = null
 
     // Multi-Camera State
     enum class CameraChannel {
@@ -57,6 +67,9 @@ class MonitorFragment : Fragment() {
 
     private var currentChannel = CameraChannel.CAM_1
     private var hasShownMascotOnEntry = false
+    private var hasShownOfflineMascotAlert = false
+    private var isStreamReceivingFrames = false
+    private var chickenBobAnimator: ObjectAnimator? = null
 
     // CameraX
     private var cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
@@ -86,12 +99,15 @@ class MonitorFragment : Fragment() {
 
         // Show cute 3D scanning mascot only once every time Monitor is clicked / opened
         hasShownMascotOnEntry = false
+        hasShownOfflineMascotAlert = false
         showMascotScanOnce()
 
         setupCameraChannelSwitcher()
         setupLensFlipButton()
         setupSnapshotButton()
         setupOfflineRetry()
+        setupCuteMascotAlert()
+        setupCheckupSessionControls()
 
         binding.layoutConnectionBadge.setOnClickListener {
             if (currentChannel != CameraChannel.PHONE_CAM && binding.layoutMonitorOffline.visibility == View.VISIBLE) {
@@ -109,6 +125,7 @@ class MonitorFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        updateSessionUI()
         if (currentChannel == CameraChannel.PHONE_CAM) {
             startPhoneCamera()
         } else {
@@ -119,6 +136,7 @@ class MonitorFragment : Fragment() {
     override fun onPause() {
         super.onPause()
         binding.mascotPopupScanner.stopAllAnimations()
+        stopSessionTicker()
         stopCameraStream()
         stopPhoneCamera()
     }
@@ -143,6 +161,7 @@ class MonitorFragment : Fragment() {
 
         when (channel) {
             CameraChannel.CAM_1 -> {
+                isStreamReceivingFrames = false
                 stopPhoneCamera()
                 binding.ivMonitorStream.visibility = View.VISIBLE
                 binding.viewCameraX.visibility = View.GONE
@@ -155,6 +174,7 @@ class MonitorFragment : Fragment() {
                 startCameraStream()
             }
             CameraChannel.CAM_2 -> {
+                isStreamReceivingFrames = false
                 stopPhoneCamera()
                 binding.ivMonitorStream.visibility = View.VISIBLE
                 binding.viewCameraX.visibility = View.GONE
@@ -167,6 +187,7 @@ class MonitorFragment : Fragment() {
                 startCameraStream()
             }
             CameraChannel.CAM_3 -> {
+                isStreamReceivingFrames = false
                 stopPhoneCamera()
                 binding.ivMonitorStream.visibility = View.VISIBLE
                 binding.viewCameraX.visibility = View.GONE
@@ -179,8 +200,10 @@ class MonitorFragment : Fragment() {
                 startCameraStream()
             }
             CameraChannel.PHONE_CAM -> {
+                isStreamReceivingFrames = true
                 stopCameraStream()
                 binding.mascotPopupScanner.dismissPopup()
+                hideCuteMascotAlert()
 
                 binding.ivMonitorStream.visibility = View.GONE
                 binding.layoutMonitorOffline.visibility = View.GONE
@@ -243,7 +266,7 @@ class MonitorFragment : Fragment() {
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
 
-            Toast.makeText(context, "📸 Frame snapshot saved to gallery", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Snapshot saved to gallery", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -276,9 +299,15 @@ class MonitorFragment : Fragment() {
                             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                             withContext(Dispatchers.Main) {
                                 if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
+                                    isStreamReceivingFrames = true
                                     binding.ivMonitorStream.setImageBitmap(bitmap)
                                     binding.layoutMonitorOffline.visibility = View.GONE
                                     binding.mascotPopupScanner.hideWhenSignalReceived()
+                                    if (binding.cardCuteMascotAlert.visibility == View.VISIBLE &&
+                                        binding.tvMascotTitle.text.contains("Offline", ignoreCase = true)
+                                    ) {
+                                        hideCuteMascotAlert()
+                                    }
                                 }
                             }
                         }
@@ -316,7 +345,7 @@ class MonitorFragment : Fragment() {
                                     binding.tvTelemetryPostureVal.text = if (count > 0) "99.4%" else "100%"
                                     binding.tvTelemetryLatencyVal.text = "0.03s"
                                     binding.tvSubject1Sub.text = "ByteTrack Confidence ${(88..98).random()}% • Stable"
-                                    binding.tvSubject2Sub.text = "ByteTrack Confidence ${(85..95).random()}% • Active Feeding"
+                                    binding.tvSubject2Sub.text = "ByteTrack Confidence ${(85..95).random()}% • Active Movement"
                                 }
                             }
                         }
@@ -335,7 +364,13 @@ class MonitorFragment : Fragment() {
     private suspend fun showOfflineUi() {
         withContext(Dispatchers.Main) {
             if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
+                isStreamReceivingFrames = false
                 binding.layoutMonitorOffline.visibility = View.VISIBLE
+                showCuteMascotAlert(
+                    title = "Camera Offline",
+                    message = "Stream offline. Switch to Phone Cam or search hub.",
+                    isOfflinePrompt = true
+                )
             }
         }
     }
@@ -343,6 +378,7 @@ class MonitorFragment : Fragment() {
     private suspend fun showOfflineStatus() {
         withContext(Dispatchers.Main) {
             if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
+                isStreamReceivingFrames = false
                 updateStatusBadge(false, "AI Offline")
                 binding.tvHudFps.text = "0.0 FPS"
             }
@@ -407,8 +443,360 @@ class MonitorFragment : Fragment() {
         cameraProvider?.unbindAll()
     }
 
+    // ─── AI Checkup Session & Scheduling ───
+
+    private fun setupCheckupSessionControls() {
+        // 1. Initial UI state
+        updateSessionUI()
+
+        // 2. Start / Stop Session Button Toggle
+        binding.btnToggleSession.setOnClickListener {
+            val ctx = context ?: return@setOnClickListener
+            val isRunning = CheckupSessionManager.isSessionActive(ctx)
+            if (isRunning) {
+                val detectedCount = binding.tvTelemetryCountVal.text.toString().toIntOrNull() ?: 42
+                val healthyCount = (detectedCount * 0.98).toInt().coerceAtLeast(1)
+                CheckupSessionManager.stopSession(ctx, totalFlock = detectedCount, healthyCount = healthyCount, illCount = (detectedCount - healthyCount).coerceAtLeast(0))
+                Toast.makeText(ctx, "Checkup session saved to History", Toast.LENGTH_SHORT).show()
+                updateSessionUI()
+            } else {
+                // Smart Camera Safety Guard: Block checkup if camera feed is not ready
+                val isCameraReady = (currentChannel == CameraChannel.PHONE_CAM) || isStreamReceivingFrames
+                if (!isCameraReady) {
+                    shakeView(binding.cardCheckupSession)
+                    binding.btnToggleSession.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+
+                    showCuteMascotAlert(
+                        title = "Hold your feathers!",
+                        message = "Cannot start AI checkup session without a live camera feed! Please connect your camera stream or switch to Phone Cam first."
+                    )
+                    Toast.makeText(ctx, "Connect camera stream to start checkup session", Toast.LENGTH_SHORT).show()
+                    return@setOnClickListener
+                }
+
+                val duration = CheckupSessionManager.getScheduledDuration(ctx)
+                CheckupSessionManager.startSession(ctx, duration)
+                val durationText = if (duration == 0) "Continuous" else "$duration mins"
+                Toast.makeText(ctx, "AI Checkup Session started ($durationText)", Toast.LENGTH_SHORT).show()
+                if (currentChannel != CameraChannel.PHONE_CAM) {
+                    startCameraStream()
+                }
+                updateSessionUI()
+            }
+        }
+
+        // 3. Open Schedule Dialog
+        binding.btnOpenScheduleDialog.setOnClickListener {
+            showScheduleCheckupDialog()
+        }
+    }
+
+    private fun updateSessionUI() {
+        val ctx = context ?: return
+        if (_binding == null) return
+        val isActive = CheckupSessionManager.isSessionActive(ctx)
+
+        binding.tvScheduledRunInfo.text = "Next: " + CheckupSessionManager.getScheduleDescription(ctx)
+
+        if (isActive) {
+            binding.tvSessionTitle.text = "AI Checkup Active"
+            binding.tvSessionSubtitle.text = "Analyzing flock behavior & logging telemetry"
+            binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.accent_green)
+            binding.btnToggleSession.text = "Stop Inspection"
+            binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.critical)
+            binding.layoutActiveSessionBanner.visibility = View.VISIBLE
+            startSessionTicker()
+        } else {
+            binding.tvSessionTitle.text = "AI Checkup Session"
+            binding.tvSessionSubtitle.text = "Idle • Tap Start to run flock inspection"
+            binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.text_muted)
+            binding.btnToggleSession.text = "Start Inspection"
+            binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.primary)
+            binding.layoutActiveSessionBanner.visibility = View.GONE
+            stopSessionTicker()
+        }
+    }
+
+    private fun startSessionTicker() {
+        stopSessionTicker()
+        sessionTickerJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Main) {
+            while (isActive) {
+                val ctx = context ?: break
+                if (!CheckupSessionManager.isSessionActive(ctx)) {
+                    updateSessionUI()
+                    Toast.makeText(ctx, "AI Flock Checkup Completed", Toast.LENGTH_LONG).show()
+                    break
+                }
+                val remainingSec = CheckupSessionManager.getRemainingSeconds(ctx)
+                if (_binding != null) {
+                    if (remainingSec == -1L) {
+                        val elapsed = CheckupSessionManager.getElapsedSeconds(ctx)
+                        val m = elapsed / 60
+                        val s = elapsed % 60
+                        binding.tvSessionTimerLabel.text = "Active duration:"
+                        binding.tvSessionCountdown.text = String.format(Locale.getDefault(), "%02d:%02d", m, s)
+                    } else {
+                        val m = remainingSec / 60
+                        val s = remainingSec % 60
+                        binding.tvSessionTimerLabel.text = "Time remaining:"
+                        binding.tvSessionCountdown.text = String.format(Locale.getDefault(), "%02d:%02d", m, s)
+                    }
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun stopSessionTicker() {
+        sessionTickerJob?.cancel()
+        sessionTickerJob = null
+    }
+
+    private fun showScheduleCheckupDialog() {
+        val ctx = context ?: return
+        val dialog = BottomSheetDialog(ctx)
+        val dialogBinding = DialogScheduleCheckupBinding.inflate(layoutInflater)
+        dialog.setContentView(dialogBinding.root)
+
+        var selectedHour = CheckupSessionManager.getScheduledHour(ctx)
+        var selectedMinute = CheckupSessionManager.getScheduledMinute(ctx)
+        var selectedDuration = CheckupSessionManager.getScheduledDuration(ctx)
+        var selectedRepeat = CheckupSessionManager.getScheduledRepeat(ctx)
+        val isEnabled = CheckupSessionManager.isScheduleEnabled(ctx)
+
+        dialogBinding.switchScheduleActive.isChecked = isEnabled
+
+        fun updateTimeDisplay() {
+            val amPm = if (selectedHour >= 12) "PM" else "AM"
+            val displayHour = if (selectedHour % 12 == 0) 12 else selectedHour % 12
+            dialogBinding.tvSelectedTime.text = String.format(Locale.getDefault(), "%02d:%02d %s", displayHour, selectedMinute, amPm)
+        }
+        updateTimeDisplay()
+
+        // Time Picker Click
+        dialogBinding.cardPickTime.setOnClickListener {
+            val picker = MaterialTimePicker.Builder()
+                .setTimeFormat(TimeFormat.CLOCK_12H)
+                .setHour(selectedHour)
+                .setMinute(selectedMinute)
+                .setTitleText("Select Checkup Time")
+                .build()
+
+            picker.addOnPositiveButtonClickListener {
+                selectedHour = picker.hour
+                selectedMinute = picker.minute
+                updateTimeDisplay()
+            }
+            picker.show(parentFragmentManager, "CHECKUP_TIME_PICKER")
+        }
+
+        // Duration Chips Pre-selection
+        when (selectedDuration) {
+            15 -> dialogBinding.chipDur15.isChecked = true
+            30 -> dialogBinding.chipDur30.isChecked = true
+            60 -> dialogBinding.chipDur60.isChecked = true
+            120 -> dialogBinding.chipDur120.isChecked = true
+            0 -> dialogBinding.chipDurContinuous.isChecked = true
+            else -> dialogBinding.chipDur30.isChecked = true
+        }
+
+        // Repeat Chips Pre-selection
+        when (selectedRepeat) {
+            "Daily" -> dialogBinding.chipRepeatDaily.isChecked = true
+            "Weekdays" -> dialogBinding.chipRepeatWeekdays.isChecked = true
+            "Once" -> dialogBinding.chipRepeatOnce.isChecked = true
+            else -> dialogBinding.chipRepeatDaily.isChecked = true
+        }
+
+        // Duration change listener
+        dialogBinding.chipGroupDuration.setOnCheckedStateChangeListener { _, checkedIds ->
+            selectedDuration = when {
+                checkedIds.contains(R.id.chipDur15) -> 15
+                checkedIds.contains(R.id.chipDur30) -> 30
+                checkedIds.contains(R.id.chipDur60) -> 60
+                checkedIds.contains(R.id.chipDur120) -> 120
+                checkedIds.contains(R.id.chipDurContinuous) -> 0
+                else -> 30
+            }
+        }
+
+        // Repeat change listener
+        dialogBinding.chipGroupRepeat.setOnCheckedStateChangeListener { _, checkedIds ->
+            selectedRepeat = when {
+                checkedIds.contains(R.id.chipRepeatDaily) -> "Daily"
+                checkedIds.contains(R.id.chipRepeatWeekdays) -> "Weekdays"
+                checkedIds.contains(R.id.chipRepeatOnce) -> "Once"
+                else -> "Daily"
+            }
+        }
+
+        // Cancel
+        dialogBinding.btnCancelSchedule.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        // Save
+        dialogBinding.btnSaveSchedule.setOnClickListener {
+            val enabled = dialogBinding.switchScheduleActive.isChecked
+            CheckupSessionManager.setScheduleEnabled(ctx, enabled)
+            CheckupSessionManager.saveSchedule(
+                context = ctx,
+                hour = selectedHour,
+                minute = selectedMinute,
+                durationMinutes = selectedDuration,
+                repeatMode = selectedRepeat,
+                dateMillis = System.currentTimeMillis()
+            )
+            updateSessionUI()
+            Toast.makeText(ctx, "Checkup schedule saved!", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    // ─── Cute Chicken Mascot Side-Popup & Auto-Detect Actions ───
+
+    private fun setupCuteMascotAlert() {
+        binding.btnDismissMascotAlert.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            hideCuteMascotAlert()
+        }
+
+        binding.btnMascotUsePhoneCam.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            switchToPhoneCamera()
+            hideCuteMascotAlert()
+        }
+
+        binding.btnOfflineUsePhoneCam.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            switchToPhoneCamera()
+            hideCuteMascotAlert()
+        }
+
+        binding.btnMascotAutoDetect.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            triggerAutoDiscovery()
+        }
+    }
+
+    private fun switchToPhoneCamera() {
+        binding.toggleCameraChannel.check(R.id.btnCamPhone)
+        Toast.makeText(context, "Switched to Phone Camera", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun triggerAutoDiscovery() {
+        val ctx = context ?: return
+        binding.tvMascotTitle.text = "Searching Wi-Fi..."
+        binding.tvMascotMessage.text = "Scanning network for your AI Camera Hub. Please ensure PC server is running..."
+        binding.btnMascotAutoDetect.isEnabled = false
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val discoveredIp = AiServerScanner.discoverServer(ctx) { progress ->
+                    if (_binding != null) {
+                        binding.tvMascotMessage.text = progress
+                    }
+                }
+
+                if (_binding == null) return@launch
+                binding.btnMascotAutoDetect.isEnabled = true
+
+                if (discoveredIp != null) {
+                    ServerPreferences.saveIp(ctx, discoveredIp)
+                    binding.tvMascotTitle.text = "Found AI Hub"
+                    binding.tvMascotMessage.text = "Connected to $discoveredIp! Resuming camera stream..."
+                    Toast.makeText(ctx, "Connected to AI Hub: $discoveredIp", Toast.LENGTH_SHORT).show()
+                    delay(1200)
+                    hideCuteMascotAlert()
+                    startCameraStream()
+                } else {
+                    binding.tvMascotTitle.text = "Hub Not Found"
+                    binding.tvMascotMessage.text = "Couldn't reach AI Hub on Wi-Fi. Make sure your PC server is running or switch to Phone Cam!"
+                }
+            } catch (e: Exception) {
+                if (_binding != null) {
+                    binding.btnMascotAutoDetect.isEnabled = true
+                    binding.tvMascotTitle.text = "Scan Error"
+                    binding.tvMascotMessage.text = "Error scanning network. Please check Wi-Fi connection."
+                }
+            }
+        }
+    }
+
+    private fun showCuteMascotAlert(title: String, message: String, isOfflinePrompt: Boolean = false) {
+        if (_binding == null) return
+        if (isOfflinePrompt && hasShownOfflineMascotAlert) return
+        if (isOfflinePrompt) {
+            hasShownOfflineMascotAlert = true
+        }
+
+        binding.tvMascotTitle.text = title
+        binding.tvMascotMessage.text = message
+
+        if (binding.cardCuteMascotAlert.visibility != View.VISIBLE) {
+            binding.cardCuteMascotAlert.visibility = View.VISIBLE
+            binding.cardCuteMascotAlert.alpha = 0f
+            binding.cardCuteMascotAlert.translationX = 350f
+            binding.cardCuteMascotAlert.animate()
+                .alpha(1f)
+                .translationX(0f)
+                .setDuration(380)
+                .setInterpolator(OvershootInterpolator(1.05f))
+                .start()
+        }
+
+        startChickenBobbing()
+    }
+
+    private fun hideCuteMascotAlert() {
+        if (_binding == null) return
+        stopChickenBobbing()
+        binding.cardCuteMascotAlert.animate()
+            .alpha(0f)
+            .translationX(350f)
+            .setDuration(240)
+            .withEndAction {
+                if (_binding != null) {
+                    binding.cardCuteMascotAlert.visibility = View.GONE
+                }
+            }
+            .start()
+    }
+
+    private fun startChickenBobbing() {
+        chickenBobAnimator?.cancel()
+        chickenBobAnimator = ObjectAnimator.ofFloat(
+            binding.imgMascotChicken,
+            "translationY",
+            0f, -8f, 0f
+        ).apply {
+            duration = 1000
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
+        }
+    }
+
+    private fun stopChickenBobbing() {
+        chickenBobAnimator?.cancel()
+        chickenBobAnimator = null
+        _binding?.imgMascotChicken?.translationY = 0f
+    }
+
+    private fun shakeView(view: View) {
+        val anim = ObjectAnimator.ofFloat(view, "translationX", 0f, -24f, 24f, -18f, 18f, -10f, 10f, 0f)
+        anim.duration = 480
+        anim.interpolator = AccelerateDecelerateInterpolator()
+        anim.start()
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
+        stopChickenBobbing()
+        stopSessionTicker()
         stopCameraStream()
         stopPhoneCamera()
         _binding = null

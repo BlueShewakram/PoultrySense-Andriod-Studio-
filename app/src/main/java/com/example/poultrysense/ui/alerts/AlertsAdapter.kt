@@ -37,24 +37,27 @@ class AlertsAdapter(private var alerts: List<FarmAlert>) :
                 layoutAlertLocation.visibility = View.GONE
             }
 
+            // Clean white card — severity indicated by left accent bar + small chip only
+            cardAlert.setCardBackgroundColor(ContextCompat.getColor(context, R.color.white))
+            cardAlert.strokeColor = ContextCompat.getColor(context, R.color.border_color)
+
             if (isCritical) {
-                cardAlert.setCardBackgroundColor(ContextCompat.getColor(context, R.color.critical_container))
-                cardAlert.strokeColor = ContextCompat.getColor(context, R.color.critical_stroke)
-                ivAlertIcon.setImageResource(R.drawable.ic_error)
-                ivAlertIcon.setColorFilter(ContextCompat.getColor(context, R.color.critical))
-                tvAlertTitle.setTextColor(ContextCompat.getColor(context, R.color.critical))
+                viewAccentBar.setBackgroundResource(R.drawable.bg_alert_accent_critical)
+                tvSeverityChip.text = "CRITICAL"
+                tvSeverityChip.setBackgroundResource(R.drawable.bg_severity_chip_critical)
             } else {
-                cardAlert.setCardBackgroundColor(ContextCompat.getColor(context, R.color.warning_container))
-                cardAlert.strokeColor = ContextCompat.getColor(context, R.color.warning_stroke)
-                ivAlertIcon.setImageResource(R.drawable.ic_warning_amber)
-                ivAlertIcon.setColorFilter(ContextCompat.getColor(context, R.color.warning))
-                tvAlertTitle.setTextColor(ContextCompat.getColor(context, R.color.warning))
+                viewAccentBar.setBackgroundResource(R.drawable.bg_alert_accent_warning)
+                tvSeverityChip.text = "WARNING"
+                tvSeverityChip.setBackgroundResource(R.drawable.bg_severity_chip_warning)
             }
+
+            // Title stays neutral dark — no colored title text
+            tvAlertTitle.setTextColor(ContextCompat.getColor(context, R.color.text_primary))
 
             cardAlert.setOnClickListener { view ->
                 view.animate()
-                    .scaleX(0.96f)
-                    .scaleY(0.96f)
+                    .scaleX(0.97f)
+                    .scaleY(0.97f)
                     .setDuration(80)
                     .withEndAction {
                         view.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
@@ -63,13 +66,14 @@ class AlertsAdapter(private var alerts: List<FarmAlert>) :
             }
         }
 
+        // Staggered fade-in entrance
         holder.itemView.alpha = 0f
-        holder.itemView.translationY = 24f
+        holder.itemView.translationY = 20f
         holder.itemView.animate()
             .alpha(1f)
             .translationY(0f)
-            .setDuration(240)
-            .setStartDelay((position * 35).toLong())
+            .setDuration(220)
+            .setStartDelay((position * 30).toLong())
             .setInterpolator(android.view.animation.DecelerateInterpolator())
             .start()
     }

@@ -11,6 +11,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
 import com.example.poultrysense.R
+import com.example.poultrysense.data.AiServerScanner
 import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.UserPreferences
 import com.example.poultrysense.data.repository.AuthRepository
@@ -255,7 +256,7 @@ class ProfileFragment : Fragment() {
                 }
             }
 
-            Toast.makeText(ctx, "✅ Profile & picture updated successfully", Toast.LENGTH_SHORT).show()
+            Toast.makeText(ctx, "Profile and picture updated successfully", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
         }
 
@@ -275,6 +276,50 @@ class ProfileFragment : Fragment() {
             .connectTimeout(3, TimeUnit.SECONDS)
             .readTimeout(3, TimeUnit.SECONDS)
             .build()
+
+        // 1-Tap Auto-Scan for AI Hub
+        dialogBinding.btnAutoScanHub.setOnClickListener {
+            dialogBinding.btnAutoScanHub.isEnabled = false
+            dialogBinding.layoutAutoScanning.visibility = View.VISIBLE
+            dialogBinding.layoutDiscoveredBanner.visibility = View.GONE
+            dialogBinding.tvScanProgress.text = "Searching local Wi-Fi for AI Hub..."
+
+            lifecycleScope.launch {
+                val foundIp = AiServerScanner.discoverServer(ctx) { progress ->
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        dialogBinding.tvScanProgress.text = progress
+                    }
+                }
+
+                dialogBinding.btnAutoScanHub.isEnabled = true
+                dialogBinding.layoutAutoScanning.visibility = View.GONE
+
+                if (foundIp != null) {
+                    dialogBinding.etServerIp.setText(foundIp)
+                    dialogBinding.layoutDiscoveredBanner.visibility = View.VISIBLE
+                    dialogBinding.tvDiscoveredMessage.text = "Connected to AI Hub ($foundIp)!"
+                    ServerPreferences.saveIp(ctx, foundIp)
+
+                    // Update connection status
+                    dialogBinding.layoutConnectionStatus.visibility = View.VISIBLE
+                    dialogBinding.ivConnectionStatusIcon.setImageResource(R.drawable.ic_check_circle)
+                    dialogBinding.ivConnectionStatusIcon.imageTintList =
+                        ContextCompat.getColorStateList(ctx, R.color.primary)
+                    dialogBinding.tvConnectionStatus.text = "AI Hub Active & Ready"
+                    dialogBinding.tvConnectionStatus.setTextColor(
+                        ContextCompat.getColor(ctx, R.color.primary)
+                    )
+
+                    Toast.makeText(ctx, "Connected to PoultrySense AI Hub", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(
+                        ctx,
+                        "Could not auto-detect AI Hub. Please ensure start_ai_server.bat is running on your PC.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
 
         // Test Connection
         dialogBinding.btnTestConnection.setOnClickListener {

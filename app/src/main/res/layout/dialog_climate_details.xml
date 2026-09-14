@@ -122,6 +122,7 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/tvDialogTemperature"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-black"
@@ -180,6 +181,7 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/tvDialogHumidity"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-black"

@@ -5,127 +5,145 @@
     android:id="@+id/scrollLogin"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background"
+    android:background="#EFF6F1"
     android:fillViewport="true">
 
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/layoutLoginRoot"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:paddingHorizontal="20dp"
-        android:paddingTop="32dp"
-        android:paddingBottom="32dp">
+        android:layout_height="wrap_content">
 
-        <!-- Top Header / Logo Section -->
-        <LinearLayout
+        <!-- 1. Scenic Flying Chicken Header Illustration (Top 36% of screen) -->
+        <FrameLayout
             android:id="@+id/headerSectionLogin"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:gravity="center_horizontal"
-            android:orientation="vertical"
+            android:layout_height="310dp"
             app:layout_constraintTop_toTopOf="parent">
 
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/ivLogo"
-                android:layout_width="88dp"
-                android:layout_height="88dp"
+            <ImageView
+                android:id="@+id/ivScenicHero"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
                 android:scaleType="centerCrop"
-                android:src="@drawable/ic_poultry_logo"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium"
+                android:src="@drawable/bg_auth_scenic_clean"
                 tools:ignore="ContentDescription" />
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:fontFamily="sans-serif-black"
-                android:letterSpacing="-0.02"
-                android:text="@string/app_name"
-                android:textColor="@color/primary"
-                android:textSize="26sp" />
+            <!-- Animated Soaring Chicken Overlay -->
+            <ImageView
+                android:id="@+id/ivFlyingChicken"
+                android:layout_width="100dp"
+                android:layout_height="100dp"
+                android:layout_gravity="top|start"
+                android:scaleType="fitCenter"
+                android:src="@drawable/img_flying_chicken_sprite"
+                android:alpha="0"
+                tools:ignore="ContentDescription" />
 
-            <!-- Personality Pill Badge -->
+
+            <!-- Brand Pill Badge in top corner -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:background="@drawable/bg_healthy_badge"
+                android:layout_gravity="top|start"
+                android:layout_marginStart="20dp"
+                android:layout_marginTop="36dp"
+                android:background="@drawable/bg_hud_pill_dark"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="4dp">
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp">
 
                 <ImageView
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
-                    android:src="@drawable/ic_sparkles"
-                    app:tint="@color/primary"
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:src="@drawable/ic_poultry_brand_circle"
                     tools:ignore="ContentDescription" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
-                    android:fontFamily="sans-serif-bold"
+                    android:layout_marginStart="6dp"
+                    android:fontFamily="sans-serif-black"
                     android:letterSpacing="0.04"
-                    android:text="SMART FLOCK TELEMETRY"
-                    android:textColor="@color/primary"
-                    android:textSize="9sp" />
+                    android:text="POULTRYSENSE AI"
+                    android:textColor="@color/white"
+                    android:textSize="10sp" />
             </LinearLayout>
 
-        </LinearLayout>
+        </FrameLayout>
 
-        <!-- Main Login Card -->
+        <!-- 2. Modern Rounded Bottom Sheet Card (Overlaps the bottom of the scenic image) -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/cardLogin"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            app:cardBackgroundColor="@color/surface"
-            app:cardCornerRadius="22dp"
-            app:cardElevation="4dp"
+            android:layout_marginTop="-36dp"
+            app:cardBackgroundColor="@color/white"
+            app:cardCornerRadius="30dp"
+            app:cardElevation="10dp"
+            app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintTop_toBottomOf="@id/headerSectionLogin"
-            app:strokeColor="@color/surface_stroke"
-            app:strokeWidth="1dp">
+            app:strokeColor="@color/transparent"
+            app:strokeWidth="0dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="24dp">
+                android:paddingHorizontal="24dp"
+                android:paddingTop="14dp"
+                android:paddingBottom="28dp">
+
+                <!-- Drag Indicator Handle -->
+                <View
+                    android:layout_width="44dp"
+                    android:layout_height="4dp"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginBottom="16dp"
+                    android:background="@drawable/bg_sheet_top_pill" />
+
+                <!-- Header Title (Exact photo layout) -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:fontFamily="sans-serif-bold"
+                    android:letterSpacing="-0.02"
+                    android:text="Login to Access Your"
+                    android:textColor="#1E293B"
+                    android:textSize="21sp" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="2dp"
                     android:fontFamily="sans-serif-black"
-                    android:text="@string/login_title"
-                    android:textColor="@color/text_primary"
-                    android:textSize="22sp" />
+                    android:letterSpacing="-0.03"
+                    android:text="Smart Flock Hub"
+                    android:textColor="#1E3A8A"
+                    android:textSize="23sp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="@string/login_subtitle"
-                    android:textColor="@color/text_muted"
-                    android:textSize="13sp" />
-
-                <!-- Email Input -->
+                <!-- Email Input Field (Soft Pill Style) -->
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/tilEmail"
                     style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="20dp"
+                    android:layout_marginTop="22dp"
                     android:hint="@string/email_address"
-                    app:boxCornerRadiusBottomEnd="12dp"
-                    app:boxCornerRadiusBottomStart="12dp"
-                    app:boxCornerRadiusTopEnd="12dp"
-                    app:boxCornerRadiusTopStart="12dp"
-                    app:boxStrokeColor="@color/primary"
+                    app:boxBackgroundColor="#F4F6F9"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxStrokeColor="#1E3A8A"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="1.5dp"
                     app:errorIconDrawable="@drawable/ic_error"
+                    app:hintTextColor="#64748B"
                     app:startIconDrawable="@drawable/ic_email"
-                    app:startIconTint="@color/text_muted">
+                    app:startIconTint="#94A3B8">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etEmail"
@@ -135,11 +153,11 @@
                         android:imeOptions="actionNext"
                         android:inputType="textEmailAddress"
                         android:maxLines="1"
-                        android:textColor="@color/text_primary"
+                        android:textColor="#1E293B"
                         android:textSize="14sp" />
                 </com.google.android.material.textfield.TextInputLayout>
 
-                <!-- Password Input -->
+                <!-- Password Input Field (Soft Pill Style) -->
                 <com.google.android.material.textfield.TextInputLayout
                     android:id="@+id/tilPassword"
                     style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
@@ -147,15 +165,20 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
                     android:hint="@string/password"
-                    app:boxCornerRadiusBottomEnd="12dp"
-                    app:boxCornerRadiusBottomStart="12dp"
-                    app:boxCornerRadiusTopEnd="12dp"
-                    app:boxCornerRadiusTopStart="12dp"
-                    app:boxStrokeColor="@color/primary"
+                    app:boxBackgroundColor="#F4F6F9"
+                    app:boxCornerRadiusBottomEnd="16dp"
+                    app:boxCornerRadiusBottomStart="16dp"
+                    app:boxCornerRadiusTopEnd="16dp"
+                    app:boxCornerRadiusTopStart="16dp"
+                    app:boxStrokeColor="#1E3A8A"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="1.5dp"
                     app:endIconMode="password_toggle"
+                    app:endIconTint="#94A3B8"
                     app:errorIconDrawable="@drawable/ic_error"
+                    app:hintTextColor="#64748B"
                     app:startIconDrawable="@drawable/ic_lock"
-                    app:startIconTint="@color/text_muted">
+                    app:startIconTint="#94A3B8">
 
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/etPassword"
@@ -165,27 +188,49 @@
                         android:imeOptions="actionDone"
                         android:inputType="textPassword"
                         android:maxLines="1"
-                        android:textColor="@color/text_primary"
+                        android:textColor="#1E293B"
                         android:textSize="14sp" />
                 </com.google.android.material.textfield.TextInputLayout>
 
-                <!-- Forgot Password Button -->
-                <TextView
-                    android:id="@+id/btnForgotPassword"
-                    android:layout_width="wrap_content"
+                <!-- Remember Me & Forgot Password Row (Exact photo layout) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="end"
                     android:layout_marginTop="8dp"
-                    android:background="?attr/selectableItemBackground"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:fontFamily="sans-serif-medium"
-                    android:padding="6dp"
-                    android:text="@string/forgot_password"
-                    android:textColor="@color/primary"
-                    android:textSize="13sp" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                <!-- Login Button Container with Progress Bar -->
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/cbRememberMe"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="Remember me"
+                        android:textColor="#475569"
+                        android:textSize="13sp"
+                        app:buttonTint="#1E3A8A" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="1dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/btnForgotPassword"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFamily="sans-serif-bold"
+                        android:padding="6dp"
+                        android:text="@string/forgot_password"
+                        android:textColor="#1E3A8A"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <!-- Big Primary Login Button (Rounded Pill) -->
                 <FrameLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -194,18 +239,15 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnLogin"
                         android:layout_width="match_parent"
-                        android:layout_height="52dp"
-                        android:backgroundTint="@color/primary"
+                        android:layout_height="54dp"
+                        android:backgroundTint="#1E3A8A"
                         android:fontFamily="sans-serif-bold"
                         android:text="@string/sign_in_btn"
                         android:textAllCaps="false"
                         android:textColor="@color/white"
                         android:textSize="15sp"
-                        app:cornerRadius="12dp"
-                        app:elevation="3dp"
-                        app:icon="@drawable/ic_check_circle"
-                        app:iconGravity="textStart"
-                        app:iconTint="@color/white" />
+                        app:cornerRadius="18dp"
+                        app:elevation="2dp" />
 
                     <ProgressBar
                         android:id="@+id/progressBar"
@@ -216,41 +258,41 @@
                         android:visibility="gone" />
                 </FrameLayout>
 
+
+                <!-- Bottom Footer (Don't have an account? Create an account) -->
+                <LinearLayout
+                    android:id="@+id/bottomSectionLogin"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="22dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif"
+                        android:text="Don't have an account? "
+                        android:textColor="#64748B"
+                        android:textSize="13.5sp" />
+
+                    <TextView
+                        android:id="@+id/tvSignUpLink"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackground"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:fontFamily="sans-serif-black"
+                        android:padding="4dp"
+                        android:text="Create an account"
+                        android:textColor="#1E3A8A"
+                        android:textSize="13.5sp" />
+                </LinearLayout>
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
-        <!-- Bottom Sign Up Switch -->
-        <LinearLayout
-            android:id="@+id/bottomSectionLogin"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:gravity="center"
-            android:orientation="horizontal"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/cardLogin">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/dont_have_account"
-                android:textColor="@color/text_muted"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/tvSignUpLink"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true"
-                android:fontFamily="sans-serif-black"
-                android:padding="6dp"
-                android:text="@string/sign_up_link"
-                android:textColor="@color/primary"
-                android:textSize="14sp" />
-        </LinearLayout>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

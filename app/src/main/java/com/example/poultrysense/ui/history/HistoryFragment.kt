@@ -7,49 +7,14 @@ import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.poultrysense.R
-import com.example.poultrysense.data.models.ScanSession
+import com.example.poultrysense.data.CheckupSessionManager
 import com.example.poultrysense.databinding.FragmentHistoryBinding
 
 class HistoryFragment : Fragment() {
 
     private var _binding: FragmentHistoryBinding? = null
     private val binding get() = _binding!!
-
-    private val sessionHistory = listOf(
-        ScanSession(
-            id = "session-108",
-            sessionNumber = "Scan #108",
-            date = "Aug 9, 2026",
-            time = "10:30 AM",
-            status = "Completed",
-            totalFlock = 350,
-            healthyCount = 342,
-            illCount = 8,
-            healthIndex = "97.7%"
-        ),
-        ScanSession(
-            id = "session-107",
-            sessionNumber = "Scan #107",
-            date = "Aug 8, 2026",
-            time = "05:00 PM",
-            status = "Completed",
-            totalFlock = 350,
-            healthyCount = 345,
-            illCount = 5,
-            healthIndex = "98.5%"
-        ),
-        ScanSession(
-            id = "session-106",
-            sessionNumber = "Scan #106",
-            date = "Aug 8, 2026",
-            time = "09:00 AM",
-            status = "Completed",
-            totalFlock = 350,
-            healthyCount = 348,
-            illCount = 2,
-            healthIndex = "99.4%"
-        )
-    )
+    private lateinit var historyAdapter: HistoryAdapter
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -63,17 +28,32 @@ class HistoryFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        val sessions = CheckupSessionManager.getCompletedSessions(requireContext())
+        historyAdapter = HistoryAdapter(sessions)
+
         binding.rvHistory.apply {
             layoutManager = LinearLayoutManager(context)
-            adapter = HistoryAdapter(sessionHistory)
+            adapter = historyAdapter
         }
 
         binding.swipeRefreshLayout.setColorSchemeResources(R.color.primary)
         binding.swipeRefreshLayout.setOnRefreshListener {
+            loadSessions()
             binding.swipeRefreshLayout.postDelayed({
-                binding.swipeRefreshLayout.isRefreshing = false
-            }, 600)
+                _binding?.swipeRefreshLayout?.let { it.isRefreshing = false }
+            }, 500)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        loadSessions()
+    }
+
+    private fun loadSessions() {
+        val ctx = context ?: return
+        val sessions = CheckupSessionManager.getCompletedSessions(ctx)
+        historyAdapter.updateData(sessions)
     }
 
     override fun onDestroyView() {

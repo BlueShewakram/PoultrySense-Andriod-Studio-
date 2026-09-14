@@ -29,15 +29,27 @@ class LoginActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityLoginBinding
     private val authRepository = AuthRepository()
+    private var flyingChickenAnimator: FlyingChickenAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        flyingChickenAnimator = FlyingChickenAnimator(binding.ivFlyingChicken)
         playEntranceAnimation()
         setupValidationListeners()
         setupClickListeners()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        flyingChickenAnimator?.start()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        flyingChickenAnimator?.stop()
     }
 
     private fun playEntranceAnimation() {
@@ -143,7 +155,7 @@ class LoginActivity : AppCompatActivity() {
                 com.example.poultrysense.data.UserPreferences.saveUser(this@LoginActivity, initialUser)
 
                 val greeting = user.displayName?.ifEmpty { null } ?: "Specialist"
-                Toast.makeText(this@LoginActivity, "👋 Welcome back, $greeting!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@LoginActivity, "Welcome back, $greeting!", Toast.LENGTH_SHORT).show()
 
                 val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -217,7 +229,7 @@ class LoginActivity : AppCompatActivity() {
     private fun setLoading(loading: Boolean) {
         binding.btnLogin.isEnabled = !loading
         binding.btnLogin.text = if (loading) "" else getString(R.string.sign_in_btn)
-        binding.btnLogin.icon = if (loading) null else getDrawable(R.drawable.ic_check_circle)
+        binding.btnLogin.icon = null
         binding.progressBar.visibility = if (loading) View.VISIBLE else View.GONE
         binding.etEmail.isEnabled = !loading
         binding.etPassword.isEnabled = !loading

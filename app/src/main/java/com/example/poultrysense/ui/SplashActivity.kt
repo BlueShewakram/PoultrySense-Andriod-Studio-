@@ -6,10 +6,8 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import com.example.poultrysense.data.repository.AuthRepository
@@ -23,131 +21,142 @@ class SplashActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Enable edge-to-edge for seamless full-bleed artwork
+
+        // Edge-to-edge full-bleed obsidian canvas
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         binding = ActivitySplashBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        hideInitialViews()
-        startCinematicSequence()
+        setupInitialState()
+        runBrandSequence()
     }
 
-    private fun hideInitialViews() {
-        binding.ivSplashArtwork.scaleX = 1.03f
-        binding.ivSplashArtwork.scaleY = 1.03f
+    private fun setupInitialState() {
+        binding.flLogoFrame.alpha = 0f
+        binding.flLogoFrame.scaleX = 0.88f
+        binding.flLogoFrame.scaleY = 0.88f
 
-        binding.viewTreeShimmer.alpha = 0f
+        binding.viewAmbientGlow.alpha = 0f
+        binding.viewAmbientGlow.scaleX = 0.7f
+        binding.viewAmbientGlow.scaleY = 0.7f
 
-        binding.layoutStatusPill.alpha = 0f
-        binding.layoutStatusPill.scaleX = 0.8f
-        binding.layoutStatusPill.scaleY = 0.8f
-        binding.layoutStatusPill.translationY = 20f
+        binding.tvBrandTitle.alpha = 0f
+        binding.tvBrandTitle.translationY = 16f
 
-        binding.layoutFooterBanner.alpha = 0f
-        binding.layoutFooterBanner.translationY = 25f
+        binding.tvBrandSubtitle.alpha = 0f
+        binding.tvBrandSubtitle.translationY = 12f
+
+        binding.layoutFooter.alpha = 0f
     }
 
-    private fun startCinematicSequence() {
-        // 1. Slow cinematic camera settle on the artwork
-        binding.ivSplashArtwork.animate()
-            .scaleX(1.0f)
-            .scaleY(1.0f)
-            .setDuration(2200)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
+    private fun runBrandSequence() {
+        val decelerator = DecelerateInterpolator(1.8f)
 
-        // 2. Subtle warm golden aura shimmer on the telemetry tree
-        startAuraShimmer(binding.viewTreeShimmer)
-
-        // 3. Status Pill Pop-in with Animated Status Progression
-        binding.layoutStatusPill.animate()
-            .alpha(1.0f)
-            .scaleX(1.0f)
-            .scaleY(1.0f)
-            .translationY(0f)
+        // 1. Logo smooth scale & settle
+        binding.flLogoFrame.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
             .setDuration(500)
-            .setStartDelay(350)
-            .setInterpolator(OvershootInterpolator(2.0f))
+            .setInterpolator(decelerator)
             .start()
 
-        // Status Dot Breathing
+        // 2. Ambient radial pulse behind logo
+        binding.viewAmbientGlow.animate()
+            .alpha(0.5f)
+            .scaleX(1.1f)
+            .scaleY(1.1f)
+            .setDuration(750)
+            .setInterpolator(decelerator)
+            .start()
+
+        // 3. Typography reveals
+        binding.tvBrandTitle.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(450)
+            .setStartDelay(160)
+            .setInterpolator(decelerator)
+            .start()
+
+        binding.tvBrandSubtitle.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(450)
+            .setStartDelay(230)
+            .setInterpolator(decelerator)
+            .start()
+
+        binding.layoutFooter.animate()
+            .alpha(1f)
+            .setDuration(400)
+            .setStartDelay(320)
+            .setInterpolator(decelerator)
+            .start()
+
+        // Subtle breathing status dot
         val dotPulse = ObjectAnimator.ofPropertyValuesHolder(
             binding.viewStatusDot,
-            PropertyValuesHolder.ofFloat("scaleX", 0.8f, 1.35f),
-            PropertyValuesHolder.ofFloat("scaleY", 0.8f, 1.35f),
+            PropertyValuesHolder.ofFloat("scaleX", 0.85f, 1.25f),
+            PropertyValuesHolder.ofFloat("scaleY", 0.85f, 1.25f),
             PropertyValuesHolder.ofFloat("alpha", 0.6f, 1.0f)
         ).apply {
-            duration = 650
-            repeatCount = ObjectAnimator.INFINITE
+            duration = 600
+            repeatCount = 2
             repeatMode = ObjectAnimator.REVERSE
             interpolator = AccelerateDecelerateInterpolator()
-            startDelay = 400
+            startDelay = 350
         }
         dotPulse.start()
 
-        // Dynamic multi-stage status text simulation
+        // 4. Smooth Exit Transition at 1050ms
         handler.postDelayed({
-            binding.tvStatusText.animate()
+            // Gentle expansion fade-out
+            binding.flLogoFrame.animate()
                 .alpha(0f)
-                .setDuration(120)
-                .withEndAction {
-                    binding.tvStatusText.text = "Calibrating Neural Vision..."
-                    binding.tvStatusText.animate().alpha(1f).setDuration(160).start()
-                }.start()
-        }, 750)
+                .scaleX(1.06f)
+                .scaleY(1.06f)
+                .setDuration(240)
+                .setInterpolator(AccelerateDecelerateInterpolator())
+                .start()
 
-        handler.postDelayed({
-            binding.tvStatusText.animate()
+            binding.tvBrandTitle.animate()
                 .alpha(0f)
-                .setDuration(120)
-                .withEndAction {
-                    binding.tvStatusText.text = "Flock Analysis Online ✓"
-                    binding.tvStatusText.animate().alpha(1f).setDuration(160).start()
-                    binding.layoutStatusPill.animate()
-                        .scaleX(1.06f)
-                        .scaleY(1.06f)
-                        .setDuration(120)
-                        .withEndAction {
-                            binding.layoutStatusPill.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
-                        }.start()
-                }.start()
-        }, 1450)
+                .setDuration(200)
+                .start()
 
-        // 4. Wooden Footer Banner Glide Up
-        binding.layoutFooterBanner.animate()
-            .alpha(1.0f)
-            .translationY(0f)
-            .setDuration(450)
-            .setStartDelay(500)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
+            binding.tvBrandSubtitle.animate()
+                .alpha(0f)
+                .setDuration(200)
+                .start()
 
-        // 5. Smooth Hand-off Navigation
-        handler.postDelayed({
-            val authRepository = AuthRepository()
-            val targetActivity = if (authRepository.isUserLoggedIn) {
-                MainActivity::class.java
-            } else {
-                LoginActivity::class.java
-            }
-            startActivity(Intent(this, targetActivity))
-            finish()
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
-        }, 2200)
-    }
+            binding.viewAmbientGlow.animate()
+                .alpha(0f)
+                .scaleX(1.35f)
+                .scaleY(1.35f)
+                .setDuration(250)
+                .start()
 
-    private fun startAuraShimmer(ringView: View) {
-        val scaleX = PropertyValuesHolder.ofFloat("scaleX", 0.8f, 1.8f)
-        val scaleY = PropertyValuesHolder.ofFloat("scaleY", 0.8f, 1.8f)
-        val alpha = PropertyValuesHolder.ofFloat("alpha", 0.6f, 0.0f)
+            binding.layoutFooter.animate()
+                .alpha(0f)
+                .setDuration(180)
+                .start()
 
-        ObjectAnimator.ofPropertyValuesHolder(ringView, scaleX, scaleY, alpha).apply {
-            duration = 1800
-            repeatCount = ObjectAnimator.INFINITE
-            interpolator = DecelerateInterpolator()
-            start()
-        }
+            // Navigate
+            handler.postDelayed({
+                val authRepository = AuthRepository()
+                val targetActivity = if (authRepository.isUserLoggedIn) {
+                    MainActivity::class.java
+                } else {
+                    LoginActivity::class.java
+                }
+                startActivity(Intent(this, targetActivity))
+                finish()
+                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+            }, 220)
+
+        }, 1050)
     }
 
     override fun onDestroy() {

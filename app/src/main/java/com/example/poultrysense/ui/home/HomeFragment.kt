@@ -21,6 +21,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import com.example.poultrysense.data.models.AiStatusResponse
+import com.google.gson.Gson
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -36,7 +42,13 @@ class HomeFragment : Fragment() {
         .readTimeout(500, TimeUnit.MILLISECONDS)
         .build()
 
+    private val gson = Gson()
     private var streamJob: Job? = null
+    private var statusJob: Job? = null
+    private var firebaseSensorListener: ValueEventListener? = null
+    private val realtimeDb by lazy {
+        FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
+    }
     private val calendar = Calendar.getInstance()
     private val dateFormat = SimpleDateFormat("dd MMM", Locale.getDefault())
 
@@ -65,11 +77,13 @@ class HomeFragment : Fragment() {
         super.onResume()
         updateAlertsAndMetrics()
         startStreamPolling()
+        startSensorPolling()
     }
 
     override fun onPause() {
         super.onPause()
         stopStreamPolling()
+        stopSensorPolling()
     }
 
     private fun playEntranceAnimation() {
@@ -173,15 +187,33 @@ class HomeFragment : Fragment() {
         }
     }
 
+    private var liveTemp: Double = 24.5
+    private var liveHumidity: Double = 62.0
+    private var activeClimateSheetBinding: com.example.poultrysense.databinding.DialogClimateDetailsBinding? = null
+
     private fun showClimateBottomSheet() {
         val ctx = context ?: return
         val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(ctx)
         val sheetBinding = com.example.poultrysense.databinding.DialogClimateDetailsBinding.inflate(layoutInflater)
+        activeClimateSheetBinding = sheetBinding
         dialog.setContentView(sheetBinding.root)
+        updateClimateSheetValues(sheetBinding, liveTemp, liveHumidity)
         sheetBinding.btnDismissClimateSheet.setOnClickListener {
             dialog.dismiss()
         }
+        dialog.setOnDismissListener {
+            activeClimateSheetBinding = null
+        }
         dialog.show()
+    }
+
+    private fun updateClimateSheetValues(
+        sheetBinding: com.example.poultrysense.databinding.DialogClimateDetailsBinding,
+        temp: Double,
+        hum: Double
+    ) {
+        sheetBinding.tvDialogTemperature.text = String.format("%.1f°C", temp)
+        sheetBinding.tvDialogHumidity.text = String.format("%.1f%%", hum)
     }
 
     private fun playBounceAnimation(view: android.view.View, onEnd: () -> Unit) {
@@ -251,6 +283,102 @@ class HomeFragment : Fragment() {
         }
     }
 
+    private fun updateClimateUI(temp: Double, hum: Double, ammonia: Int = 12, statusOverride: String? = null) {
+        if (_binding == null) return
+        liveTemp = temp
+        liveHumidity = hum
+
+        // 1. Live Environment Overview Cards
+        binding.tvThumbnailHumidity.text = "Humidity: ${hum.toInt()}% (Good)"
+        binding.tvBarnHumidity.text = String.format("Current level: %.1f%% (Good)", hum)
+        binding.tvBarnTemperature.text = String.format("Current temp: %.1f°C", temp)
+
+        // 2. Climate Capsule Header Card
+        binding.tvClimateCapsuleDesc.text = "${hum.toInt()}% Humidity\n${String.format("%.1f", temp)}°C temp"
+        val climateStatus = statusOverride ?: com.example.poultrysense.data.repository.EnvironmentRepository.getClimateStatus(temp, hum)
+        binding.tvClimateCapsuleStatus.text = climateStatus
+        binding.tvBarnTempStatus.text = if (temp > 30.0) "HIGH" else if (temp < 18.0) "LOW" else "NORMAL"
+        binding.tvBarnHumidityStatus.text = if (hum > 75.0) "HIGH" else if (hum < 40.0) "LOW" else "NORMAL"
+
+        // 3. Realtime update for open Climate Sheet if active
+        activeClimateSheetBinding?.let { sheet ->
+            updateClimateSheetValues(sheet, temp, hum)
+        }
+    }
+
+    private fun startSensorPolling() {
+        stopSensorPolling()
+
+        // 1. Listen directly to Firebase Cloud Realtime Database (/sensor_data/live)
+        // This delivers real-time ESP32 data globally with ZERO IP configuration for customers!
+        val liveRef = realtimeDb.getReference("sensor_data").child("live")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (_binding == null || !snapshot.exists()) return
+                val temp = snapshot.child("temperature").getValue(Double::class.java)
+                    ?: snapshot.child("temperature").getValue(Long::class.java)?.toDouble()
+                val hum = snapshot.child("humidity").getValue(Double::class.java)
+                    ?: snapshot.child("humidity").getValue(Long::class.java)?.toDouble()
+                val ammonia = snapshot.child("ammonia").getValue(Int::class.java) ?: 12
+                val status = snapshot.child("status").getValue(String::class.java)
+
+                if (temp != null && hum != null) {
+                    updateClimateUI(temp, hum, ammonia, status)
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        firebaseSensorListener = listener
+        liveRef.addValueEventListener(listener)
+
+        // 2. Fallback / Local PC Server polling (if the customer also runs local Python AI)
+        val serverUrl = ServerPreferences.getBaseUrl(requireContext()) + "/status"
+        statusJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val request = Request.Builder().url(serverUrl).build()
+            while (isActive) {
+                try {
+                    val response = httpClient.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (body != null) {
+                            val status = gson.fromJson(body, AiStatusResponse::class.java)
+                            withContext(Dispatchers.Main) {
+                                if (_binding != null) {
+                                    val temp = status.temperature ?: 24.5
+                                    val hum = status.humidity ?: 62.0
+                                    val ammonia = status.ammonia ?: 12
+                                    updateClimateUI(temp, hum, ammonia)
+
+                                    // Save to Firebase Realtime Database
+                                    val activeZone = binding.tvActiveZoneName.text.toString()
+                                    com.example.poultrysense.data.repository.EnvironmentRepository.syncEnvironmentData(
+                                        temperature = temp,
+                                        humidity = hum,
+                                        ammonia = ammonia,
+                                        zone = activeZone
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    response.close()
+                } catch (_: Exception) {
+                }
+                delay(1500)
+            }
+        }
+    }
+
+    private fun stopSensorPolling() {
+        firebaseSensorListener?.let {
+            realtimeDb.getReference("sensor_data").child("live").removeEventListener(it)
+            firebaseSensorListener = null
+        }
+        statusJob?.cancel()
+        statusJob = null
+    }
+
     private fun stopStreamPolling() {
         streamJob?.cancel()
         streamJob = null
@@ -259,6 +387,7 @@ class HomeFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         stopStreamPolling()
+        stopSensorPolling()
         _binding = null
     }
 }

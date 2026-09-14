@@ -4,7 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background">
+    android:background="#F8FAF8">
 
     <!-- Scrollable Main Monitor Content -->
     <androidx.core.widget.NestedScrollView
@@ -18,12 +18,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:paddingStart="20dp"
-            android:paddingTop="16dp"
-            android:paddingEnd="20dp"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="20dp"
             android:paddingBottom="120dp">
 
-            <!-- 1. Header: Page Title & Connection Badge -->
+            <!-- 1. Top App Bar (Clean, Minimal, No redundant badges) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -41,22 +40,22 @@
                         android:layout_height="wrap_content"
                         android:fontFamily="sans-serif-black"
                         android:letterSpacing="-0.03"
-                        android:text="AI Vision Monitor"
-                        android:textColor="@color/text_primary"
+                        android:text="Flock Monitor"
+                        android:textColor="#0F172A"
                         android:textSize="26sp" />
 
                     <TextView
                         android:id="@+id/tvMonitorSubtitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="1dp"
+                        android:layout_marginTop="2dp"
                         android:fontFamily="sans-serif-medium"
-                        android:text="Camera 1 • Main Barn Flock"
-                        android:textColor="@color/text_muted"
-                        android:textSize="12sp" />
+                        android:text="Camera 1 • Main Coop"
+                        android:textColor="#64748B"
+                        android:textSize="12.5sp" />
                 </LinearLayout>
 
-                <!-- Connection Status Badge -->
+                <!-- Single Clean Connection Status Pill -->
                 <LinearLayout
                     android:id="@+id/layoutConnectionBadge"
                     android:layout_width="wrap_content"
@@ -66,8 +65,7 @@
                     android:focusable="true"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="12dp">
+                    android:paddingHorizontal="14dp">
 
                     <View
                         android:id="@+id/viewStatusDot"
@@ -80,19 +78,19 @@
                         android:id="@+id/tvStatusBadge"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
+                        android:layout_marginStart="8dp"
                         android:fontFamily="sans-serif-bold"
-                        android:text="AI Connected"
+                        android:text="Connected"
                         android:textColor="@color/primary"
-                        android:textSize="11sp" />
+                        android:textSize="12sp" />
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- 2. Clean 1-3 Camera Channel Switcher Bar -->
+            <!-- 2. Clean Camera Channel Switcher -->
             <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="16dp"
                 android:overScrollMode="never"
                 android:scrollbars="none">
 
@@ -110,12 +108,13 @@
                         android:layout_width="wrap_content"
                         android:layout_height="40dp"
                         android:fontFamily="sans-serif-bold"
-                        android:text="Cam 1 (Main Coop)"
+                        android:text="Coop 1"
                         android:textAllCaps="false"
-                        android:textSize="11sp"
+                        android:textSize="11.5sp"
                         app:cornerRadius="12dp"
                         app:icon="@drawable/ic_videocam"
-                        app:iconSize="15dp" />
+                        app:iconSize="15dp"
+                        app:strokeColor="#CBD5E1" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnCam2"
@@ -123,12 +122,13 @@
                         android:layout_width="wrap_content"
                         android:layout_height="40dp"
                         android:fontFamily="sans-serif-bold"
-                        android:text="Cam 2 (Brooder)"
+                        android:text="Brooder"
                         android:textAllCaps="false"
-                        android:textSize="11sp"
+                        android:textSize="11.5sp"
                         app:cornerRadius="12dp"
                         app:icon="@drawable/ic_videocam"
-                        app:iconSize="15dp" />
+                        app:iconSize="15dp"
+                        app:strokeColor="#CBD5E1" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnCam3"
@@ -136,12 +136,13 @@
                         android:layout_width="wrap_content"
                         android:layout_height="40dp"
                         android:fontFamily="sans-serif-bold"
-                        android:text="Cam 3 (Nesting)"
+                        android:text="Nesting"
                         android:textAllCaps="false"
-                        android:textSize="11sp"
+                        android:textSize="11.5sp"
                         app:cornerRadius="12dp"
                         app:icon="@drawable/ic_videocam"
-                        app:iconSize="15dp" />
+                        app:iconSize="15dp"
+                        app:strokeColor="#CBD5E1" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnCamPhone"
@@ -151,30 +152,31 @@
                         android:fontFamily="sans-serif-bold"
                         android:text="Phone Cam"
                         android:textAllCaps="false"
-                        android:textSize="11sp"
+                        android:textSize="11.5sp"
                         app:cornerRadius="12dp"
                         app:icon="@drawable/ic_photo_camera"
-                        app:iconSize="15dp" />
+                        app:iconSize="15dp"
+                        app:strokeColor="#CBD5E1" />
                 </com.google.android.material.button.MaterialButtonToggleGroup>
             </HorizontalScrollView>
 
-            <!-- 3. Main 16:9 Video Viewport Card (Clean, No Green Frame) -->
+            <!-- 3. Clean 16:9 Video Viewport -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardVideoViewport"
                 android:layout_width="match_parent"
-                android:layout_height="250dp"
-                android:layout_marginTop="12dp"
-                app:cardBackgroundColor="#0D1810"
+                android:layout_height="240dp"
+                android:layout_marginTop="14dp"
+                app:cardBackgroundColor="#0F172A"
                 app:cardCornerRadius="24dp"
-                app:cardElevation="3dp"
-                app:strokeColor="@color/surface_stroke"
+                app:cardElevation="4dp"
+                app:strokeColor="#E2E8F0"
                 app:strokeWidth="1dp">
 
                 <FrameLayout
                     android:layout_width="match_parent"
                     android:layout_height="match_parent">
 
-                    <!-- 1. Stream Image -->
+                    <!-- Remote Stream Feed -->
                     <ImageView
                         android:id="@+id/ivMonitorStream"
                         android:layout_width="match_parent"
@@ -183,29 +185,29 @@
                         android:visibility="visible"
                         tools:ignore="ContentDescription" />
 
-                    <!-- 2. Phone CameraX View -->
+                    <!-- Phone CameraX View -->
                     <androidx.camera.view.PreviewView
                         android:id="@+id/viewCameraX"
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
                         android:visibility="gone" />
 
-                    <!-- 3. Stream Offline Placeholder -->
+                    <!-- Stream Offline State -->
                     <LinearLayout
                         android:id="@+id/layoutMonitorOffline"
                         android:layout_width="match_parent"
                         android:layout_height="match_parent"
-                        android:background="#E60D1810"
+                        android:background="#E60F172A"
                         android:gravity="center"
                         android:orientation="vertical"
                         android:padding="20dp"
                         android:visibility="gone">
 
                         <ImageView
-                            android:layout_width="44dp"
-                            android:layout_height="44dp"
+                            android:layout_width="40dp"
+                            android:layout_height="40dp"
                             android:src="@drawable/ic_videocam"
-                            app:tint="#80FFFFFF"
+                            app:tint="#64748B"
                             tools:ignore="ContentDescription" />
 
                         <TextView
@@ -213,8 +215,8 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="10dp"
-                            android:fontFamily="sans-serif-black"
-                            android:text="Camera Stream Waiting for Signal"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="Waiting for Camera Feed"
                             android:textColor="@color/white"
                             android:textSize="14sp" />
 
@@ -222,39 +224,62 @@
                             android:id="@+id/tvMonitorStatusSub"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:fontFamily="sans-serif-medium"
+                            android:layout_marginTop="3dp"
+                            android:fontFamily="sans-serif"
                             android:gravity="center"
-                            android:text="Check server IP in Profile → AI Server Settings"
-                            android:textColor="#A0FFFFFF"
-                            android:textSize="11sp" />
+                            android:text="Verify AI Server IP in Profile Settings"
+                            android:textColor="#94A3B8"
+                            android:textSize="11.5sp" />
 
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnOfflineRetry"
-                            style="?attr/materialButtonOutlinedStyle"
+                        <LinearLayout
                             android:layout_width="wrap_content"
-                            android:layout_height="36dp"
-                            android:layout_marginTop="12dp"
-                            android:fontFamily="sans-serif-bold"
-                            android:text="Retry Stream"
-                            android:textAllCaps="false"
-                            android:textColor="@color/white"
-                            android:textSize="11sp"
-                            app:cornerRadius="12dp"
-                            app:icon="@drawable/ic_refresh"
-                            app:iconSize="14dp"
-                            app:iconTint="@color/white"
-                            app:strokeColor="#66FFFFFF" />
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="14dp"
+                            android:gravity="center"
+                            android:orientation="horizontal">
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnOfflineRetry"
+                                style="?attr/materialButtonOutlinedStyle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="36dp"
+                                android:layout_marginEnd="8dp"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="Retry"
+                                android:textAllCaps="false"
+                                android:textColor="@color/white"
+                                android:textSize="11.5sp"
+                                app:cornerRadius="10dp"
+                                app:icon="@drawable/ic_refresh"
+                                app:iconSize="14dp"
+                                app:iconTint="@color/white"
+                                app:strokeColor="#475569" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/btnOfflineUsePhoneCam"
+                                android:layout_width="wrap_content"
+                                android:layout_height="36dp"
+                                android:backgroundTint="@color/primary"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="Phone Camera"
+                                android:textAllCaps="false"
+                                android:textColor="@color/white"
+                                android:textSize="11.5sp"
+                                app:cornerRadius="10dp"
+                                app:icon="@drawable/ic_photo_camera"
+                                app:iconSize="14dp"
+                                app:iconTint="@color/white" />
+                        </LinearLayout>
                     </LinearLayout>
 
-                    <!-- 4. Top-Left HUD Pill (Active Camera Channel) -->
+                    <!-- Top-Left Glass HUD Pill (Channel Name) -->
                     <LinearLayout
                         android:id="@+id/hudLivePill"
                         android:layout_width="wrap_content"
                         android:layout_height="28dp"
                         android:layout_gravity="top|start"
                         android:layout_margin="12dp"
-                        android:background="@drawable/bg_hud_pill_dark"
+                        android:background="@drawable/bg_monitor_glass_hud"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:paddingHorizontal="10dp">
@@ -277,14 +302,14 @@
                             android:textSize="10sp" />
                     </LinearLayout>
 
-                    <!-- 5. Top-Right HUD Pill (FPS & Latency) -->
+                    <!-- Top-Right Glass HUD Pill (FPS & Latency) -->
                     <LinearLayout
                         android:id="@+id/hudFpsPill"
                         android:layout_width="wrap_content"
                         android:layout_height="28dp"
                         android:layout_gravity="top|end"
                         android:layout_margin="12dp"
-                        android:background="@drawable/bg_hud_pill_dark"
+                        android:background="@drawable/bg_monitor_glass_hud"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:paddingHorizontal="10dp">
@@ -293,23 +318,71 @@
                             android:id="@+id/tvHudFps"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:fontFamily="sans-serif-black"
+                            android:fontFamily="sans-serif-bold"
                             android:text="30.0 FPS"
-                            android:textColor="@color/accent_green"
+                            android:textColor="@color/white"
                             android:textSize="10sp" />
 
                         <TextView
                             android:id="@+id/tvHudLatency"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="6dp"
-                            android:fontFamily="sans-serif-medium"
+                            android:layout_marginStart="4dp"
+                            android:fontFamily="sans-serif"
                             android:text="• 18ms"
-                            android:textColor="#B3FFFFFF"
+                            android:textColor="#94A3B8"
                             android:textSize="10sp" />
                     </LinearLayout>
 
-                    <!-- 6. Shutter Flash Overlay for Snapshots -->
+                    <!-- Bottom Overlay (Lens Flip + Shutter Snapshot) -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:layout_gravity="bottom"
+                        android:background="#990F172A"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="14dp">
+
+                        <TextView
+                            android:id="@+id/tvActiveCameraLabel"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:fontFamily="sans-serif-medium"
+                            android:text="Camera 1 Active"
+                            android:textColor="@color/white"
+                            android:textSize="11.5sp" />
+
+                        <!-- Lens Flip Action -->
+                        <ImageView
+                            android:id="@+id/btnFlipCameraLens"
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:layout_marginEnd="6dp"
+                            android:background="@drawable/bg_dock_btn_circle"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:padding="6dp"
+                            android:src="@drawable/ic_camera_switch"
+                            app:tint="@color/primary"
+                            tools:ignore="ContentDescription" />
+
+                        <!-- Frame Snapshot Shutter Action -->
+                        <ImageView
+                            android:id="@+id/btnCaptureSnapshot"
+                            android:layout_width="32dp"
+                            android:layout_height="32dp"
+                            android:background="@drawable/bg_dock_btn_circle"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:padding="6dp"
+                            android:src="@drawable/ic_camera_snapshot"
+                            app:tint="@color/primary"
+                            tools:ignore="ContentDescription" />
+                    </LinearLayout>
+
+                    <!-- Shutter Flash Overlay -->
                     <View
                         android:id="@+id/viewShutterFlash"
                         android:layout_width="match_parent"
@@ -320,77 +393,24 @@
                 </FrameLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <!-- 4. Floating Control Bar (Flip Lens & Snapshot) -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:background="@drawable/bg_camera_dock_glass"
-                android:elevation="2dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingStart="16dp"
-                android:paddingTop="8dp"
-                android:paddingEnd="16dp"
-                android:paddingBottom="8dp">
-
-                <TextView
-                    android:id="@+id/tvActiveCameraLabel"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:fontFamily="sans-serif-bold"
-                    android:text="Camera 1 Active • 1080p Stream"
-                    android:textColor="@color/text_primary"
-                    android:textSize="12sp" />
-
-                <!-- Lens Flip Action (Rear / Front Camera) -->
-                <ImageView
-                    android:id="@+id/btnFlipCameraLens"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
-                    android:layout_marginEnd="8dp"
-                    android:background="@drawable/bg_dock_btn_circle"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:padding="8dp"
-                    android:src="@drawable/ic_camera_switch"
-                    app:tint="@color/primary"
-                    tools:ignore="ContentDescription" />
-
-                <!-- Frame Snapshot Shutter Action -->
-                <ImageView
-                    android:id="@+id/btnCaptureSnapshot"
-                    android:layout_width="38dp"
-                    android:layout_height="38dp"
-                    android:background="@drawable/bg_dock_btn_circle"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:padding="8dp"
-                    android:src="@drawable/ic_camera_snapshot"
-                    app:tint="@color/primary"
-                    tools:ignore="ContentDescription" />
-
-            </LinearLayout>
-
-            <!-- 5. Real-time AI Flock Telemetry Card -->
+            <!-- 4. Telemetry KPI Grid (No fake feeding/roosting, real metrics) -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                app:cardBackgroundColor="@color/surface"
-                app:cardCornerRadius="24dp"
+                app:cardBackgroundColor="@color/white"
+                app:cardCornerRadius="20dp"
                 app:cardElevation="2dp"
-                app:strokeColor="@color/surface_stroke"
+                app:strokeColor="#E2E8F0"
                 app:strokeWidth="1dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="18dp">
+                    android:padding="16dp">
 
-                    <!-- Header -->
+                    <!-- Header Row -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -406,9 +426,9 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:fontFamily="sans-serif-bold"
-                                android:text="Live Flock Telemetry"
-                                android:textColor="@color/text_primary"
+                                android:fontFamily="sans-serif-black"
+                                android:text="Flock Telemetry"
+                                android:textColor="#0F172A"
                                 android:textSize="16sp" />
 
                             <TextView
@@ -418,8 +438,8 @@
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
                                 android:text="ByteTrack Multi-Object Intelligence • Cam 1"
-                                android:textColor="@color/text_muted"
-                                android:textSize="11sp" />
+                                android:textColor="#64748B"
+                                android:textSize="11.5sp" />
                         </LinearLayout>
 
                         <TextView
@@ -428,25 +448,27 @@
                             android:layout_height="wrap_content"
                             android:background="@drawable/bg_healthy_badge"
                             android:fontFamily="sans-serif-bold"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="4dp"
                             android:text="3 Subjects"
                             android:textColor="@color/primary"
                             android:textSize="11sp" />
                     </LinearLayout>
 
-                    <!-- Metric Triplet Pills -->
+                    <!-- Metric Triplet Cards -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="14dp"
+                        android:layout_marginTop="12dp"
                         android:orientation="horizontal">
 
-                        <!-- Metric 1: Detected Flock -->
+                        <!-- Metric 1: Tracked Birds -->
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_marginEnd="4dp"
                             android:layout_weight="1"
-                            android:background="@drawable/bg_date_chip"
+                            android:background="@drawable/bg_kpi_stat_card"
                             android:gravity="center"
                             android:orientation="vertical"
                             android:paddingVertical="12dp">
@@ -458,16 +480,16 @@
                                 android:fontFamily="sans-serif-black"
                                 android:text="3"
                                 android:textColor="@color/primary"
-                                android:textSize="18sp" />
+                                android:textSize="20sp" />
 
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
-                                android:fontFamily="sans-serif-medium"
+                                android:fontFamily="sans-serif-bold"
                                 android:text="Birds Tracked"
-                                android:textColor="@color/text_muted"
-                                android:textSize="10sp" />
+                                android:textColor="#64748B"
+                                android:textSize="10.5sp" />
                         </LinearLayout>
 
                         <!-- Metric 2: Flock Posture Index -->
@@ -476,7 +498,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginHorizontal="4dp"
                             android:layout_weight="1"
-                            android:background="@drawable/bg_date_chip"
+                            android:background="@drawable/bg_kpi_stat_card"
                             android:gravity="center"
                             android:orientation="vertical"
                             android:paddingVertical="12dp">
@@ -488,25 +510,25 @@
                                 android:fontFamily="sans-serif-black"
                                 android:text="99.4%"
                                 android:textColor="@color/primary"
-                                android:textSize="18sp" />
+                                android:textSize="20sp" />
 
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
-                                android:fontFamily="sans-serif-medium"
-                                android:text="Normal Behavior"
-                                android:textColor="@color/text_muted"
-                                android:textSize="10sp" />
+                                android:fontFamily="sans-serif-bold"
+                                android:text="Health Index"
+                                android:textColor="#64748B"
+                                android:textSize="10.5sp" />
                         </LinearLayout>
 
-                        <!-- Metric 3: AI Inference Latency -->
+                        <!-- Metric 3: AI Latency -->
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_marginStart="4dp"
                             android:layout_weight="1"
-                            android:background="@drawable/bg_date_chip"
+                            android:background="@drawable/bg_kpi_stat_card"
                             android:gravity="center"
                             android:orientation="vertical"
                             android:paddingVertical="12dp">
@@ -518,27 +540,27 @@
                                 android:fontFamily="sans-serif-black"
                                 android:text="0.03s"
                                 android:textColor="#1976D2"
-                                android:textSize="18sp" />
+                                android:textSize="20sp" />
 
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
-                                android:fontFamily="sans-serif-medium"
-                                android:text="AI Latency"
-                                android:textColor="@color/text_muted"
-                                android:textSize="10sp" />
+                                android:fontFamily="sans-serif-bold"
+                                android:text="Inference"
+                                android:textColor="#64748B"
+                                android:textSize="10.5sp" />
                         </LinearLayout>
                     </LinearLayout>
 
-                    <!-- Active Detected Subjects List Header -->
+                    <!-- Active Detected Subjects Header -->
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="16dp"
                         android:fontFamily="sans-serif-bold"
-                        android:text="Identified Bird Tracks"
-                        android:textColor="@color/text_primary"
+                        android:text="Tracked Flock Subjects"
+                        android:textColor="#0F172A"
                         android:textSize="13sp" />
 
                     <!-- Subject Item 1 -->
@@ -547,7 +569,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:background="@drawable/bg_date_chip"
+                        android:background="@drawable/bg_kpi_stat_card"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:padding="12dp">
@@ -574,17 +596,18 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Active Bird • Track ID 1"
-                                android:textColor="@color/text_primary"
+                                android:text="Track ID 1"
+                                android:textColor="#0F172A"
                                 android:textSize="13sp" />
 
                             <TextView
                                 android:id="@+id/tvSubject1Sub"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
                                 android:text="ByteTrack Confidence 96% • Stable"
-                                android:textColor="@color/text_muted"
+                                android:textColor="#64748B"
                                 android:textSize="11sp" />
                         </LinearLayout>
 
@@ -594,6 +617,8 @@
                             android:layout_height="wrap_content"
                             android:background="@drawable/bg_healthy_badge"
                             android:fontFamily="sans-serif-bold"
+                            android:paddingHorizontal="8dp"
+                            android:paddingVertical="3dp"
                             android:text="NORMAL"
                             android:textColor="@color/primary"
                             android:textSize="10sp" />
@@ -605,7 +630,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:background="@drawable/bg_date_chip"
+                        android:background="@drawable/bg_kpi_stat_card"
                         android:gravity="center_vertical"
                         android:orientation="horizontal"
                         android:padding="12dp">
@@ -632,17 +657,18 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Active Bird • Track ID 2"
-                                android:textColor="@color/text_primary"
+                                android:text="Track ID 2"
+                                android:textColor="#0F172A"
                                 android:textSize="13sp" />
 
                             <TextView
                                 android:id="@+id/tvSubject2Sub"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="ByteTrack Confidence 92% • Active Feeding"
-                                android:textColor="@color/text_muted"
+                                android:text="ByteTrack Confidence 92% • Active"
+                                android:textColor="#64748B"
                                 android:textSize="11sp" />
                         </LinearLayout>
 
@@ -652,7 +678,9 @@
                             android:layout_height="wrap_content"
                             android:background="@drawable/bg_healthy_badge"
                             android:fontFamily="sans-serif-bold"
-                            android:text="FEEDING"
+                            android:paddingHorizontal="8dp"
+                            android:paddingVertical="3dp"
+                            android:text="NORMAL"
                             android:textColor="@color/primary"
                             android:textSize="10sp" />
                     </LinearLayout>
@@ -660,8 +688,292 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- 5. AI Checkup Session Controller (Clean, No Emojis) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardCheckupSession"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                app:cardBackgroundColor="@color/white"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="2dp"
+                app:strokeColor="#E2E8F0"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+
+                    <!-- Top Row: Status Dot + Title + Schedule Button -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <View
+                            android:id="@+id/viewSessionDot"
+                            android:layout_width="8dp"
+                            android:layout_height="8dp"
+                            android:background="@drawable/bg_notification_dot"
+                            android:backgroundTint="@color/text_muted" />
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:id="@+id/tvSessionTitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-black"
+                                android:text="Flock Inspection Session"
+                                android:textColor="#0F172A"
+                                android:textSize="15sp" />
+
+                            <TextView
+                                android:id="@+id/tvSessionSubtitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
+                                android:fontFamily="sans-serif"
+                                android:text="Idle • Ready to begin automated inspection"
+                                android:textColor="#64748B"
+                                android:textSize="11.5sp" />
+                        </LinearLayout>
+
+                        <!-- Schedule Action Button -->
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnOpenScheduleDialog"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="36dp"
+                            android:fontFamily="sans-serif-bold"
+                            android:paddingHorizontal="12dp"
+                            android:text="Schedule"
+                            android:textColor="@color/primary"
+                            android:textSize="11.5sp"
+                            app:cornerRadius="10dp"
+                            app:icon="@drawable/ic_calendar_today"
+                            app:iconSize="14dp"
+                            app:iconTint="@color/primary"
+                            app:strokeColor="#CBD5E1" />
+                    </LinearLayout>
+
+                    <!-- Active Session Countdown View -->
+                    <LinearLayout
+                        android:id="@+id/layoutActiveSessionBanner"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/bg_date_chip"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="10dp"
+                        android:visibility="gone">
+
+                        <ImageView
+                            android:layout_width="18dp"
+                            android:layout_height="18dp"
+                            android:contentDescription="@null"
+                            android:src="@drawable/ic_history"
+                            app:tint="@color/primary" />
+
+                        <TextView
+                            android:id="@+id/tvSessionTimerLabel"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:layout_weight="1"
+                            android:fontFamily="sans-serif-medium"
+                            android:text="Time remaining:"
+                            android:textColor="#475569"
+                            android:textSize="12sp" />
+
+                        <TextView
+                            android:id="@+id/tvSessionCountdown"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif-black"
+                            android:text="29:45"
+                            android:textColor="@color/primary"
+                            android:textSize="16sp" />
+                    </LinearLayout>
+
+                    <!-- Next Scheduled Run Info -->
+                    <TextView
+                        android:id="@+id/tvScheduledRunInfo"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="Next Scheduled: Daily at 08:00 AM • 30 mins"
+                        android:textColor="#64748B"
+                        android:textSize="11sp" />
+
+                    <!-- Start / Stop Button -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnToggleSession"
+                        android:layout_width="match_parent"
+                        android:layout_height="48dp"
+                        android:layout_marginTop="10dp"
+                        android:backgroundTint="@color/primary"
+                        android:fontFamily="sans-serif-bold"
+                        android:text="Start Inspection Session"
+                        android:textAllCaps="false"
+                        android:textColor="@color/white"
+                        android:textSize="14sp"
+                        app:cornerRadius="12dp"
+                        app:elevation="1dp" />
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
+
+    <!-- Clean Offline Side Notification (No Emojis) -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/cardCuteMascotAlert"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="94dp"
+        android:visibility="gone"
+        app:cardBackgroundColor="#0F172A"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="10dp"
+        app:strokeColor="#334155"
+        app:strokeWidth="1dp">
+
+        <LinearLayout
+            android:layout_width="280dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="14dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp">
+
+            <!-- Header Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:layout_width="36dp"
+                    android:layout_height="36dp">
+
+                    <View
+                        android:layout_width="32dp"
+                        android:layout_height="32dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/bg_circular_badge_white"
+                        android:backgroundTint="#1E293B" />
+
+                    <ImageView
+                        android:id="@+id/imgMascotChicken"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_gravity="center"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/img_mascot_chicken_clean"
+                        tools:ignore="ContentDescription" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvMascotTitle"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="Camera Disconnected"
+                            android:textColor="@color/white"
+                            android:textSize="12.5sp" />
+
+                        <ImageButton
+                            android:id="@+id/btnDismissMascotAlert"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:background="?attr/selectableItemBackgroundBorderless"
+                            android:padding="3dp"
+                            android:src="@drawable/ic_close"
+                            app:tint="#94A3B8"
+                            tools:ignore="ContentDescription" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvMascotMessage"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="sans-serif"
+                        android:text="Check stream URL or use phone sensor."
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Action Chips Row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="end"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMascotAutoDetect"
+                    style="?attr/materialButtonOutlinedStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="6dp"
+                    android:fontFamily="sans-serif-bold"
+                    android:paddingHorizontal="10dp"
+                    android:text="Auto-Detect"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="10.5sp"
+                    app:cornerRadius="8dp"
+                    app:strokeColor="#475569" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnMascotUsePhoneCam"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:backgroundTint="@color/primary"
+                    android:fontFamily="sans-serif-bold"
+                    android:paddingHorizontal="10dp"
+                    android:text="Phone Camera"
+                    android:textAllCaps="false"
+                    android:textColor="@color/white"
+                    android:textSize="10.5sp"
+                    app:cornerRadius="8dp" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
     <!-- 3D Mascot Scanner POPUP Overlay in the Center -->
     <com.example.poultrysense.ui.monitor.OrbitingMascotScannerView

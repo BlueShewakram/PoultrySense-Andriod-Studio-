@@ -13,6 +13,13 @@ import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.databinding.ActivityMainBinding
 
+import androidx.core.content.ContextCompat
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
+import java.util.Locale
+
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
@@ -27,25 +34,20 @@ class MainActivity : AppCompatActivity() {
     )
     private var currentTabId = R.id.navigation_home
 
+    private var firebaseListener: ValueEventListener? = null
+    private val realtimeDb by lazy {
+        FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
+    }
+
     val farmAlerts = mutableListOf(
         FarmAlert(
-            id = "alert-1",
-            severity = AlertSeverity.CRITICAL,
-            title = "Chicken #3 Abnormal Posture",
-            description = "Extended period of inactivity detected in Zone 1. Isolation recommended.",
-            timeAgo = "2 mins ago",
-            timestamp = "10:42 AM",
-            chickenId = "ID-901",
-            location = "Barn A - Zone 1"
-        ),
-        FarmAlert(
-            id = "alert-2",
-            severity = AlertSeverity.WARNING,
-            title = "Coop B Temperature Spike",
-            description = "Temperature exceeded 28°C threshold in Zone 2.",
-            timeAgo = "15 mins ago",
-            timestamp = "10:29 AM",
-            location = "Coop B - Zone 2"
+            id = "alert-initial",
+            severity = AlertSeverity.INFO,
+            title = "DHT22 Climate Monitor Active",
+            description = "Listening for live temperature and humidity readings from ESP32...",
+            timeAgo = "Initializing",
+            timestamp = "Just now",
+            location = "Main Barn"
         )
     )
 
@@ -59,6 +61,7 @@ class MainActivity : AppCompatActivity() {
         navController = navHostFragment.navController
 
         setupAnimatedBottomNavigation()
+        setupFirebaseClimateAlertsListener()
 
         // Notification Bell Click -> Navigate to Alerts tab with spring pop
         binding.btnNotificationBell.setOnClickListener { view ->
@@ -159,9 +162,149 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
+    private fun setupFirebaseClimateAlertsListener() {
+        val liveRef = realtimeDb.getReference("sensor_data").child("live")
+        firebaseListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (!snapshot.exists()) return
+
+                val temp = snapshot.child("temperature").getValue(Double::class.java)
+                    ?: snapshot.child("temperature").getValue(Long::class.java)?.toDouble()
+                val hum = snapshot.child("humidity").getValue(Double::class.java)
+                    ?: snapshot.child("humidity").getValue(Long::class.java)?.toDouble()
+                val timestamp = snapshot.child("timestamp").getValue(String::class.java) ?: "Just now"
+                val zone = snapshot.child("zone").getValue(String::class.java) ?: "Main Barn • Zone 1"
+
+                if (temp != null && hum != null) {
+                    evaluateDht22Alerts(temp, hum, timestamp, zone)
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        liveRef.addValueEventListener(firebaseListener!!)
+    }
+
+    private fun evaluateDht22Alerts(temp: Double, hum: Double, timestamp: String, zone: String) {
+        val newAlerts = mutableListOf<FarmAlert>()
+
+        // 1. High Heat Check (DHT22 Temperature)
+        if (temp >= 35.0) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-heat-critical",
+                    severity = AlertSeverity.CRITICAL,
+                    title = String.format(Locale.getDefault(), "Severe Heat Stress: %.1f°C", temp),
+                    description = "Dangerous heat level detected in coop. Turn on ventilation fans and misters immediately to avoid flock heat stroke.",
+                    timeAgo = "Live Sensor Alert",
+                    timestamp = timestamp,
+                    location = zone
+                )
+            )
+        } else if (temp >= 31.0) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-heat-warning",
+                    severity = AlertSeverity.WARNING,
+                    title = String.format(Locale.getDefault(), "High Temperature Spike: %.1f°C", temp),
+                    description = "Temperature is above comfortable flock range (20°C - 28°C). Increase airflow and monitor flock hydration.",
+                    timeAgo = "Live Sensor Alert",
+                    timestamp = timestamp,
+                    location = zone
+                )
+            )
+        } else if (temp < 18.0) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-cold-warning",
+                    severity = AlertSeverity.WARNING,
+                    title = String.format(Locale.getDefault(), "Chilling Risk Alert: %.1f°C", temp),
+                    description = "Coop temperature dropped below 18°C. Ensure brooder heating lamps are active to prevent flock chilling.",
+                    timeAgo = "Live Sensor Alert",
+                    timestamp = timestamp,
+                    location = zone
+                )
+            )
+        }
+
+        // 2. Humidity Check (DHT22 Humidity)
+        if (hum >= 85.0) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-humidity-critical",
+                    severity = AlertSeverity.CRITICAL,
+                    title = String.format(Locale.getDefault(), "Extreme Dampness: %.1f%%", hum),
+                    description = "Relative humidity exceeded 85%. Severe damp litter and respiratory infection risk. Maximum ventilation required.",
+                    timeAgo = "Live Sensor Alert",
+                    timestamp = timestamp,
+                    location = zone
+                )
+            )
+        } else if (hum >= 78.0) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-humidity-warning",
+                    severity = AlertSeverity.WARNING,
+                    title = String.format(Locale.getDefault(), "High Humidity Warning: %.1f%%", hum),
+                    description = "Relative humidity is above optimal range (50% - 70%). Check ventilation to keep bedding dry.",
+                    timeAgo = "Live Sensor Alert",
+                    timestamp = timestamp,
+                    location = zone
+                )
+            )
+        } else if (hum < 40.0) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-dry-air",
+                    severity = AlertSeverity.INFO,
+                    title = String.format(Locale.getDefault(), "Dry Air Advisory: %.1f%%", hum),
+                    description = "Low humidity (< 40%) may lead to airborne dust and dehydration. Monitor flock drinking water.",
+                    timeAgo = "Live Sensor Alert",
+                    timestamp = timestamp,
+                    location = zone
+                )
+            )
+        }
+
+        // 3. Normal Comfort Check (if no alert was triggered)
+        if (newAlerts.isEmpty()) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-climate-optimal",
+                    severity = AlertSeverity.INFO,
+                    title = String.format(Locale.getDefault(), "Optimal Climate: %.1f°C • %.0f%%", temp, hum),
+                    description = "Temperature and humidity are within the ideal flock comfort zone. DHT22 sensor running normally.",
+                    timeAgo = "Live Sensor Link",
+                    timestamp = timestamp,
+                    read = true,
+                    location = zone
+                )
+            )
+        }
+
+        // Update active alerts list
+        farmAlerts.clear()
+        farmAlerts.addAll(newAlerts)
+
+        updateNotificationBadge()
+    }
+
     fun updateNotificationBadge() {
-        val hasUnread = farmAlerts.any { !it.read }
+        val unreadCount = farmAlerts.count { !it.read && it.severity != AlertSeverity.INFO }
+        val hasUnread = unreadCount > 0
         binding.notificationBadgeDot.visibility = if (hasUnread) View.VISIBLE else View.GONE
+
+        // Update badge on bottom navigation Alerts tab
+        try {
+            val badge = binding.navView.getOrCreateBadge(R.id.navigation_alerts)
+            if (hasUnread) {
+                badge.isVisible = true
+                badge.number = unreadCount
+                badge.backgroundColor = ContextCompat.getColor(this, R.color.critical)
+            } else {
+                badge.isVisible = false
+            }
+        } catch (_: Exception) {}
     }
 
     fun markAllAlertsRead() {
@@ -171,5 +314,12 @@ class MainActivity : AppCompatActivity() {
 
     fun navigateToTab(destinationId: Int) {
         binding.navView.selectedItemId = destinationId
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        firebaseListener?.let {
+            realtimeDb.getReference("sensor_data").child("live").removeEventListener(it)
+        }
     }
 }
