@@ -36,6 +36,9 @@ class LoginActivity : AppCompatActivity() {
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Edge-to-edge: let the scenic image draw under the status bar
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+
         flyingChickenAnimator = FlyingChickenAnimator(binding.ivFlyingChicken)
         playEntranceAnimation()
         setupValidationListeners()

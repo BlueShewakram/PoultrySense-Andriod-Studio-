@@ -99,17 +99,26 @@
     </LinearLayout>
 
     <!-- First Name Input -->
+    <!-- First Name Input -->
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/tilEditFirstName"
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="14dp"
         android:hint="First Name"
+        app:boxBackgroundColor="#F8FAFC"
         app:boxCornerRadiusBottomEnd="14dp"
         app:boxCornerRadiusBottomStart="14dp"
         app:boxCornerRadiusTopEnd="14dp"
-        app:boxCornerRadiusTopStart="14dp">
+        app:boxCornerRadiusTopStart="14dp"
+        app:boxStrokeColor="#0284C7"
+        app:boxStrokeWidth="1dp"
+        app:boxStrokeWidthFocused="1.5dp"
+        app:hintTextColor="#0284C7"
+        android:textColorHint="#64748B"
+        app:startIconDrawable="@drawable/ic_person"
+        app:startIconTint="#0284C7">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etEditFirstName"
@@ -117,21 +126,32 @@
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
             android:inputType="textPersonName"
+            android:textColor="#0F172A"
+            android:textColorHighlight="#BAE6FD"
+            android:textColorHint="#64748B"
             android:textSize="14sp" />
     </com.google.android.material.textfield.TextInputLayout>
 
     <!-- Last Name Input -->
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/tilEditLastName"
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
         android:hint="Last Name"
+        app:boxBackgroundColor="#F8FAFC"
         app:boxCornerRadiusBottomEnd="14dp"
         app:boxCornerRadiusBottomStart="14dp"
         app:boxCornerRadiusTopEnd="14dp"
-        app:boxCornerRadiusTopStart="14dp">
+        app:boxCornerRadiusTopStart="14dp"
+        app:boxStrokeColor="#0284C7"
+        app:boxStrokeWidth="1dp"
+        app:boxStrokeWidthFocused="1.5dp"
+        app:hintTextColor="#0284C7"
+        android:textColorHint="#64748B"
+        app:startIconDrawable="@drawable/ic_person"
+        app:startIconTint="#0284C7">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etEditLastName"
@@ -139,21 +159,32 @@
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
             android:inputType="textPersonName"
+            android:textColor="#0F172A"
+            android:textColorHighlight="#BAE6FD"
+            android:textColorHint="#64748B"
             android:textSize="14sp" />
     </com.google.android.material.textfield.TextInputLayout>
 
     <!-- Farm Name Input -->
     <com.google.android.material.textfield.TextInputLayout
         android:id="@+id/tilEditFarmName"
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
         android:hint="Poultry Farm Name"
+        app:boxBackgroundColor="#F8FAFC"
         app:boxCornerRadiusBottomEnd="14dp"
         app:boxCornerRadiusBottomStart="14dp"
         app:boxCornerRadiusTopEnd="14dp"
-        app:boxCornerRadiusTopStart="14dp">
+        app:boxCornerRadiusTopStart="14dp"
+        app:boxStrokeColor="#0284C7"
+        app:boxStrokeWidth="1dp"
+        app:boxStrokeWidthFocused="1.5dp"
+        app:hintTextColor="#0284C7"
+        android:textColorHint="#64748B"
+        app:startIconDrawable="@drawable/ic_business"
+        app:startIconTint="#0284C7">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etEditFarmName"
@@ -161,6 +192,9 @@
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
             android:inputType="textCapWords"
+            android:textColor="#0F172A"
+            android:textColorHighlight="#BAE6FD"
+            android:textColorHint="#64748B"
             android:textSize="14sp" />
     </com.google.android.material.textfield.TextInputLayout>
 

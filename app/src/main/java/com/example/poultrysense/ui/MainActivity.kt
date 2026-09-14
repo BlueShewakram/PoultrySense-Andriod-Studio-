@@ -9,7 +9,7 @@ import androidx.navigation.NavController
 import androidx.navigation.NavOptions
 import androidx.navigation.fragment.NavHostFragment
 import com.example.poultrysense.R
-import com.example.poultrysense.data.models.AlertSeverity
+import com.example.poultrysense.    data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.databinding.ActivityMainBinding
 

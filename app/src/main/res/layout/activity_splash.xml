@@ -6,13 +6,12 @@
     android:layout_height="match_parent"
     android:background="@drawable/bg_splash_modern">
 
-    <!-- 1. Ambient Radial Glow behind the brandmark -->
+    <!-- 1. Ambient Radial Glow behind the mascot -->
     <View
         android:id="@+id/viewAmbientGlow"
-        android:layout_width="260dp"
-        android:layout_height="260dp"
-        android:background="@drawable/bg_sonar_ring"
-        android:backgroundTint="#2600E676"
+        android:layout_width="280dp"
+        android:layout_height="280dp"
+        android:background="@drawable/bg_splash_ambient_glow"
         app:layout_constraintBottom_toBottomOf="@+id/layoutBrandGroup"
         app:layout_constraintEnd_toEndOf="@+id/layoutBrandGroup"
         app:layout_constraintStart_toStartOf="@+id/layoutBrandGroup"
@@ -29,23 +28,20 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.46">
+        app:layout_constraintVertical_bias="0.44">
 
-        <!-- Logo Frame with Subtle Border -->
+        <!-- 3D Mascot Container -->
         <FrameLayout
             android:id="@+id/flLogoFrame"
-            android:layout_width="92dp"
-            android:layout_height="92dp"
-            android:background="@drawable/bg_splash_logo_frame"
-            android:padding="6dp">
+            android:layout_width="140dp"
+            android:layout_height="140dp">
 
-            <com.google.android.material.imageview.ShapeableImageView
+            <ImageView
                 android:id="@+id/ivSplashLogo"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:scaleType="centerCrop"
-                android:src="@drawable/ic_poultry_logo"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Medium"
+                android:scaleType="fitCenter"
+                android:src="@drawable/img_mascot_chicken_clean"
                 tools:ignore="ContentDescription" />
         </FrameLayout>
 
@@ -54,54 +50,59 @@
             android:id="@+id/tvBrandTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:fontFamily="sans-serif-black"
-            android:letterSpacing="0.10"
-            android:text="POULTRY SENSE"
-            android:textColor="#FFFFFF"
-            android:textSize="22sp" />
+            android:letterSpacing="0.04"
+            android:text="PoultrySense"
+            android:textColor="#0F172A"
+            android:textSize="32sp" />
 
-        <!-- Subtitle -->
+        <!-- Subtitle Badge -->
         <TextView
             android:id="@+id/tvBrandSubtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="6dp"
             android:fontFamily="sans-serif-bold"
-            android:letterSpacing="0.18"
-            android:text="INTELLIGENT FLOCK SYSTEMS"
-            android:textColor="#76B588"
-            android:textSize="10sp" />
+            android:letterSpacing="0.16"
+            android:text="SMART POULTRY INTELLIGENCE"
+            android:textColor="#0284C7"
+            android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- 3. Minimal Clean Footer Status -->
+    <!-- 3. Modern Progress & Footer -->
     <LinearLayout
         android:id="@+id/layoutFooter"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="32dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
+        android:layout_marginBottom="48dp"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
-        <View
-            android:id="@+id/viewStatusDot"
-            android:layout_width="6dp"
-            android:layout_height="6dp"
-            android:background="@drawable/bg_notification_dot"
-            android:backgroundTint="#00E676" />
+        <!-- Modern Pill Progress Bar -->
+        <com.google.android.material.progressindicator.LinearProgressIndicator
+            android:id="@+id/progressSplash"
+            android:layout_width="160dp"
+            android:layout_height="wrap_content"
+            android:max="100"
+            android:progress="0"
+            app:indicatorColor="#0284C7"
+            app:trackColor="#260284C7"
+            app:trackCornerRadius="10dp"
+            app:trackThickness="6dp" />
 
         <TextView
             android:id="@+id/tvFooterStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
+            android:layout_marginTop="14dp"
             android:fontFamily="sans-serif-bold"
             android:letterSpacing="0.14"
-            android:text="TELEMETRY CORE"
-            android:textColor="#4B7053"
+            android:text="CONNECTING TO FLOCK SENSORS"
+            android:textColor="#94A3B8"
             android:textSize="10sp" />
     </LinearLayout>
 

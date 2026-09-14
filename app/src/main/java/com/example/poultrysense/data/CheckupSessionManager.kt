@@ -238,4 +238,13 @@ object CheckupSessionManager {
 
         return "$repeat at $timeStr • $durStr"
     }
+
+    fun getSessionCounter(context: Context): Int {
+        return getPrefs(context).getInt(KEY_SESSION_COUNTER, 108)
+    }
+
+    fun getLatestHealthIndex(context: Context): String {
+        val sessions = getCompletedSessions(context)
+        return sessions.firstOrNull()?.healthIndex ?: "99.2%"
+    }
 }

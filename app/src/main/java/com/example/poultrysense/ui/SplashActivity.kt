@@ -1,7 +1,6 @@
 package com.example.poultrysense.ui
 
 import android.animation.ObjectAnimator
-import android.animation.PropertyValuesHolder
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -22,8 +21,11 @@ class SplashActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Edge-to-edge full-bleed obsidian canvas
+        // Edge-to-edge canvas with light system bars
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        val insetsController = WindowCompat.getInsetsController(window, window.decorView)
+        insetsController.isAppearanceLightStatusBars = true
+        insetsController.isAppearanceLightNavigationBars = true
 
         binding = ActivitySplashBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -34,12 +36,13 @@ class SplashActivity : AppCompatActivity() {
 
     private fun setupInitialState() {
         binding.flLogoFrame.alpha = 0f
-        binding.flLogoFrame.scaleX = 0.88f
-        binding.flLogoFrame.scaleY = 0.88f
+        binding.flLogoFrame.scaleX = 0.82f
+        binding.flLogoFrame.scaleY = 0.82f
+        binding.flLogoFrame.translationY = -12f
 
         binding.viewAmbientGlow.alpha = 0f
-        binding.viewAmbientGlow.scaleX = 0.7f
-        binding.viewAmbientGlow.scaleY = 0.7f
+        binding.viewAmbientGlow.scaleX = 0.6f
+        binding.viewAmbientGlow.scaleY = 0.6f
 
         binding.tvBrandTitle.alpha = 0f
         binding.tvBrandTitle.translationY = 16f
@@ -48,35 +51,37 @@ class SplashActivity : AppCompatActivity() {
         binding.tvBrandSubtitle.translationY = 12f
 
         binding.layoutFooter.alpha = 0f
+        binding.progressSplash.progress = 0
     }
 
     private fun runBrandSequence() {
         val decelerator = DecelerateInterpolator(1.8f)
 
-        // 1. Logo smooth scale & settle
+        // 1. 3D Mascot smooth scale, settle and float down
         binding.flLogoFrame.animate()
             .alpha(1f)
             .scaleX(1f)
             .scaleY(1f)
-            .setDuration(500)
+            .translationY(0f)
+            .setDuration(600)
             .setInterpolator(decelerator)
             .start()
 
-        // 2. Ambient radial pulse behind logo
+        // 2. Ambient radial aura expansion behind mascot
         binding.viewAmbientGlow.animate()
-            .alpha(0.5f)
-            .scaleX(1.1f)
-            .scaleY(1.1f)
-            .setDuration(750)
+            .alpha(0.85f)
+            .scaleX(1.15f)
+            .scaleY(1.15f)
+            .setDuration(800)
             .setInterpolator(decelerator)
             .start()
 
-        // 3. Typography reveals
+        // 3. Modern Typography reveals
         binding.tvBrandTitle.animate()
             .alpha(1f)
             .translationY(0f)
             .setDuration(450)
-            .setStartDelay(160)
+            .setStartDelay(180)
             .setInterpolator(decelerator)
             .start()
 
@@ -84,10 +89,11 @@ class SplashActivity : AppCompatActivity() {
             .alpha(1f)
             .translationY(0f)
             .setDuration(450)
-            .setStartDelay(230)
+            .setStartDelay(260)
             .setInterpolator(decelerator)
             .start()
 
+        // 4. Modern progress footer reveal & animated loading fill
         binding.layoutFooter.animate()
             .alpha(1f)
             .setDuration(400)
@@ -95,29 +101,21 @@ class SplashActivity : AppCompatActivity() {
             .setInterpolator(decelerator)
             .start()
 
-        // Subtle breathing status dot
-        val dotPulse = ObjectAnimator.ofPropertyValuesHolder(
-            binding.viewStatusDot,
-            PropertyValuesHolder.ofFloat("scaleX", 0.85f, 1.25f),
-            PropertyValuesHolder.ofFloat("scaleY", 0.85f, 1.25f),
-            PropertyValuesHolder.ofFloat("alpha", 0.6f, 1.0f)
-        ).apply {
-            duration = 600
-            repeatCount = 2
-            repeatMode = ObjectAnimator.REVERSE
-            interpolator = AccelerateDecelerateInterpolator()
-            startDelay = 350
+        val progressAnim = ObjectAnimator.ofInt(binding.progressSplash, "progress", 0, 100).apply {
+            duration = 950
+            interpolator = DecelerateInterpolator(1.5f)
+            startDelay = 250
         }
-        dotPulse.start()
+        progressAnim.start()
 
-        // 4. Smooth Exit Transition at 1050ms
+        // 5. Smooth Exit Transition to Login or Main
         handler.postDelayed({
             // Gentle expansion fade-out
             binding.flLogoFrame.animate()
                 .alpha(0f)
-                .scaleX(1.06f)
-                .scaleY(1.06f)
-                .setDuration(240)
+                .scaleX(1.08f)
+                .scaleY(1.08f)
+                .setDuration(260)
                 .setInterpolator(AccelerateDecelerateInterpolator())
                 .start()
 
@@ -133,9 +131,9 @@ class SplashActivity : AppCompatActivity() {
 
             binding.viewAmbientGlow.animate()
                 .alpha(0f)
-                .scaleX(1.35f)
-                .scaleY(1.35f)
-                .setDuration(250)
+                .scaleX(1.4f)
+                .scaleY(1.4f)
+                .setDuration(280)
                 .start()
 
             binding.layoutFooter.animate()
@@ -154,9 +152,9 @@ class SplashActivity : AppCompatActivity() {
                 startActivity(Intent(this, targetActivity))
                 finish()
                 overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
-            }, 220)
+            }, 240)
 
-        }, 1050)
+        }, 1300)
     }
 
     override fun onDestroy() {

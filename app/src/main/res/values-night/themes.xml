@@ -10,6 +10,8 @@
         <item name="android:navigationBarColor">@color/surface_container</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">@color/background</item>
+        <item name="android:editTextColor">#0F172A</item>
+        <item name="android:textColorHint">#64748B</item>
     </style>
 
     <style name="Theme.PoultrySense.Splash" parent="Theme.Material3.DayNight.NoActionBar">

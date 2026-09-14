@@ -14,6 +14,8 @@
         <item name="android:navigationBarColor">@color/background</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">@color/background</item>
+        <item name="android:editTextColor">#0F172A</item>
+        <item name="android:textColorHint">#64748B</item>
     </style>
 
     <style name="Widget.PoultrySense.BottomNavigationView.ActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
@@ -25,10 +27,26 @@
 
     <style name="Theme.PoultrySense.Splash" parent="Theme.Material3.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowBackground">@drawable/bg_splash_modern</item>
-        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
+
+    <style name="ShapeAppearance.AuthBottomSheet" parent="ShapeAppearance.Material3.Corner.None">
+        <item name="cornerSizeTopLeft">36dp</item>
+        <item name="cornerSizeTopRight">36dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+
+    <style name="Theme.PoultrySense.Login" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">#1E3A8A</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/white</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@color/white</item>
+    </style>
+
 </resources>

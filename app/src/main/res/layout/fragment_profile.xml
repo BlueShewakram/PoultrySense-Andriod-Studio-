@@ -10,97 +10,203 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:paddingStart="20dp"
-        android:paddingTop="20dp"
-        android:paddingEnd="20dp"
+        android:paddingStart="18dp"
+        android:paddingTop="18dp"
+        android:paddingEnd="18dp"
         android:paddingBottom="120dp">
 
-        <!-- Avatar Container with Edit Camera Badge -->
-        <FrameLayout
-            android:id="@+id/layoutAvatarContainer"
-            android:layout_width="wrap_content"
+        <!-- Executive Cyan Blue Hero Banner Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:clickable="true"
-            android:focusable="true">
+            app:cardBackgroundColor="@color/transparent"
+            app:cardCornerRadius="26dp"
+            app:cardElevation="4dp"
+            app:strokeWidth="0dp">
 
-            <com.google.android.material.imageview.ShapeableImageView
-                android:id="@+id/ivProfileAvatar"
-                android:layout_width="94dp"
-                android:layout_height="94dp"
-                android:padding="3dp"
-                android:scaleType="centerCrop"
-                android:src="@drawable/ic_person"
-                app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full"
-                app:strokeColor="@color/primary"
-                app:strokeWidth="3dp" />
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_profile_hero_modern"
+                android:paddingStart="20dp"
+                android:paddingTop="24dp"
+                android:paddingEnd="20dp"
+                android:paddingBottom="24dp">
 
-            <ImageView
-                android:id="@+id/btnEditAvatarBadge"
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:layout_gravity="bottom|end"
-                android:background="@drawable/bg_notification_dot"
-                android:backgroundTint="@color/primary"
-                android:elevation="4dp"
-                android:padding="6dp"
-                android:src="@drawable/ic_photo_camera"
-                app:tint="@color/white"
-                tools:ignore="ContentDescription" />
-        </FrameLayout>
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
 
-        <TextView
-            android:id="@+id/tvProfileName"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="12dp"
-            android:fontFamily="sans-serif-black"
-            android:letterSpacing="-0.02"
-            android:text="@string/profile_name"
-            android:textColor="@color/text_primary"
-            android:textSize="22sp" />
+                    <!-- Avatar with Camera Badge -->
+                    <FrameLayout
+                        android:id="@+id/layoutAvatarContainer"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:focusable="true">
 
-        <TextView
-            android:id="@+id/tvProfileRole"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:fontFamily="sans-serif-medium"
-            android:gravity="center"
-            android:text="@string/profile_role"
-            android:textColor="@color/text_muted"
-            android:textSize="13sp" />
+                        <com.google.android.material.imageview.ShapeableImageView
+                            android:id="@+id/ivProfileAvatar"
+                            android:layout_width="92dp"
+                            android:layout_height="92dp"
+                            android:padding="2dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/ic_person"
+                            app:shapeAppearanceOverlay="@style/ShapeAppearance.Material3.Corner.Full"
+                            app:strokeColor="@color/white"
+                            app:strokeWidth="3dp" />
 
-        <TextView
-            android:id="@+id/tvProfileEmail"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:fontFamily="sans-serif"
-            android:gravity="center"
-            android:textColor="@color/primary"
-            android:textSize="12sp"
-            tools:text="user@farm.com" />
+                        <ImageView
+                            android:id="@+id/btnEditAvatarBadge"
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="bottom|end"
+                            android:background="@drawable/bg_notification_dot"
+                            android:backgroundTint="#00D2FF"
+                            android:elevation="4dp"
+                            android:padding="6dp"
+                            android:src="@drawable/ic_photo_camera"
+                            app:tint="#042F2E"
+                            tools:ignore="ContentDescription" />
+                    </FrameLayout>
 
-        <!-- 2 Stat Boxes (Clean White Rounded 24dp) -->
+                    <!-- User Name -->
+                    <TextView
+                        android:id="@+id/tvProfileName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:fontFamily="sans-serif-black"
+                        android:letterSpacing="-0.02"
+                        android:text="@string/profile_name"
+                        android:textColor="@color/white"
+                        android:textSize="22sp" />
+
+                    <!-- Role & Farm -->
+                    <TextView
+                        android:id="@+id/tvProfileRole"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:gravity="center"
+                        android:text="@string/profile_role"
+                        android:textColor="#BAE6FD"
+                        android:textSize="13sp" />
+
+                    <!-- Email -->
+                    <TextView
+                        android:id="@+id/tvProfileEmail"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="sans-serif"
+                        android:gravity="center"
+                        android:textColor="#38BDF8"
+                        android:textSize="12sp"
+                        tools:text="specialist@farm.com" />
+
+                    <!-- Badges Row: Live Hub Status + Quick Edit -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <!-- Live AI Hub Connection Pill -->
+                        <LinearLayout
+                            android:id="@+id/layoutAiHubStatusChip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_hud_pill_dark"
+                            android:backgroundTint="#33000000"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="12dp"
+                            android:paddingTop="5dp"
+                            android:paddingEnd="12dp"
+                            android:paddingBottom="5dp">
+
+                            <View
+                                android:id="@+id/dotProfileAiHub"
+                                android:layout_width="6dp"
+                                android:layout_height="6dp"
+                                android:background="@drawable/bg_notification_dot"
+                                android:backgroundTint="#00E5FF" />
+
+                            <TextView
+                                android:id="@+id/tvProfileAiHubStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="AI Hub Linked"
+                                android:textColor="@color/white"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+
+                        <!-- Edit Profile Pill Button -->
+                        <LinearLayout
+                            android:id="@+id/btnEditProfilePill"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/bg_hud_pill_dark"
+                            android:backgroundTint="#2E00E5FF"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingStart="12dp"
+                            android:paddingTop="5dp"
+                            android:paddingEnd="12dp"
+                            android:paddingBottom="5dp">
+
+                            <ImageView
+                                android:layout_width="12dp"
+                                android:layout_height="12dp"
+                                android:src="@drawable/ic_tune"
+                                app:tint="@color/white"
+                                tools:ignore="ContentDescription" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="6dp"
+                                android:fontFamily="sans-serif-medium"
+                                android:text="Edit"
+                                android:textColor="@color/white"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </LinearLayout>
+            </FrameLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Executive 3-Stat KPI Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="16dp"
             android:orientation="horizontal">
 
+            <!-- KPI 1: Inspections Completed -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="4dp"
                 android:layout_weight="1"
                 app:cardBackgroundColor="@color/surface"
-                app:cardCornerRadius="24dp"
-                app:cardElevation="2dp"
-                app:strokeColor="#0F000000"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/border_light"
                 app:strokeWidth="1dp">
 
                 <LinearLayout
@@ -108,36 +214,40 @@
                     android:layout_height="wrap_content"
                     android:gravity="center"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp">
 
                     <TextView
+                        android:id="@+id/tvTotalInspections"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:fontFamily="sans-serif-black"
                         android:text="108"
-                        android:textColor="@color/primary"
-                        android:textSize="22sp" />
+                        android:textColor="#0284C7"
+                        android:textSize="20sp" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:fontFamily="sans-serif-medium"
-                        android:text="@string/scans_completed"
+                        android:text="Inspections"
                         android:textColor="@color/text_muted"
-                        android:textSize="11sp" />
+                        android:textSize="10sp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
+            <!-- KPI 2: Active System Days -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
                 android:layout_weight="1"
                 app:cardBackgroundColor="@color/surface"
-                app:cardCornerRadius="24dp"
-                app:cardElevation="2dp"
-                app:strokeColor="#0F000000"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/border_light"
                 app:strokeWidth="1dp">
 
                 <LinearLayout
@@ -145,38 +255,163 @@
                     android:layout_height="wrap_content"
                     android:gravity="center"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp">
 
                     <TextView
+                        android:id="@+id/tvSystemUptime"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:fontFamily="sans-serif-black"
                         android:text="42 Days"
-                        android:textColor="@color/primary"
-                        android:textSize="22sp" />
+                        android:textColor="#0284C7"
+                        android:textSize="20sp" />
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:fontFamily="sans-serif-medium"
-                        android:text="@string/active_system"
+                        android:text="Active Days"
                         android:textColor="@color/text_muted"
-                        android:textSize="11sp" />
+                        android:textSize="10sp" />
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- KPI 3: Flock Health Index -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                app:cardBackgroundColor="@color/surface"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="1dp"
+                app:strokeColor="@color/border_light"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp">
+
+                    <TextView
+                        android:id="@+id/tvFlockHealthRate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-black"
+                        android:text="99.2%"
+                        android:textColor="#0284C7"
+                        android:textSize="20sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="Health Index"
+                        android:textColor="@color/text_muted"
+                        android:textSize="10sp" />
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
         </LinearLayout>
 
-        <!-- Settings List Card -->
+        <!-- Section 1: AI & IoT Connectivity -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            android:fontFamily="sans-serif-bold"
+            android:text="AI &amp; SENSOR CONNECTIVITY"
+            android:textColor="@color/text_muted"
+            android:textSize="11sp" />
+
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
             app:cardBackgroundColor="@color/surface"
-            app:cardCornerRadius="26dp"
-            app:cardElevation="2dp"
-            app:strokeColor="#0F000000"
+            app:cardCornerRadius="22dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/border_light"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:id="@+id/btnAiServerSettings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
+
+                <!-- Crisp 3D Magnifier Image Badge (No distortion or clipping) -->
+                <ImageView
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/img_mascot_magnifier_clean"
+                    tools:ignore="ContentDescription" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-bold"
+                        android:text="AI Server &amp; Host Configuration"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:id="@+id/tvAiServerSubtext"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="sans-serif"
+                        android:text="Configure IP, port &amp; network auto-scan"
+                        android:textColor="@color/text_muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_chevron_right"
+                    app:tint="@color/text_muted"
+                    tools:ignore="ContentDescription" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Section 2: Farm Settings & Alerts -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:layout_marginBottom="8dp"
+            android:fontFamily="sans-serif-bold"
+            android:text="FARM SETTINGS &amp; ALERTS"
+            android:textColor="@color/text_muted"
+            android:textSize="11sp" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/surface"
+            app:cardCornerRadius="22dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/border_light"
             app:strokeWidth="1dp">
 
             <LinearLayout
@@ -184,50 +419,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <!-- 0. AI Server Settings -->
-                <LinearLayout
-                    android:id="@+id/btnAiServerSettings"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="?attr/selectableItemBackground"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="16dp">
-
-                    <ImageView
-                        android:layout_width="22dp"
-                        android:layout_height="22dp"
-                        android:src="@drawable/ic_sensors"
-                        app:tint="@color/primary"
-                        tools:ignore="ContentDescription" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="14dp"
-                        android:layout_weight="1"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="@string/ai_server_settings"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron_right"
-                        app:tint="@color/text_muted"
-                        tools:ignore="ContentDescription" />
-                </LinearLayout>
-
-                <com.google.android.material.divider.MaterialDivider
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    app:dividerColor="@color/border_light" />
-
-                <!-- 1. System Settings -->
-
+                <!-- Profile & System Settings -->
                 <LinearLayout
                     android:id="@+id/btnSystemSettings"
                     android:layout_width="match_parent"
@@ -239,22 +431,45 @@
                     android:orientation="horizontal"
                     android:padding="16dp">
 
-                    <ImageView
-                        android:layout_width="22dp"
-                        android:layout_height="22dp"
-                        android:src="@drawable/ic_settings"
-                        app:tint="@color/primary"
-                        tools:ignore="ContentDescription" />
+                    <FrameLayout
+                        android:layout_width="38dp"
+                        android:layout_height="38dp"
+                        android:background="@drawable/bg_circular_badge_white"
+                        android:backgroundTint="#E0F2FE">
 
-                    <TextView
+                        <ImageView
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_settings"
+                            app:tint="#0284C7"
+                            tools:ignore="ContentDescription" />
+                    </FrameLayout>
+
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="14dp"
                         android:layout_weight="1"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="@string/system_settings"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="System &amp; Profile Details"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="sans-serif"
+                            android:text="Specialist name, role &amp; farm identity"
+                            android:textColor="@color/text_muted"
+                            android:textSize="11sp" />
+                    </LinearLayout>
 
                     <ImageView
                         android:layout_width="20dp"
@@ -269,7 +484,7 @@
                     android:layout_height="1dp"
                     app:dividerColor="@color/border_light" />
 
-                <!-- 2. Notification Preferences -->
+                <!-- Notification Preferences -->
                 <LinearLayout
                     android:id="@+id/btnNotificationPreferences"
                     android:layout_width="match_parent"
@@ -281,106 +496,45 @@
                     android:orientation="horizontal"
                     android:padding="16dp">
 
-                    <ImageView
-                        android:layout_width="22dp"
-                        android:layout_height="22dp"
-                        android:src="@drawable/ic_notifications_black_24dp"
-                        app:tint="@color/primary"
-                        tools:ignore="ContentDescription" />
+                    <FrameLayout
+                        android:layout_width="38dp"
+                        android:layout_height="38dp"
+                        android:background="@drawable/bg_circular_badge_white"
+                        android:backgroundTint="#E0F2FE">
 
-                    <TextView
+                        <ImageView
+                            android:layout_width="20dp"
+                            android:layout_height="20dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_notifications_black_24dp"
+                            app:tint="#0284C7"
+                            tools:ignore="ContentDescription" />
+                    </FrameLayout>
+
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="14dp"
                         android:layout_weight="1"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="@string/notification_preferences"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
+                        android:orientation="vertical">
 
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron_right"
-                        app:tint="@color/text_muted"
-                        tools:ignore="ContentDescription" />
-                </LinearLayout>
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="Notification Preferences"
+                            android:textColor="@color/text_primary"
+                            android:textSize="14sp" />
 
-                <com.google.android.material.divider.MaterialDivider
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    app:dividerColor="@color/border_light" />
-
-                <!-- 3. Privacy & Security -->
-                <LinearLayout
-                    android:id="@+id/btnPrivacySecurity"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="?attr/selectableItemBackground"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="16dp">
-
-                    <ImageView
-                        android:layout_width="22dp"
-                        android:layout_height="22dp"
-                        android:src="@drawable/ic_security"
-                        app:tint="@color/primary"
-                        tools:ignore="ContentDescription" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="14dp"
-                        android:layout_weight="1"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="@string/privacy_security"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
-
-                    <ImageView
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_chevron_right"
-                        app:tint="@color/text_muted"
-                        tools:ignore="ContentDescription" />
-                </LinearLayout>
-
-                <com.google.android.material.divider.MaterialDivider
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    app:dividerColor="@color/border_light" />
-
-                <!-- 4. Help & Diagnostics -->
-                <LinearLayout
-                    android:id="@+id/btnHelpDiagnostics"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="?attr/selectableItemBackground"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="16dp">
-
-                    <ImageView
-                        android:layout_width="22dp"
-                        android:layout_height="22dp"
-                        android:src="@drawable/ic_help"
-                        app:tint="@color/primary"
-                        tools:ignore="ContentDescription" />
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="14dp"
-                        android:layout_weight="1"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="@string/help_diagnostics"
-                        android:textColor="@color/text_primary"
-                        android:textSize="14sp" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="sans-serif"
+                            android:text="Spike thresholds, siren sound &amp; briefings"
+                            android:textColor="@color/text_muted"
+                            android:textSize="11sp" />
+                    </LinearLayout>
 
                     <ImageView
                         android:layout_width="20dp"
@@ -393,22 +547,115 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Section 3: Support & Diagnostics -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:layout_marginBottom="8dp"
+            android:fontFamily="sans-serif-bold"
+            android:text="SUPPORT &amp; DIAGNOSTICS"
+            android:textColor="@color/text_muted"
+            android:textSize="11sp" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/surface"
+            app:cardCornerRadius="22dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/border_light"
+            app:strokeWidth="1dp">
+
+            <!-- Help & Diagnostics Only (Privacy & Security removed) -->
+            <LinearLayout
+                android:id="@+id/btnHelpDiagnostics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp">
+
+                <FrameLayout
+                    android:layout_width="38dp"
+                    android:layout_height="38dp"
+                    android:background="@drawable/bg_circular_badge_white"
+                    android:backgroundTint="#E0F2FE">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_gravity="center"
+                        android:src="@drawable/ic_help"
+                        app:tint="#0284C7"
+                        tools:ignore="ContentDescription" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="14dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-bold"
+                        android:text="Help &amp; Diagnostics"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:fontFamily="sans-serif"
+                        android:text="Hub ping test, sensor checks &amp; FAQs"
+                        android:textColor="@color/text_muted"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_chevron_right"
+                    app:tint="@color/text_muted"
+                    tools:ignore="ContentDescription" />
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Sign Out Button -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSignOut"
             style="@style/Widget.Material3.Button.TonalButton"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:layout_marginTop="20dp"
+            android:layout_marginTop="26dp"
             android:backgroundTint="#FFEBEB"
             android:fontFamily="sans-serif-bold"
             android:text="@string/sign_out"
             android:textColor="@color/critical"
-            app:cornerRadius="24dp"
+            app:cornerRadius="20dp"
             app:icon="@drawable/ic_logout"
             app:iconTint="@color/critical"
             app:strokeColor="@color/critical_stroke"
             app:strokeWidth="1dp" />
+
+        <!-- App Footer Info -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="16dp"
+            android:fontFamily="sans-serif"
+            android:text="PoultrySense AI v1.2.0 • Edge Neural Engine v2.4"
+            android:textColor="@color/text_muted"
+            android:textSize="11sp" />
 
     </LinearLayout>
 </androidx.core.widget.NestedScrollView>
