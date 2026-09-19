@@ -68,6 +68,7 @@ latest_status = {
     "flock_count": 0,
     "person_count": 0,
     "hand_count": 0,
+    "observing_count": 0,
     "healthy_count": 0,
     "warning_count": 0,
     "unhealthy_count": 0,
@@ -89,6 +90,9 @@ frame_lock = threading.Lock()
 
 # --- Motion & History State ---
 track_histories = defaultdict(lambda: deque(maxlen=30))
+track_motion_windows = defaultdict(lambda: deque(maxlen=90)) # 3-second rolling window at 30 FPS
+track_first_seen = {}              # display_id -> first appearance timestamp
+track_stationary_duration = {}     # display_id -> continuous seconds stationary (motion < 1.6)
 track_display_ids = {}
 track_missed_counts = {}
 track_classifications = {}
@@ -96,6 +100,9 @@ track_last_positions = {}
 inactive_tracks = {}
 classification_queue = queue.Queue(maxsize=6)
 classification_lock = threading.Lock()
+
+# Temporal Observation Window (seconds before declaring baseline health)
+OBSERVATION_WINDOW = 3.0
 
 # Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
 MAX_TRACKED_CHICKENS = 10
@@ -257,11 +264,13 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
 
     if best_match_id is not None:
         # Reclaim the same chicken's persistent identity!
-        del inactive_tracks[best_match_id]
+        info = inactive_tracks.pop(best_match_id, {})
         track_display_ids[raw_id] = best_match_id
         track_missed_counts[raw_id] = 0
         if cx is not None and cy is not None:
             track_last_positions[raw_id] = (cx, cy, curr_time)
+        if best_match_id not in track_first_seen:
+            track_first_seen[best_match_id] = info.get("first_seen", curr_time - OBSERVATION_WINDOW)
         return best_match_id
 
     # 3. New Chicken: Allocate the lowest available ID between 1 and MAX_TRACKED_CHICKENS
@@ -278,6 +287,9 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
     track_missed_counts[raw_id] = 0
     if cx is not None and cy is not None:
         track_last_positions[raw_id] = (cx, cy, curr_time)
+    if cand not in track_first_seen:
+        track_first_seen[cand] = curr_time
+        track_stationary_duration[cand] = 0.0
     return cand
 
 
@@ -297,7 +309,8 @@ def cleanup_stale_ids(active_raw_ids, max_missed=90):
                     inactive_tracks[disp_id] = {
                         "cx": last_pos[0],
                         "cy": last_pos[1],
-                        "time": curr_time
+                        "time": curr_time,
+                        "first_seen": track_first_seen.get(disp_id, curr_time)
                     }
                 if raw_id in track_display_ids:
                     del track_display_ids[raw_id]
@@ -312,6 +325,12 @@ def cleanup_stale_ids(active_raw_ids, max_missed=90):
             del inactive_tracks[disp_id]
             if disp_id in track_histories:
                 del track_histories[disp_id]
+            if disp_id in track_motion_windows:
+                del track_motion_windows[disp_id]
+            if disp_id in track_first_seen:
+                del track_first_seen[disp_id]
+            if disp_id in track_stationary_duration:
+                del track_stationary_duration[disp_id]
             if disp_id in track_classifications:
                 del track_classifications[disp_id]
 
@@ -758,6 +777,7 @@ def camera_loop():
         # No flip needed for external USB camera (not mirrored like laptop cam)
         h_frame, w_frame, _ = frame.shape
         curr_time = time.time()
+        dt = max(0.001, min(0.1, curr_time - prev_time))
         fps = 1.0 / (curr_time - prev_time + 1e-5)
         prev_time = curr_time
 
@@ -844,6 +864,7 @@ def camera_loop():
         warning_count = 0
         unhealthy_count = 0
         isolated_count = 0
+        observing_count = 0
 
         # Calculate centroids for spatial isolation analysis
         for box in raw_boxes:
@@ -885,6 +906,19 @@ def camera_loop():
                 motion = float(np.hypot(cx - prev_c[0], cy - prev_c[1]))
             hist.append((int(cx), int(cy)))
 
+            # Record rolling temporal motion history
+            track_motion_windows[display_id].append(motion)
+
+            # Track continuous stationary duration (seconds with motion < 1.6)
+            if motion < 1.6:
+                track_stationary_duration[display_id] = track_stationary_duration.get(display_id, 0.0) + dt
+            else:
+                track_stationary_duration[display_id] = max(0.0, track_stationary_duration.get(display_id, 0.0) - (dt * 2.0))
+
+            first_seen = track_first_seen.get(display_id, curr_time)
+            elapsed_obs = curr_time - first_seen
+            stationary_sec = track_stationary_duration.get(display_id, 0.0)
+
             # Crop for Behavior & Health Classification
             crop = frame[y1:y2, x1:x2]
             
@@ -914,41 +948,37 @@ def camera_loop():
             elif motion > 2.5 and behavior_label == "peck":
                 behavior_label = "peck"
 
-            # --- Proven 3-Tier Multi-Factor Health Classification ---
-            # Classes: "Healthy", "Warning", "Unhealthy"
-            # Biological foundation: Active mobility is the #1 indicator of poultry health.
-            # If a chicken is actively walking, it CANNOT be severely sick!
-            if behavior_label == "walk" or motion > 2.8:
-                health_label = "Healthy"
-            elif is_isolated:
-                if unhealthy_prob > 0.75:
+            # --- 3-Phase Temporal Observation & Anomaly Engine ---
+            # Phase 1: Observation & Calibration Window (First 3.0 seconds)
+            if elapsed_obs < OBSERVATION_WINDOW:
+                health_label = f"OBSERVING {elapsed_obs:.1f}s"
+                color = (255, 215, 0) # Electric Cyan for observation window
+                observing_count += 1
+            else:
+                recent_motion = list(track_motion_windows[display_id])
+                avg_motion = float(np.mean(recent_motion)) if recent_motion else motion
+                max_motion = float(np.max(recent_motion)) if recent_motion else motion
+
+                # Phase 2 & 3: Confirmed Temporal Diagnosis
+                # 1. HEALTHY: Bird exhibited locomotion (walked / pecked / stepped) during observation
+                if behavior_label == "walk" or max_motion > 2.6 or avg_motion > 1.8:
+                    health_label = "Healthy"
+                    color = get_id_color(display_id)
+                    healthy_count += 1
+                # 2. UNHEALTHY: Sustained immobility (continuous lethargy >= 5.0s) + high defect confidence
+                elif (stationary_sec >= 5.0 and unhealthy_prob >= 0.75) or (stationary_sec >= 8.0 and is_isolated):
                     health_label = "Unhealthy"
-                else:
+                    color = (70, 70, 255) # Vivid Red alert
+                    unhealthy_count += 1
+                # 3. WARNING: Isolated, resting, stationary, or visual defect uncertainty
+                elif is_isolated or stationary_sec >= 3.0 or unhealthy_prob >= 0.40 or avg_motion < 0.8:
                     health_label = "Warning"
-            elif unhealthy_prob >= 0.75 and motion < 1.8:
-                # Confirmed sick: immobile/stationary AND high visual defect confidence
-                health_label = "Unhealthy"
-            elif unhealthy_prob >= 0.40 or motion < 0.6:
-                # Low motion or stationary bird -> Warning
-                health_label = "Warning"
-            else:
-                health_label = "Healthy"
-
-            if health_label == "Healthy":
-                healthy_count += 1
-            elif health_label == "Warning":
-                warning_count += 1
-            else:
-                unhealthy_count += 1
-
-            # Determine Display Colors & HUD Badges
-            color = get_id_color(display_id)
-            if health_label == "Unhealthy":
-                color = (70, 70, 255) # Vivid Red/Coral for confirmed unhealthy alert
-            elif health_label == "Warning":
-                color = (0, 180, 255) # Amber/Yellow warning for isolated / stationary
-            else:
-                color = get_id_color(display_id) # Vibrant ID color for healthy
+                    color = (0, 180, 255) # Amber/Yellow warning
+                    warning_count += 1
+                else:
+                    health_label = "Healthy"
+                    color = get_id_color(display_id)
+                    healthy_count += 1
 
             # Draw Motion Trail
             if len(hist) > 1:
@@ -961,7 +991,11 @@ def camera_loop():
 
             # Draw Info Badge
             iso_tag = " • ISOLATED" if is_isolated else ""
-            badge_text = f" Chicken #{display_id} | {behavior_label.upper()} | {health_label.upper()}{iso_tag} "
+            if elapsed_obs < OBSERVATION_WINDOW:
+                badge_text = f" Chicken #{display_id} | {behavior_label.upper()} | OBSERVING {elapsed_obs:.1f}s{iso_tag} "
+            else:
+                badge_text = f" Chicken #{display_id} | {behavior_label.upper()} | {health_label.upper()}{iso_tag} "
+
             (text_w, text_h), baseline = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_DUPLEX, 0.45, 1)
             label_y = max(y1 - 10, text_h + 10)
             badge_bg = (int(color[0] * 0.25), int(color[1] * 0.25), int(color[2] * 0.25))
@@ -978,6 +1012,8 @@ def camera_loop():
                 "health": health_label,
                 "isolated": is_isolated,
                 "motion": round(motion, 1),
+                "observed_sec": round(elapsed_obs, 1),
+                "stationary_sec": round(stationary_sec, 1),
                 "bbox": [x1, y1, x2, y2]
             })
 
@@ -1003,6 +1039,7 @@ def camera_loop():
                 "flock_count": flock_count,
                 "person_count": flock_count,  # Backwards compatibility
                 "hand_count": flock_count,    # Backwards compatibility
+                "observing_count": observing_count,
                 "healthy_count": healthy_count,
                 "warning_count": warning_count,
                 "unhealthy_count": unhealthy_count,
