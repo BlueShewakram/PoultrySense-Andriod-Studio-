@@ -21,9 +21,14 @@ object  ServerPreferences {
         return prefs.getString(KEY_SERVER_IP, DEFAULT_IP) ?: DEFAULT_IP
     }
 
-    /** Saves an IP address string */
+    /** Saves an IP address string (automatically strips http://, ports, and trailing slashes) */
     fun saveIp(context: Context, ip: String) {
+        val clean = ip.trim()
+            .removePrefix("http://")
+            .removePrefix("https://")
+            .substringBefore(":")
+            .trimEnd('/')
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_SERVER_IP, ip.trim()).apply()
+        prefs.edit().putString(KEY_SERVER_IP, clean).apply()
     }
 }

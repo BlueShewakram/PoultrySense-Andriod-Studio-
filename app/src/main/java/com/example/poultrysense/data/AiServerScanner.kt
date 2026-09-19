@@ -7,21 +7,28 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.Socket
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 object AiServerScanner {
 
     private val fastHttpClient = OkHttpClient.Builder()
-        .connectTimeout(600, TimeUnit.MILLISECONDS)
-        .readTimeout(600, TimeUnit.MILLISECONDS)
+        .connectTimeout(1500, TimeUnit.MILLISECONDS)
+        .readTimeout(1500, TimeUnit.MILLISECONDS)
+        .dispatcher(Dispatcher().apply {
+            maxRequests = 128
+            maxRequestsPerHost = 64
+        })
         .build()
 
     /**
@@ -44,31 +51,39 @@ object AiServerScanner {
             }
         }
 
-        // ─── STAGE 1: UDP Broadcast Discovery (< 800ms) ───────────
+        // ─── STAGE 1: Saved IP Check (Fast Reconnect < 200ms) ──────────
+        val savedIp = ServerPreferences.getIp(context).trim()
+        if (savedIp.isNotEmpty()) {
+            notifyProgress("Checking previous connection ($savedIp)...")
+            if (verifyServer(savedIp)) {
+                return@withContext savedIp
+            }
+        }
+
+        // ─── STAGE 2: UDP Broadcast Discovery with MulticastLock ───────
         notifyProgress("Searching local Wi-Fi with instant beacon...")
-        val udpResult = tryUdpDiscovery()
+        val localIp = getDeviceLocalIp()
+        val subnetPrefix = if (localIp != null && localIp.contains(".")) {
+            localIp.substringBeforeLast(".") + "."
+        } else {
+            null
+        }
+
+        val udpResult = tryUdpDiscovery(context, subnetPrefix)
         if (udpResult != null && verifyServer(udpResult)) {
             return@withContext udpResult
         }
 
-        // ─── STAGE 2: Default Gateway Check (Hotspot / PC Gateway) ─
+        // ─── STAGE 3: Default Gateway Check (Hotspot / PC Gateway) ─
         notifyProgress("Checking router / hotspot gateway...")
         val gatewayIp = getGatewayIp(context)
         if (gatewayIp != null && verifyServer(gatewayIp)) {
             return@withContext gatewayIp
         }
 
-        // ─── STAGE 3: Saved IP Check (Fast Reconnect) ──────────────
-        val savedIp = ServerPreferences.getIp(context)
-        if (savedIp.isNotEmpty() && verifyServer(savedIp)) {
-            return@withContext savedIp
-        }
-
-        // ─── STAGE 4: Concurrent Subnet Sweep ───────────────────────
-        val localIp = getDeviceLocalIp()
-        if (localIp != null && localIp.contains(".")) {
-            val subnetPrefix = localIp.substringBeforeLast(".") + "."
-            notifyProgress("Scanning subnet ${subnetPrefix}x...")
+        // ─── STAGE 4: Fast Concurrent Subnet Sweep ───────────────────────
+        if (subnetPrefix != null) {
+            notifyProgress("Scanning subnet ${subnetPrefix}x for AI Hub...")
             val sweepResult = sweepSubnet(subnetPrefix)
             if (sweepResult != null) {
                 return@withContext sweepResult
@@ -79,25 +94,53 @@ object AiServerScanner {
     }
 
     /**
-     * Broadcasts UDP beacon on port 5005.
+     * Broadcasts UDP beacon on port 5005 to 255.255.255.255 and directed subnet broadcast.
      */
-    private fun tryUdpDiscovery(): String? {
+    private fun tryUdpDiscovery(context: Context, subnetPrefix: String?): String? {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val multicastLock = try {
+            wifiManager?.createMulticastLock("poultrysense_udp_lock")?.apply {
+                setReferenceCounted(true)
+                acquire()
+            }
+        } catch (_: Exception) {
+            null
+        }
+
         var socket: DatagramSocket? = null
         return try {
             socket = DatagramSocket()
             socket.broadcast = true
-            socket.soTimeout = 800
+            socket.soTimeout = 1200
 
             val message = "POULTRYSENSE_DISCOVER"
             val buffer = message.toByteArray()
-            val packet = DatagramPacket(
-                buffer,
-                buffer.size,
-                InetAddress.getByName("255.255.255.255"),
-                5005
-            )
-            socket.send(packet)
 
+            // 1. Send to global broadcast
+            try {
+                val packetAll = DatagramPacket(
+                    buffer,
+                    buffer.size,
+                    InetAddress.getByName("255.255.255.255"),
+                    5005
+                )
+                socket.send(packetAll)
+            } catch (_: Exception) {}
+
+            // 2. Also send to directed subnet broadcast (e.g. 192.168.0.255)
+            if (subnetPrefix != null) {
+                try {
+                    val directedPacket = DatagramPacket(
+                        buffer,
+                        buffer.size,
+                        InetAddress.getByName("${subnetPrefix}255"),
+                        5005
+                    )
+                    socket.send(directedPacket)
+                } catch (_: Exception) {}
+            }
+
+            // Receive reply
             val receiveBuffer = ByteArray(1024)
             val receivePacket = DatagramPacket(receiveBuffer, receiveBuffer.size)
             socket.receive(receivePacket)
@@ -112,6 +155,11 @@ object AiServerScanner {
             null
         } finally {
             socket?.close()
+            try {
+                if (multicastLock?.isHeld == true) {
+                    multicastLock.release()
+                }
+            } catch (_: Exception) {}
         }
     }
 
@@ -119,11 +167,29 @@ object AiServerScanner {
      * Checks if the IP is running PoultrySense AI by hitting /status or /api/discover.
      */
     fun verifyServer(ip: String): Boolean {
+        // Quick TCP port check first to prevent slow HTTP timeouts
+        if (!isPortOpen(ip, 5000, 600)) {
+            return false
+        }
         return try {
             val url = "http://$ip:5000/status"
             val request = Request.Builder().url(url).build()
             fastHttpClient.newCall(request).execute().use { response ->
                 response.isSuccessful
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Ultra-fast TCP socket connect probe.
+     */
+    private fun isPortOpen(ip: String, port: Int, timeoutMs: Int): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(ip, port), timeoutMs)
+                true
             }
         } catch (_: Exception) {
             false
@@ -152,18 +218,23 @@ object AiServerScanner {
     }
 
     /**
-     * Retrieves the device's local IPv4 address on Wi-Fi.
+     * Retrieves the device's local IPv4 address on Wi-Fi (prioritizing wlan interfaces).
      */
     private fun getDeviceLocalIp(): String? {
         return try {
-            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
-            for (intf in interfaces) {
+            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList() ?: return null
+            // Prioritize Wi-Fi and Ethernet interfaces over mobile data or virtual adapters
+            val sorted = interfaces.sortedByDescending {
+                val n = it.name.lowercase()
+                n.startsWith("wlan") || n.startsWith("eth") || n.startsWith("ap")
+            }
+            for (intf in sorted) {
                 if (intf.isLoopback || !intf.isUp) continue
                 val addrs = intf.inetAddresses ?: continue
                 for (addr in addrs) {
                     if (!addr.isLoopbackAddress && addr is Inet4Address) {
                         val host = addr.hostAddress
-                        if (host != null && !host.startsWith("127.")) {
+                        if (host != null && !host.startsWith("127.") && !host.startsWith("169.254.")) {
                             return host
                         }
                     }
@@ -176,7 +247,7 @@ object AiServerScanner {
     }
 
     /**
-     * Parallel async sweep across host numbers 1..254.
+     * Parallel async sweep across host numbers 1..254 using fast TCP socket probes.
      */
     private suspend fun sweepSubnet(prefix: String): String? = coroutineScope {
         val foundIp = java.util.concurrent.atomic.AtomicReference<String?>(null)
@@ -186,10 +257,14 @@ object AiServerScanner {
             async(Dispatchers.IO) {
                 if (stopFlag.get()) return@async null
                 val candidateIp = "$prefix$hostNum"
-                if (verifyServer(candidateIp)) {
-                    stopFlag.set(true)
-                    foundIp.set(candidateIp)
-                    candidateIp
+                if (isPortOpen(candidateIp, 5000, 350)) {
+                    if (verifyServer(candidateIp)) {
+                        stopFlag.set(true)
+                        foundIp.set(candidateIp)
+                        candidateIp
+                    } else {
+                        null
+                    }
                 } else {
                     null
                 }

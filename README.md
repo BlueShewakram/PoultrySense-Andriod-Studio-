@@ -1,287 +1,208 @@
 <div align="center">
 
 # 🐔 PoultrySense
-
-### AI-Powered Anomaly & Environment Monitor for Poultry Farms
+### Intelligent Real-Time Poultry Vision Hub & Farm Anomaly Monitor
 
 [![Android](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)](https://developer.android.com)
 [![Python](https://img.shields.io/badge/AI%20Server-Python%203.10+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![YOLO11](https://img.shields.io/badge/Detection-YOLO11-00FFFF?logo=ultralytics&logoColor=black)](https://ultralytics.com)
 [![Flask](https://img.shields.io/badge/Server-Flask-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com)
-[![Firebase](https://img.shields.io/badge/Auth-Firebase-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com)
+[![ESP32](https://img.shields.io/badge/IoT-ESP32-E7352C?logo=espressif&logoColor=white)](https://www.espressif.com)
+[![Firebase](https://img.shields.io/badge/Auth%20%26%20DB-Firebase-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**PoultrySense** is a full-stack smart monitoring system combining a Windows AI vision server and an Android mobile app. It uses **YOLO11** with a custom **Persistent Person Re-ID tracker** to stream real-time AI-processed video to your phone — no cloud, no latency, just raw on-device inference over your local Wi-Fi.
+**PoultrySense** is a state-of-the-art smart monitoring ecosystem designed for poultry farms and broiler houses. It connects an on-premise **Computer Vision AI Hub** (Windows/Linux) with an **ESP32 IoT Climate Node** and a native **Android Mobile App**. 
+
+It streams real-time, low-latency, AI-annotated video (up to 30 FPS) with persistent multi-chicken tracking, 3-tier health classification, and behavior recognition directly over your local Wi-Fi without cloud fees.
 
 </div>
 
 ---
 
-## ✨ Features
+## 🤖 One-Prompt Setup for AI Agents (Cursor, Antigravity, Claude, Copilot)
+
+If you are cloning this repository and using an AI coding assistant (such as **Antigravity**, **Cursor**, **Claude Code**, or **GitHub Copilot Workspace**), simply copy and paste this single prompt:
+
+```text
+Please set up and launch PoultrySense AI on my machine:
+1. Check if Python (3.10 or 3.11) is available.
+2. In the poultrysense_ai/ directory, create a virtual environment (venv) if it doesn't already exist.
+3. Install all required dependencies from poultrysense_ai/requirements.txt.
+4. Run poultrysense_ai/download_models.py to verify and fetch the model weights (YOLO11n and custom pipeline models) into poultrysense_ai/models/.
+5. Confirm that poultrysense_ai/pipeline/bytetrack.yaml is configured for chicken tracking (120-frame buffer, spatial re-identification).
+6. Verify external camera index (1 or 0) and start the AI server using poultrysense_ai/poultrysense_ai.py on port 5000.
+7. Print out my local IPv4 address and confirm that the web stream at http://localhost:5000 and UDP auto-discovery on port 5005 are active.
+```
+
+---
+
+## ✨ Core System Features
 
 | Feature | Description |
 |---|---|
-| 🎯 **Person Detection** | YOLO11n detects people in real time with class-filtered inference (class 0 only) |
-| 🧠 **Persistent Re-ID** | Custom visual appearance tracker keeps person IDs consistent even after leaving & re-entering the camera view |
-| 🎥 **Live MJPEG Stream** | AI-annotated video streamed from PC to Android over local Wi-Fi |
-| 📊 **Telemetry HUD** | Real-time FPS, person count, gallery ID count overlaid on the video feed |
-| 🔥 **Firebase Auth** | Full sign-up / login / forgot password with Firebase Authentication |
-| 🌡️ **Environment Monitor** | Home dashboard for flock activity index, environment alerts, and scan history |
-| 📡 **Configurable IP** | Set your PC's IP directly from the Android profile settings — no hardcoding needed |
-| 🪄 **One-click Server** | `start_ai_server.bat` / `stop_ai_server.bat` for easy server lifecycle management |
+| 🎯 **Strict Chicken Detection** | Powered by **YOLO11 Nano** with class filtering strictly for poultry. Rejects hands, phones, persons, and background noise. |
+| 🏷️ **Persistent Chicken IDs** | Custom **Spatial Re-Identification** and 120-frame **ByteTrack Kalman buffer** keep chicken IDs consistent (`Chicken #1` to `#10`) even during pecking, wing flapping, or brief occlusions. |
+| 🏥 **3-Tier Health Classification** | Multi-factor fusion engine combining deep visual classification with real-time locomotion vectors: <br>• 🟢 **HEALTHY**: Active walking, foraging, normal gait. <br>• 🟡 **WARNING**: Stationary, low-mobility, or spatially isolated from flock. <br>• 🔴 **UNHEALTHY**: Multi-factor confirmed lethargy (immobile + high visual defect confidence). |
+| 🏃 **Real-Time Behavior AI** | Dynamically classifies states into `WALK`, `STAND`, and `PECK` with instant 0ms latency centroid velocity tracking. |
+| ⚡ **Zero-Latency Multi-Threading** | Video capture and YOLO tracking run on the main thread (28–30 FPS), while secondary neural networks run on an asynchronous background worker thread. |
+| 🎥 **Dual-Camera Auto-Switching** | Connects to external USB webcam (`index 1`) with seamless fallback to laptop webcam (`index 0`). |
+| 📡 **Zero-Config Auto-Discovery** | Android app broadcasts on UDP port 5005 to automatically find the AI server IP on your LAN—no manual IP typing required! |
+| 🌡️ **IoT Climate & Heat Stress** | Integrates ESP32 DHT22 sensor data (Temperature, Humidity, Ammonia) and computes the Poultry **Temperature-Humidity Index (THI)**. |
 
 ---
 
-## 📁 Project Structure
+## 📁 Repository Structure
 
 ```
 PoultrySense/
-├── app/                          # Android Studio Project
-│   └── src/main/
-│       ├── java/com/example/poultrysense/
-│       │   ├── data/             # Data layer (ServerPreferences, Models, Repository)
-│       │   └── ui/               # UI layer
-│       │       ├── auth/         # Login, SignUp activities
-│       │       ├── home/         # Home dashboard fragment
-│       │       ├── monitor/      # Live AI stream & telemetry monitor
-│       │       ├── alerts/       # Flock & environment alerts
-│       │       ├── history/      # Scan history log
-│       │       └── profile/      # Profile & AI server settings
-│       └── res/                  # Layouts, drawables, values
+├── setup_ai_server.bat           # One-click Windows installer (creates venv, installs deps, fetches models)
+├── start_ai_server.bat           # One-click launch script for the AI Server
+├── stop_ai_server.bat            # One-click stop script (frees camera & port 5000)
 │
-├── poultrysense_ai/              # Python AI Vision Server
-│   ├── poultrysense_ai.py        # Main server: YOLO detection + Re-ID tracker + Flask API
-│   ├── yolo11n.pt                # YOLO11 Nano model weights (auto-downloaded if missing)
-│   └── requirements.txt          # Python dependencies
+├── poultrysense_ai/              # Python AI Vision & Tracking Server
+│   ├── poultrysense_ai.py        # Main engine: YOLO11 + ByteTrack + 3-Tier Health + Flask Streamer
+│   ├── download_models.py        # Automated model downloader & integrity checker
+│   ├── requirements.txt          # Python dependencies (PyTorch, Ultralytics, OpenCV, Flask)
+│   ├── pipeline/
+│   │   ├── bytetrack.yaml        # Tuned ByteTrack tracker configuration for poultry
+│   │   ├── tracker.py            # Spatial re-identification module
+│   │   └── pipeline.py           # Multi-model inference orchestrator
+│   └── models/                   # Neural network weights directory
+│       ├── PoultrySense_BehaviorModel.pt   # Stand/Peck/Walk classifier
+│       ├── PoultrySense_HealthClassifier.pt # Health diagnostic model
+│       └── PoultrySense_YOLOv8_ChickenDet.pt # Custom chicken detector
 │
-├── start_ai_server.bat           # Windows: launch AI server in background
-└── stop_ai_server.bat            # Windows: stop server & release camera
+├── app/                          # Native Android Studio Project (Kotlin)
+│   └── src/main/java/com/example/poultrysense/
+│       ├── data/                 # Networking, UDP Auto-Discovery, Preferences
+│       └── ui/                   # Home, Monitor, Alerts, Profile fragments
+│
+└── esp32/                        # IoT Environmental Sensor Firmware
+    └── poultrysense_dht22/       # Arduino / C++ code for DHT22 + MQ135 (Temp/Humidity/Ammonia)
 ```
 
 ---
 
-## 🛠️ Setup Guide
+## 🚀 Quick Setup Guide (Windows PC)
 
-### Prerequisites
+### Option 1 — One-Click Setup (Recommended)
 
-| Requirement | Version |
-|---|---|
-| Windows PC (for AI server) | Windows 10 / 11 |
-| Python | 3.10 or 3.11 (recommended) |
-| Android Studio | Hedgehog or newer |
-| Android Device | API 26 (Android 8.0+) |
-| Same Wi-Fi Network | PC & Android must be on the same LAN |
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/BlueShewakram/PoultrySense-Andriod-Studio-.git
+   cd PoultrySense-Andriod-Studio-
+   ```
+2. Double-click **`setup_ai_server.bat`**:
+   * Automatically creates the Python virtual environment (`venv`).
+   * Installs all dependencies (`torch`, `ultralytics`, `opencv`, `flask`).
+   * Verifies pipeline and downloads the required base models.
+3. Double-click **`start_ai_server.bat`** to start streaming.
+4. Open `http://localhost:5000` in your browser to view the live dashboard!
 
 ---
 
-### Part 1 — AI Vision Server Setup (Windows PC)
-
-#### Step 1: Clone the Repository
+### Option 2 — Manual Command-Line Setup
 
 ```bash
-git clone https://github.com/BlueShewakram/PoultrySense-Andriod-Studio-.git
-cd PoultrySense-Andriod-Studio-
-```
-
-#### Step 2: Create a Python Virtual Environment
-
-```bash
+# 1. Navigate to AI folder
 cd poultrysense_ai
+
+# 2. Create and activate virtual environment
 python -m venv venv
-```
-
-#### Step 3: Activate the Virtual Environment
-
-```bash
 venv\Scripts\activate
-```
 
-#### Step 4: Install Dependencies
-
-```bash
+# 3. Install dependencies
+pip install --upgrade pip
 pip install -r requirements.txt
+
+# 4. Verify/download models
+python download_models.py
+
+# 5. Launch server
+python poultrysense_ai.py
 ```
 
-> **Note:** `torch` and `ultralytics` are large packages (~800MB). This will take a few minutes on first install.
+The server starts listening on:
+* **Web & MJPEG Stream**: `http://0.0.0.0:5000`
+* **UDP Auto-Discovery**: `0.0.0.0:5005`
 
-#### Step 5: Verify YOLO Model
+---
 
-The `yolo11n.pt` model file is included in the repo. If it's missing, the server will auto-download it from Ultralytics on first launch.
+## 📱 Android App Setup
 
-#### Step 6: Start the AI Server
+1. Open **Android Studio** (Hedgehog or newer).
+2. Click **File → Open** and select the repository root folder.
+3. Replace `app/google-services.json` with your Firebase configuration (or keep the demo configuration for local monitoring).
+4. Connect your Android phone via USB (or Wi-Fi pairing) and press **Run 'app'**.
+5. Connect your phone to the **same Wi-Fi network** as your PC.
+6. Open the app:
+   * The app will **automatically discover** the AI server via UDP broadcast!
+   * Or manually enter your PC's IPv4 address under **Profile → AI Server Settings**.
+   * Navigate to the **Monitor** tab to view the live AI feed, chicken IDs, and real-time health badges.
 
-**Option A — Double-click (easiest):**
+---
+
+## 🧠 Technical Architecture
+
 ```
-Double-click: start_ai_server.bat
+                          ┌─────────────────────────────────────┐
+                          │         HD Camera Feed (30 FPS)     │
+                          └──────────────────┬──────────────────┘
+                                             │
+                                             ▼
+                          ┌─────────────────────────────────────┐
+                          │   YOLO11n + ByteTrack (Poultry)     │
+                          │   • 120-frame Kalman Buffer         │
+                          │   • Max 10 Chickens (No Overload)   │
+                          └──────────────────┬──────────────────┘
+                                             │
+                      ┌──────────────────────┴──────────────────────┐
+                      ▼                                             ▼
+           Main Thread (0ms Latency)                     Background Worker Thread
+    • Instant Centroid Motion Vectors               • Evaluates Crops Asynchronously
+    • Spatial Re-ID (Keeps IDs Consistent)          • PoultrySense_HealthClassifier
+    • In-Place ROI HUD Rendering                    • PoultrySense_BehaviorModel
+                      │                                             │
+                      └──────────────────────┬──────────────────────┘
+                                             ▼
+                          ┌─────────────────────────────────────┐
+                          │  3-Tier Health Behavioral Fusion    │
+                          │  • Walking/Mobile   ➔ HEALTHY 🟢    │
+                          │  • Stationary/Iso   ➔ WARNING 🟡    │
+                          │  • Immobile+Defect  ➔ UNHEALTHY 🔴  │
+                          └──────────────────┬──────────────────┘
+                                             │
+                      ┌──────────────────────┴──────────────────────┐
+                      ▼                                             ▼
+           Web Dashboard & MJPEG Stream                UDP Broadcast (Port 5005)
+             (http://0.0.0.0:5000)                    (PoultrySense Android App)
 ```
 
-**Option B — Manual launch:**
-```bash
-cd poultrysense_ai
-venv\Scripts\python.exe poultrysense_ai.py
-```
+---
 
-The server starts at: **`http://0.0.0.0:5000`**
+## 🌐 API Reference
 
-| Endpoint | Description |
+| Endpoint | Protocol | Description |
+|---|---|---|
+| `GET /` | HTTP | Modern browser web dashboard with real-time video, FPS counter, and flock statistics |
+| `GET /video_feed` | HTTP MJPEG | Multi-part live JPEG video stream for Android app & web browsers |
+| `GET /status` | HTTP JSON | Real-time flock telemetry (`flock_count`, `healthy_count`, `warning_count`, `unhealthy_count`, `health_index`, `fps`) |
+| `GET /frame.jpg` | HTTP JPEG | High-resolution single frame snapshot |
+| `GET /reset_ids` | HTTP JSON | Resets the active chicken ID allocator |
+| `POST /sensor_data`| HTTP JSON | Ingestion endpoint for ESP32 climate telemetry (`temp`, `humidity`, `ammonia`) |
+| `UDP 5005` | UDP Broadcast | Auto-discovery listener responding with server IP and port |
+
+---
+
+## 🔧 Troubleshooting
+
+| Issue | Resolution |
 |---|---|
-| `http://<your-ip>:5000/` | Live monitoring dashboard |
-| `http://<your-ip>:5000/video_feed` | MJPEG stream |
-| `http://<your-ip>:5000/status` | JSON telemetry |
-| `http://<your-ip>:5000/frame.jpg` | Single JPEG snapshot |
-| `http://<your-ip>:5000/reset_ids` | Reset person ID gallery |
-
-#### Step 7: Find Your PC's IP Address
-
-```bash
-ipconfig
-```
-Look for **IPv4 Address** under your active Wi-Fi adapter (e.g., `192.168.1.50`).
-
-#### Step 8: Stop the Server
-
-```
-Double-click: stop_ai_server.bat
-```
-
----
-
-### Part 2 — Android App Setup
-
-#### Step 1: Open in Android Studio
-
-```
-File → Open → Select the PoultrySense root folder
-```
-
-#### Step 2: Firebase Setup
-
-> ⚠️ **Important:** The included `google-services.json` is a placeholder. You must configure your own Firebase project.
-
-1. Go to [Firebase Console](https://console.firebase.google.com) → **Add project**
-2. Register your Android app with package name: `com.example.poultrysense`
-3. Download your `google-services.json`
-4. Replace `app/google-services.json` with your downloaded file
-5. Enable **Authentication → Email/Password** in Firebase Console
-
-#### Step 3: Sync & Build
-
-```
-Android Studio → File → Sync Project with Gradle Files
-Build → Make Project
-```
-
-#### Step 4: Run on Device
-
-Connect your Android device via USB (with USB Debugging enabled) or use an emulator:
-
-```
-Run → Run 'app'
-```
-
-#### Step 5: Connect to AI Server
-
-1. Open PoultrySense app
-2. Go to **Profile → AI Server Settings**
-3. Enter your PC's IP address (e.g., `192.168.1.50`)
-4. Tap **Test Connection** → should show ✅ **Connected**
-5. Navigate to the **Monitor** tab to see the live AI feed
-
----
-
-## 🧠 How the Re-ID Tracker Works
-
-The `PersonReIDTracker` class in `poultrysense_ai.py` solves the common problem of IDs changing when people leave and re-enter the camera view:
-
-```
-Detection → Extract multi-zone HSV+Lab appearance signature
-          ↓
-    Active Track Match? (IoU + visual cosine similarity + spatial distance)
-          ↓                              ↓
-        YES → update EMA profile     NO → Check Re-ID Gallery
-                                          ↓            ↓
-                                     Match ≥ 0.62   No match
-                                       → restore ID  → new ID
-```
-
-- **Zone-based features**: Upper body, torso, and lower body color histograms in HSV and Lab color spaces
-- **EMA adaptation**: Appearance profiles slowly adapt to lighting changes without drifting
-- **Gallery persistence**: Up to unlimited persons stored — consistent IDs across the entire session
-- **Smooth bounding boxes**: Exponential moving average on bbox coordinates reduces jitter
-
----
-
-## 📦 Key Dependencies
-
-### AI Server (Python)
-| Package | Purpose |
-|---|---|
-| `ultralytics` | YOLO11 person detection |
-| `opencv-python` | Video capture & image processing |
-| `flask` | HTTP server for video stream & telemetry API |
-| `numpy` | Feature vector operations |
-| `torch` | YOLO model inference backend |
-
-### Android App (Kotlin)
-| Library | Purpose |
-|---|---|
-| Firebase Auth | User authentication |
-| OkHttp | HTTP client for AI server communication |
-| Gson | JSON parsing for telemetry |
-| AndroidX CameraX | On-device camera preview |
-| Kotlin Coroutines | Async stream polling |
-| ViewBinding | Type-safe layout access |
-
----
-
-## 🔧 Configuration
-
-### Change Detection Confidence
-In `poultrysense_ai.py`, adjust:
-```python
-results = yolo_model(frame, classes=[0], conf=0.40, iou=0.45, ...)
-```
-
-### Change Re-ID Sensitivity
-```python
-reid_tracker = PersonReIDTracker(reid_thresh=0.62)  # Lower = more lenient re-id
-```
-
-### Change Camera Source
-```python
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Change 0 to 1, 2... for other cameras
-```
-
-### Change Stream Port
-```python
-flask_app.run(host='0.0.0.0', port=5000, ...)  # Change port here
-```
-
----
-
-## 🐞 Troubleshooting
-
-| Problem | Solution |
-|---|---|
-| `Camera not opening` | Ensure no other app is using the webcam. Try `cv2.VideoCapture(1)` for external cameras. |
-| `Server not reachable from phone` | Check Windows Firewall — allow port 5000 inbound. Verify both devices are on same Wi-Fi. |
-| `IDs keep changing` | Lower `reid_thresh` to `0.55` in `PersonReIDTracker`. Ensure good lighting. |
-| `YOLO model not found` | Delete partial `yolo11n.pt` and let it auto-download on next launch. |
-| `Firebase auth error` | Verify `google-services.json` matches your Firebase project and Email/Password auth is enabled. |
-| `pip install fails on torch` | Use Python 3.10 or 3.11. Avoid Python 3.13+. |
-
----
-
-## 🚀 Quick Start Checklist
-
-- [ ] Clone repo
-- [ ] Set up Python venv and install requirements
-- [ ] Run `start_ai_server.bat`
-- [ ] Open browser at `http://localhost:5000` to verify feed
-- [ ] Configure your own `google-services.json`
-- [ ] Build and run Android app
-- [ ] Set server IP in app Profile settings
-- [ ] Open Monitor tab — enjoy live AI tracking!
+| **Camera appears dark** | Hardware auto-exposure is enabled by default. Ensure external webcam lens is unobstructed and lighting is sufficient. |
+| **Video is lagging / low FPS** | Secondary AI is offloaded to a background thread. Ensure tracking is set to max 10 chickens (`MAX_TRACKED_CHICKENS = 10` in `poultrysense_ai.py`). |
+| **IDs change when a chicken ducks or turns** | ByteTrack buffer is set to 120 frames with spatial re-identification. Ensure the camera angle captures the full pen clearly. |
+| **Phone cannot connect to AI server** | Check your Windows Wi-Fi network profile: set it from **Public** to **Private** so Windows Firewall allows inbound connections on port 5000 and 5005. |
+| **Port 5000 is already in use** | Run `stop_ai_server.bat` to terminate any previous Python process holding port 5000. |
 
 ---
 
@@ -289,12 +210,8 @@ flask_app.run(host='0.0.0.0', port=5000, ...)  # Change port here
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
----
-
 <div align="center">
 
-Made with ❤️ by **Blue Shewakram**
-
-[🐛 Report Bug](https://github.com/BlueShewakram/PoultrySense-Andriod-Studio-/issues) · [💡 Request Feature](https://github.com/BlueShewakram/PoultrySense-Andriod-Studio-/issues)
+Made with ❤️ for precision agriculture by **Blue Shewakram**
 
 </div>

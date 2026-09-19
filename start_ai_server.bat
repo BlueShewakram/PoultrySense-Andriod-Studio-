@@ -7,30 +7,32 @@ echo        POULTRYSENSE AI - CHICKEN VISION AND TELEMETRY SERVER
 echo =================================================================
 echo.
 
-REM 1. Check if port 5000 is occupied and cleanly terminate old instances
+REM 1. Clean up port 5000 if occupied
 echo [1/3] Checking port 5000 status...
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5000" ^| findstr "LISTENING"') do (
     echo [INFO] Stopping previous server instance PID %%a
     taskkill /PID %%a /F >nul 2>&1
 )
 
+net session >nul 2>&1
+if %errorlevel% equ 0 netsh advfirewall firewall add rule name="PoultrySense 5000" dir=in action=allow protocol=TCP localport=5000 profile=any >nul 2>&1
+if %errorlevel% equ 0 netsh advfirewall firewall add rule name="PoultrySense 5005" dir=in action=allow protocol=UDP localport=5005 profile=any >nul 2>&1
+
 REM 2. Navigate to poultrysense_ai directory
 cd /d "%~dp0poultrysense_ai"
 
 if not exist ".\venv\Scripts\python.exe" (
     echo [ERROR] Virtual environment not found at poultrysense_ai\venv
-    echo Please make sure the Python venv is installed.
     pause
     exit /b 1
 )
 
-REM 3. Launch the AI Server
-echo [2/3] Initializing YOLOv8 Models and Camera Feed...
-echo [3/3] Starting Flask Stream on port 5000...
+REM 3. Launch AI Server
+echo [2/3] Initializing Camera (External USB) and AI Models...
+echo [3/3] Starting AI Server on port 5000...
 echo.
-echo -----------------------------------------------------------------
 echo  Live Web Stream: http://localhost:5000
-echo  Press Ctrl+C in this window at any time to stop the AI server.
+echo  Press Ctrl+C to stop the AI server.
 echo -----------------------------------------------------------------
 echo.
 

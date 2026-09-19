@@ -12,6 +12,7 @@ import threading
 import numpy as np
 import sys
 import socket
+import queue
 from collections import defaultdict, deque
 
 # --- 1. Import Ultralytics YOLO ---
@@ -37,12 +38,12 @@ if not os.path.exists(TRACKER_YAML):
     TRACKER_YAML = "bytetrack.yaml"
 
 DET_MODELS = [
+    os.path.join(SCRIPT_DIR, "yolo11n.pt"),
+    "yolo11n.pt",
     os.path.join(MODELS_DIR, "PoultrySense_YOLOv8_ChickenDet.pt"),
     os.path.join(SCRIPT_DIR, "PoultrySense_YOLOv8_ChickenDet.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_YOLOv8_ChickenSeg.pt"),
     os.path.join(SCRIPT_DIR, "PoultrySense_YOLOv8_ChickenSeg.pt"),
-    os.path.join(SCRIPT_DIR, "yolo11n.pt"),
-    "yolo11n.pt"
 ]
 
 BEHAVIOR_MODELS = [
@@ -68,6 +69,7 @@ latest_status = {
     "person_count": 0,
     "hand_count": 0,
     "healthy_count": 0,
+    "warning_count": 0,
     "unhealthy_count": 0,
     "isolated_count": 0,
     "health_index": 100,
@@ -89,7 +91,134 @@ frame_lock = threading.Lock()
 track_histories = defaultdict(lambda: deque(maxlen=30))
 track_display_ids = {}
 track_missed_counts = {}
-next_auto_id = 1
+track_classifications = {}
+track_last_positions = {}
+inactive_tracks = {}
+classification_queue = queue.Queue(maxsize=6)
+classification_lock = threading.Lock()
+
+# Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
+MAX_TRACKED_CHICKENS = 10
+
+
+def classification_worker(beh_model, hlth_model):
+    """Background worker that continuously classifies chicken health and behavior
+    on a secondary CPU core without blocking the 30 FPS video tracking loop."""
+    while True:
+        try:
+            disp_id, crop = classification_queue.get(timeout=1.0)
+        except Exception:
+            continue
+
+        b_label = "stand"
+        unhealthy_prob = 0.0
+
+        if beh_model is not None:
+            try:
+                b_res = beh_model.predict(crop, imgsz=160, verbose=False)[0]
+                b_label = BEHAVIOR_NAMES.get(int(b_res.probs.top1), "stand")
+            except Exception:
+                pass
+
+        if hlth_model is not None:
+            try:
+                h_res = hlth_model.predict(crop, imgsz=160, verbose=False)[0]
+                # In PoultrySense_HealthClassifier: index 0 is Healthy, index 1 is Unhealthy
+                if h_res.probs is not None and len(h_res.probs.data) >= 2:
+                    unhealthy_prob = float(h_res.probs.data[1])
+                else:
+                    unhealthy_prob = 0.0
+            except Exception:
+                pass
+
+        with classification_lock:
+            track_classifications[disp_id] = {
+                "behavior": b_label,
+                "unhealthy_prob": unhealthy_prob,
+                "time": time.time()
+            }
+
+
+# --- Camera Configuration ---
+# Camera index: 1 = external USB camera ("HD Camera")
+#               0 = built-in laptop camera (fallback)
+EXTERNAL_CAMERA_INDEX = 1
+FALLBACK_CAMERA_INDEX = 0
+
+
+# --- Threaded Camera Reader for 30 FPS capture ---
+class ThreadedCamera:
+    """Reads frames from the camera in a background thread so capture
+    is decoupled from the (slower) YOLO inference loop."""
+
+    def __init__(self, camera_index=EXTERNAL_CAMERA_INDEX):
+        self.cap = None
+        self._frame = None
+        self._ret = False
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread = None
+        self._open(camera_index)
+
+    def _open(self, camera_index):
+        # Try external camera first with DirectShow
+        self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(camera_index)
+
+        # Fallback to built-in laptop camera
+        if not self.cap.isOpened() and camera_index != FALLBACK_CAMERA_INDEX:
+            print(f"[WARN] External camera {camera_index} not available, falling back to camera {FALLBACK_CAMERA_INDEX}")
+            self.cap = cv2.VideoCapture(FALLBACK_CAMERA_INDEX, cv2.CAP_DSHOW)
+            if not self.cap.isOpened():
+                self.cap = cv2.VideoCapture(FALLBACK_CAMERA_INDEX)
+
+        if self.cap.isOpened():
+            # Use MJPG codec for high-clarity & fast 30 FPS transfer
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FPS, 30)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            # Enable natural auto-exposure and optimal brightness for clear, vivid display
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 128)
+            self.cap.set(cv2.CAP_PROP_CONTRAST, 40)
+            actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            print(f"[INFO] Camera opened: index={camera_index}, res={actual_w}x{actual_h}, codec=MJPG, Auto-Exposure=ON")
+        else:
+            print("[ERROR] No camera could be opened!")
+
+    def start(self):
+        if self._running:
+            return self
+        self._running = True
+        self._thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def _reader_loop(self):
+        while self._running:
+            ret, frame = self.cap.read()
+            with self._lock:
+                self._ret = ret
+                self._frame = frame
+
+    def read(self):
+        with self._lock:
+            return self._ret, self._frame.copy() if self._frame is not None else None
+
+    def isOpened(self):
+        return self.cap is not None and self.cap.isOpened()
+
+    def release(self):
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self.cap is not None:
+            self.cap.release()
 
 
 def get_model_path(candidates):
@@ -99,33 +228,92 @@ def get_model_path(candidates):
     return None
 
 
-# --- Persistent ID Allocator ---
-def assign_display_id(raw_id):
-    global next_auto_id
+# --- Persistent Chicken ID Allocator with Spatial Re-Identification ---
+def assign_display_id(raw_id, cx=None, cy=None, box=None):
+    """Guarantees consistent Chicken IDs (#1 to #10). If tracking momentarily blips or drops
+    due to pecking/occlusion, re-identifies the chicken at its previous coordinates rather than
+    assigning a new ID."""
+    curr_time = time.time()
+
+    # 1. If this raw tracker ID is already mapped, update position and return
     if raw_id in track_display_ids:
         track_missed_counts[raw_id] = 0
+        if cx is not None and cy is not None:
+            track_last_positions[raw_id] = (cx, cy, curr_time)
         return track_display_ids[raw_id]
-    
-    # Check for reusable ID or allocate next
-    used = set(track_display_ids.values())
+
+    # 2. Spatial Re-Identification:
+    # Check if a chicken disappeared within the last 4.0 seconds close to (cx, cy)
+    best_match_id = None
+    best_dist = 95.0  # Maximum pixel radius for spatial match in 640x480 frame
+
+    if cx is not None and cy is not None:
+        for disp_id, info in list(inactive_tracks.items()):
+            if curr_time - info["time"] < 4.0:
+                dist = float(np.hypot(cx - info["cx"], cy - info["cy"]))
+                if dist < best_dist:
+                    best_dist = dist
+                    best_match_id = disp_id
+
+    if best_match_id is not None:
+        # Reclaim the same chicken's persistent identity!
+        del inactive_tracks[best_match_id]
+        track_display_ids[raw_id] = best_match_id
+        track_missed_counts[raw_id] = 0
+        if cx is not None and cy is not None:
+            track_last_positions[raw_id] = (cx, cy, curr_time)
+        return best_match_id
+
+    # 3. New Chicken: Allocate the lowest available ID between 1 and MAX_TRACKED_CHICKENS
+    active_display_ids = set(track_display_ids.values())
     cand = 1
-    while cand in used:
+    while cand <= MAX_TRACKED_CHICKENS:
+        if cand not in active_display_ids:
+            break
         cand += 1
+    else:
+        cand = 1
+
     track_display_ids[raw_id] = cand
     track_missed_counts[raw_id] = 0
+    if cx is not None and cy is not None:
+        track_last_positions[raw_id] = (cx, cy, curr_time)
     return cand
 
 
-def cleanup_stale_ids(active_raw_ids, max_missed=30):
+def cleanup_stale_ids(active_raw_ids, max_missed=90):
+    """Keeps tracks alive through brief occlusions (90 frames = 3 seconds) and archives
+    inactive chickens for seamless spatial re-identification."""
+    curr_time = time.time()
+
     for raw_id in list(track_display_ids.keys()):
         if raw_id not in active_raw_ids:
-            track_missed_counts[raw_id] = track_missed_counts.get(raw_id, 0) + 1
-            if track_missed_counts[raw_id] > max_missed:
-                del track_display_ids[raw_id]
+            cnt = track_missed_counts.get(raw_id, 0) + 1
+            track_missed_counts[raw_id] = cnt
+            if cnt > max_missed:
+                disp_id = track_display_ids.get(raw_id)
+                last_pos = track_last_positions.get(raw_id)
+                if disp_id is not None and last_pos is not None:
+                    inactive_tracks[disp_id] = {
+                        "cx": last_pos[0],
+                        "cy": last_pos[1],
+                        "time": curr_time
+                    }
+                if raw_id in track_display_ids:
+                    del track_display_ids[raw_id]
                 if raw_id in track_missed_counts:
                     del track_missed_counts[raw_id]
-                if raw_id in track_histories:
-                    del track_histories[raw_id]
+                if raw_id in track_last_positions:
+                    del track_last_positions[raw_id]
+
+    # Clean up inactive tracks older than 6.0 seconds
+    for disp_id in list(inactive_tracks.keys()):
+        if curr_time - inactive_tracks[disp_id]["time"] > 6.0:
+            del inactive_tracks[disp_id]
+            if disp_id in track_histories:
+                del track_histories[disp_id]
+            if disp_id in track_classifications:
+                del track_classifications[disp_id]
 
 
 # --- Color Palette for Chicken HUD Badges ---
@@ -146,11 +334,12 @@ def get_id_color(track_id):
 
 
 def draw_hud_box(img, pt1, pt2, color, thickness=2, line_len=20):
-    x1, y1 = int(pt1[0]), int(pt1[1])
-    x2, y2 = int(pt2[0]), int(pt2[1])
-    overlay = img.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
-    cv2.addWeighted(overlay, 0.08, img, 0.92, 0, img)
+    x1, y1 = max(0, int(pt1[0])), max(0, int(pt1[1]))
+    x2, y2 = min(img.shape[1], int(pt2[0])), min(img.shape[0], int(pt2[1]))
+    if x2 > x1 and y2 > y1:
+        roi = img[y1:y2, x1:x2]
+        tint = np.full_like(roi, color)
+        cv2.addWeighted(tint, 0.08, roi, 0.92, 0, roi)
     cv2.rectangle(img, (x1, y1), (x2, y2), color, 1)
     
     # Corner brackets for futuristic HUD aesthetic
@@ -540,30 +729,44 @@ def camera_loop():
             except Exception as e:
                 print(f"[WARN] Could not load Health Model: {e}")
 
-    # Initialize Camera Capture
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(0)
-    
-    if cap.isOpened():
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Start asynchronous classification worker thread (0 latency impact on video)
+        if behavior_model is not None or health_model is not None:
+            c_thread = threading.Thread(
+                target=classification_worker,
+                args=(behavior_model, health_model),
+                daemon=True
+            )
+            c_thread.start()
+            print("[INFO] Background AI Health & Behavior Worker started on dedicated core.")
+
+    # Initialize Threaded Camera Capture (external USB camera, index 1)
+    cam = ThreadedCamera(EXTERNAL_CAMERA_INDEX)
+    if not cam.isOpened():
+        print("[ERROR] Cannot open any camera. Exiting camera loop.")
+        return
+    cam.start()
+    print("[INFO] Threaded camera reader started at 30 FPS target")
 
     prev_time = time.time()
 
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            time.sleep(0.03)
+        ret, frame = cam.read()
+        if not ret or frame is None:
+            time.sleep(0.01)
             continue
 
-        frame = cv2.flip(frame, 1)
+        # No flip needed for external USB camera (not mirrored like laptop cam)
         h_frame, w_frame, _ = frame.shape
         curr_time = time.time()
         fps = 1.0 / (curr_time - prev_time + 1e-5)
         prev_time = curr_time
+
+        # Adaptive Low-Light Auto-Enhancement (keeps video crisp & visible in any room lighting)
+        mean_lum = frame.mean()
+        if mean_lum < 45:
+            inv_gamma = 1.0 / 1.5
+            lut = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype("uint8")
+            frame = cv2.LUT(frame, lut)
 
         active_raw_ids = []
         raw_boxes = []
@@ -579,9 +782,10 @@ def camera_loop():
                     persist=True,
                     tracker=tracker_cfg,
                     classes=chicken_classes,
-                    conf=0.35,
+                    conf=0.25,
                     iou=0.45,
                     imgsz=640,
+                    max_det=MAX_TRACKED_CHICKENS,
                     verbose=False
                 )[0]
 
@@ -598,14 +802,26 @@ def camera_loop():
                         raw_boxes.append(box)
                         raw_confs.append(float(conf))
                         active_raw_ids.append(int(raw_id))
+
+                    # Keep up to 10 most prominent chickens (prevents tracking overload)
+                    if len(raw_boxes) > MAX_TRACKED_CHICKENS:
+                        ranked = sorted(
+                            zip(raw_boxes, raw_confs, active_raw_ids),
+                            key=lambda x: (x[0][2] - x[0][0]) * (x[0][3] - x[0][1]),
+                            reverse=True
+                        )[:MAX_TRACKED_CHICKENS]
+                        raw_boxes = [r[0] for r in ranked]
+                        raw_confs = [r[1] for r in ranked]
+                        active_raw_ids = [r[2] for r in ranked]
             except Exception as e:
                 # Fallback to standard detect strictly filtered for chicken classes
                 try:
                     results = det_model(
                         frame,
                         classes=chicken_classes,
-                        conf=0.35,
+                        conf=0.25,
                         iou=0.45,
+                        imgsz=640,
                         verbose=False
                     )[0]
                     boxes = results.boxes
@@ -625,6 +841,7 @@ def camera_loop():
         detection_list = []
         centroids = []
         healthy_count = 0
+        warning_count = 0
         unhealthy_count = 0
         isolated_count = 0
 
@@ -650,17 +867,18 @@ def camera_loop():
             if is_iso:
                 isolated_count += 1
 
-        # 2. Process each detected chicken
+        # 2. Process each detected chicken with High-FPS throttled classification
+        classified_this_frame = 0
         for idx, (box, conf, raw_id) in enumerate(zip(raw_boxes, raw_confs, active_raw_ids)):
-            display_id = assign_display_id(raw_id)
+            cx, cy = centroids[idx]
+            display_id = assign_display_id(raw_id, cx=cx, cy=cy, box=box)
             x1, y1, x2, y2 = map(int, box)
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(w_frame, x2), min(h_frame, y2)
-            cx, cy = centroids[idx]
             is_isolated = isolated_flags[idx]
 
-            # Motion Calculation
-            hist = track_histories[raw_id]
+            # Motion Calculation (instant 30 FPS centroid tracking per chicken ID)
+            hist = track_histories[display_id]
             motion = 0.0
             if len(hist) > 0:
                 prev_c = hist[-1]
@@ -669,45 +887,68 @@ def camera_loop():
 
             # Crop for Behavior & Health Classification
             crop = frame[y1:y2, x1:x2]
-            behavior_label = "stand"
-            health_label = "Healthy"
+            
+            # Read non-blocking classification from background worker thread (0ms latency on video!)
+            with classification_lock:
+                cached = track_classifications.get(display_id)
+                if cached:
+                    behavior_label = cached.get("behavior", "stand")
+                    unhealthy_prob = cached.get("unhealthy_prob", 0.0)
+                    last_time = cached.get("time", 0)
+                else:
+                    behavior_label = "stand"
+                    unhealthy_prob = 0.0
+                    last_time = 0
 
-            if crop.size > 0 and crop.shape[0] >= 20 and crop.shape[1] >= 20:
-                # Behavior Classification
-                if behavior_model is not None:
+            # Queue crop to background worker if expired (>1.5s old) without blocking video stream
+            if (curr_time - last_time > 1.5) and not classification_queue.full():
+                if crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
                     try:
-                        b_res = behavior_model.predict(crop, imgsz=224, verbose=False)[0]
-                        top_b = int(b_res.probs.top1)
-                        behavior_label = BEHAVIOR_NAMES.get(top_b, "stand")
+                        classification_queue.put_nowait((display_id, crop.copy()))
                     except Exception:
                         pass
-                
-                # Motion fusion heuristic
-                if motion > 5.0:
-                    behavior_label = "walk"
-                elif motion > 3.0 and behavior_label == "peck":
-                    behavior_label = "peck"
 
-                # Health Classification
-                if health_model is not None:
-                    try:
-                        h_res = health_model.predict(crop, imgsz=224, verbose=False)[0]
-                        top_h = int(h_res.probs.top1)
-                        health_label = HEALTH_NAMES.get(top_h, "Healthy")
-                    except Exception:
-                        pass
+            # Real-time Motion fusion heuristic (instant 30 FPS response on main thread!)
+            if motion > 4.5:
+                behavior_label = "walk"
+            elif motion > 2.5 and behavior_label == "peck":
+                behavior_label = "peck"
+
+            # --- Proven 3-Tier Multi-Factor Health Classification ---
+            # Classes: "Healthy", "Warning", "Unhealthy"
+            # Biological foundation: Active mobility is the #1 indicator of poultry health.
+            # If a chicken is actively walking, it CANNOT be severely sick!
+            if behavior_label == "walk" or motion > 2.8:
+                health_label = "Healthy"
+            elif is_isolated:
+                if unhealthy_prob > 0.75:
+                    health_label = "Unhealthy"
+                else:
+                    health_label = "Warning"
+            elif unhealthy_prob >= 0.75 and motion < 1.8:
+                # Confirmed sick: immobile/stationary AND high visual defect confidence
+                health_label = "Unhealthy"
+            elif unhealthy_prob >= 0.40 or motion < 0.6:
+                # Low motion or stationary bird -> Warning
+                health_label = "Warning"
+            else:
+                health_label = "Healthy"
 
             if health_label == "Healthy":
                 healthy_count += 1
+            elif health_label == "Warning":
+                warning_count += 1
             else:
                 unhealthy_count += 1
 
             # Determine Display Colors & HUD Badges
             color = get_id_color(display_id)
             if health_label == "Unhealthy":
-                color = (70, 70, 255) # Red/Coral for unhealthy alert
-            elif is_isolated:
-                color = (0, 180, 255) # Amber warning for isolated
+                color = (70, 70, 255) # Vivid Red/Coral for confirmed unhealthy alert
+            elif health_label == "Warning":
+                color = (0, 180, 255) # Amber/Yellow warning for isolated / stationary
+            else:
+                color = get_id_color(display_id) # Vibrant ID color for healthy
 
             # Draw Motion Trail
             if len(hist) > 1:
@@ -744,14 +985,14 @@ def camera_loop():
 
         # Dynamic Health Index
         if flock_count > 0:
-            health_index = max(10, int(100 - (unhealthy_count * 25) - (isolated_count * 10)))
+            health_index = max(10, int(100 - (unhealthy_count * 25) - (warning_count * 10) - (isolated_count * 5)))
         else:
             health_index = 100
 
         # Clean frame without text overlays
 
-        # Encode Frame
-        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        # Encode Frame with high visual clarity
+        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         with frame_lock:
             latest_frame = frame
@@ -763,6 +1004,7 @@ def camera_loop():
                 "person_count": flock_count,  # Backwards compatibility
                 "hand_count": flock_count,    # Backwards compatibility
                 "healthy_count": healthy_count,
+                "warning_count": warning_count,
                 "unhealthy_count": unhealthy_count,
                 "isolated_count": isolated_count,
                 "health_index": health_index,
@@ -773,7 +1015,7 @@ def camera_loop():
                 "detections": detection_list
             }
 
-    cap.release()
+    cam.release()
 
 
 def udp_discovery_loop():

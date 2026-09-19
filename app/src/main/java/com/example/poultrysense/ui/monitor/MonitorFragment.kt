@@ -336,16 +336,32 @@ class MonitorFragment : Fragment() {
                                 if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
                                     val isConnected = status.active == true
                                     val fps = status.fps ?: 0.0
-                                    val count = status.handCount ?: (status.detections?.size ?: 0)
+                                    val count = status.flockCount ?: (status.handCount ?: (status.detections?.size ?: 0))
 
                                     updateStatusBadge(isConnected, if (isConnected) "AI Connected" else "AI Offline")
                                     binding.tvHudFps.text = String.format("%.1f FPS", fps)
                                     binding.tvDetectionCount.text = "$count Subjects"
                                     binding.tvTelemetryCountVal.text = count.toString()
-                                    binding.tvTelemetryPostureVal.text = if (count > 0) "99.4%" else "100%"
+                                    binding.tvTelemetryPostureVal.text = "${status.healthIndex ?: 100}%"
                                     binding.tvTelemetryLatencyVal.text = "0.03s"
-                                    binding.tvSubject1Sub.text = "ByteTrack Confidence ${(88..98).random()}% • Stable"
-                                    binding.tvSubject2Sub.text = "ByteTrack Confidence ${(85..95).random()}% • Active Movement"
+
+                                    // Dynamic Flock Subject List - hide dummy entries when 0 chickens detected
+                                    if (count == 0) {
+                                        binding.rowTrackSubject1.visibility = View.GONE
+                                        binding.rowTrackSubject2.visibility = View.GONE
+                                    } else if (count == 1) {
+                                        binding.rowTrackSubject1.visibility = View.VISIBLE
+                                        binding.rowTrackSubject2.visibility = View.GONE
+                                        binding.tvSubject1Title.text = "Tracked Chicken #1"
+                                        binding.tvSubject1Sub.text = "ByteTrack Active • High Confidence"
+                                    } else {
+                                        binding.rowTrackSubject1.visibility = View.VISIBLE
+                                        binding.rowTrackSubject2.visibility = View.VISIBLE
+                                        binding.tvSubject1Title.text = "Tracked Chicken #1"
+                                        binding.tvSubject1Sub.text = "ByteTrack Active • High Confidence"
+                                        binding.tvSubject2Title.text = "Tracked Chicken #2"
+                                        binding.tvSubject2Sub.text = "ByteTrack Active • High Confidence"
+                                    }
                                 }
                             }
                         }

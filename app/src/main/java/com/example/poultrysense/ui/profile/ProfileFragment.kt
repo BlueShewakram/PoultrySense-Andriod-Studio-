@@ -682,7 +682,8 @@ class ProfileFragment : Fragment() {
 
         // Test Connection
         dialogBinding.btnTestConnection.setOnClickListener {
-            val ip = dialogBinding.etServerIp.text?.toString()?.trim() ?: ""
+            val rawIp = dialogBinding.etServerIp.text?.toString()?.trim() ?: ""
+            val ip = rawIp.removePrefix("http://").removePrefix("https://").substringBefore(":").trimEnd('/')
             if (ip.isEmpty()) {
                 dialogBinding.tilServerIp.error = "Please enter an IP address"
                 return@setOnClickListener
