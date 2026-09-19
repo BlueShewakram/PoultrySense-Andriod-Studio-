@@ -32,8 +32,8 @@ class HomeFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(500, TimeUnit.MILLISECONDS)
-        .readTimeout(500, TimeUnit.MILLISECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
         .build()
 
     private var streamJob: Job? = null

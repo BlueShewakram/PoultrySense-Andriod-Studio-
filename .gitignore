@@ -22,16 +22,31 @@ local.properties
 # Uncomment the line below if you want to protect it (not recommended for open-source setup guides)
 # google-services.json
 
-# Python AI Server
-poultrysense_ai/venv/
-poultrysense_ai/__pycache__/
-poultrysense_ai/*.pyc
-poultrysense_ai/*.log
-poultrysense_ai/out.log
-poultrysense_ai/err.log
+# Python Environments & Caches
+.venv/
+*/.venv/
+venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+*.pid
+poultrysense_ai/*.pid
 
-# YOLO model weights (large binary — users download separately)
-# poultrysense_ai/yolo11n.pt
+# Datasets and Large Training Artifacts (keep code & readmes, ignore bulky data/runs)
+poultrysense_ai/datasets/
+poultrysense_ai/runs/
+poultrysense_ai/training/runs/
+poultrysense_ai/training/models/*.pt
+poultrysense_ai/training/datasets/chicken_det/train/
+poultrysense_ai/training/datasets/chicken_det/valid/
+poultrysense_ai/training/datasets/chicken_det/images/
+poultrysense_ai/training/datasets/chicken_det/labels/
+poultrysense_ai/training/*.log
+
+# Model Weights (downloaded or trained separately)
+*.pt
+*.onnx
+*.tflite
 
 # OS
 .DS_Store
@@ -45,3 +60,4 @@ file-system.probe
 
 # AGY / Antigravity IDE
 .agents/
+

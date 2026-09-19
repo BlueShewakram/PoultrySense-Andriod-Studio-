@@ -35,8 +35,8 @@ class MonitorFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(600, TimeUnit.MILLISECONDS)
-        .readTimeout(600, TimeUnit.MILLISECONDS)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
         .build()
 
     private val gson = Gson()

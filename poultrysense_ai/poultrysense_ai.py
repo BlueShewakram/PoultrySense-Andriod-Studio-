@@ -6,6 +6,9 @@ import threading
 import numpy as np
 import sys
 from collections import defaultdict
+from pathlib import Path
+
+from behavior_health import BehaviorHealthEngine
 
 # --- 1. Import Ultralytics YOLO ---
 try:
@@ -178,6 +181,73 @@ class PersonReIDTracker:
 
 
 reid_tracker = PersonReIDTracker(reid_thresh=0.62)
+behavior_engine = BehaviorHealthEngine()
+
+
+def _normalize_detect_classes(raw_value: str | None) -> list[int]:
+    raw = raw_value or os.environ.get("POULTRYSENSE_DETECT_CLASSES", "14")
+    ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part:
+            try:
+                ids.append(int(part))
+            except ValueError:
+                continue
+    ids = list(dict.fromkeys(ids))
+    return ids or [14]
+
+
+# Prefer a custom poultry detector when available, but keep a safe fallback to the
+# base YOLO model for generic bird detection and demo setups.
+def resolve_detector_model(base_dir=None, env=None):
+    base_dir = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parent
+    env = os.environ if env is None else env
+
+    custom_candidates = []
+    configured = (env.get("POULTRYSENSE_MODEL_PATH") or "").strip()
+    if configured:
+        custom_candidates.append(Path(configured).expanduser())
+
+    for root in [
+        base_dir,
+        base_dir / "models",
+        base_dir / "training" / "models",
+    ]:
+        for name in (
+            "chicken_detector.pt",
+            "poultry_detector.pt",
+            "best.pt",
+            "yolov8n-chicken.pt",
+        ):
+            custom_candidates.append(root / name)
+
+    seen = set()
+    for candidate in custom_candidates:
+        path = str(candidate)
+        if path in seen:
+            continue
+        seen.add(path)
+        if candidate.exists():
+            return {
+                "model_path": str(candidate),
+                "model_kind": "custom_poultry_detector",
+                "detect_classes": [0, 14],
+            }
+
+    fallback = base_dir / "yolo11n.pt"
+    fallback_path = str(fallback if fallback.exists() else "yolo11n.pt")
+    return {
+        "model_path": fallback_path,
+        "model_kind": "fallback_yolo11n",
+        "detect_classes": _normalize_detect_classes(env.get("POULTRYSENSE_DETECT_CLASSES")),
+    }
+
+
+# Detect COCO bird (14) by default; optionally include person (0) for desk demos.
+# Override with env: POULTRYSENSE_DETECT_CLASSES=14,0
+def _detect_classes():
+    return resolve_detector_model()["detect_classes"]
 
 # --- Flask Application ---
 flask_app = Flask(__name__)
@@ -199,7 +269,9 @@ def video_feed():
 def frame_jpg():
     with frame_lock:
         if latest_jpeg_bytes is None:
-            return "No frame available", 404
+            # Keep clients from treating the stream as "offline" while camera starts
+            placeholder = _placeholder_jpeg("Waiting for camera…")
+            return Response(placeholder, mimetype='image/jpeg')
         return Response(latest_jpeg_bytes, mimetype='image/jpeg')
 
 @flask_app.route('/status')
@@ -210,7 +282,8 @@ def status():
 @flask_app.route('/reset_ids')
 def reset_ids():
     reid_tracker.reset()
-    return jsonify({"status": "success", "message": "Person IDs and Re-ID gallery have been reset."})
+    behavior_engine.reset()
+    return jsonify({"status": "success", "message": "Person IDs, Re-ID gallery, and behavior history have been reset."})
 
 @flask_app.route('/')
 def index():
@@ -255,33 +328,144 @@ def draw_hud_box(img, pt1, pt2, color, thickness=2, line_len=20):
     cv2.line(img, (x2, y2), (x2, y2 - line_len), color, thickness + 1)
 
 # --- Main Camera Loop ---
-def camera_loop():
+def _placeholder_jpeg(message: str) -> bytes:
+    """Return a dark JPEG with a status message (always 200 for clients)."""
+    img = np.zeros((480, 640, 3), dtype=np.uint8)
+    img[:] = (19, 36, 19)  # dark green-ish
+    cv2.putText(img, "POULTRYSENSE AI", (160, 200), cv2.FONT_HERSHEY_DUPLEX, 0.9, (0, 230, 118), 2)
+    cv2.putText(img, message, (40, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (230, 230, 230), 1)
+    if sys.platform == "darwin":
+        cv2.putText(
+            img,
+            "macOS: allow Camera for Terminal/Python",
+            (50, 310),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (180, 180, 180),
+            1,
+        )
+        cv2.putText(
+            img,
+            "System Settings > Privacy & Security > Camera",
+            (55, 345),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (150, 150, 150),
+            1,
+        )
+    ok, jpeg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return jpeg.tobytes() if ok else b""
+
+
+def open_camera():
+    """
+    Open the webcam on the *current* thread.
+    macOS requires the camera permission prompt on the main thread (AVFoundation).
+    """
+    if sys.platform == "darwin":
+        # Avoid OpenCV trying (and failing) to show TCC UI from a worker thread later
+        os.environ.setdefault("OPENCV_AVFOUNDATION_SKIP_AUTH", "0")
+        backends = [getattr(cv2, "CAP_AVFOUNDATION", 1200), cv2.CAP_ANY]
+    elif sys.platform.startswith("win"):
+        backends = [cv2.CAP_DSHOW, cv2.CAP_ANY]
+    else:
+        backends = [cv2.CAP_V4L2, cv2.CAP_ANY]
+
+    for index in (0, 1, 2):
+        for backend in backends:
+            print(f"[INFO] Trying camera index={index} backend={backend}…")
+            cap = cv2.VideoCapture(index, backend)
+            if not cap.isOpened():
+                cap.release()
+                continue
+            # Warm up / verify we can actually read a frame
+            ok = False
+            frame = None
+            for _ in range(8):
+                ok, frame = cap.read()
+                if ok and frame is not None:
+                    break
+                time.sleep(0.05)
+            if ok and frame is not None:
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                try:
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                except Exception:
+                    pass
+                print(f"[INFO] Camera opened (index={index}, backend={backend}, shape={frame.shape})")
+                return cap
+            print(f"[WARN] Camera opened but produced no frames (index={index}, backend={backend})")
+            cap.release()
+
+    print("[ERROR] Could not open any camera. Grant Camera permission and restart the server.")
+    return None
+
+
+def camera_loop(cap=None):
     global latest_frame, latest_jpeg_bytes, latest_status
-    print("[INFO] Initializing PoultrySense AI (Person-Only Detection + Persistent Re-ID)...")
+    print("[INFO] Initializing PoultrySense AI (poultry detect + behavior/posture health)...")
     yolo_model = None
+    detector_cfg = resolve_detector_model()
+    detect_classes = detector_cfg["detect_classes"]
+    model_path = detector_cfg["model_path"]
     if HAS_YOLO:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(script_dir, "yolo11n.pt")
-        if not os.path.exists(model_path):
-            model_path = "yolo11n.pt"
         try:
-            print(f"[INFO] Loading YOLO model from: {model_path}")
+            print(f"[INFO] Loading detector model from: {model_path} ({detector_cfg['model_kind']})")
             yolo_model = YOLO(model_path)
-            print("[INFO] YOLO11 Person Detection Engine initialized!")
+            print(f"[INFO] Detection classes={detect_classes} (14=bird, 0=person)")
+            print("[INFO] Health = behavior/posture anomalies (not fecal)")
         except Exception as e:
-            print(f"[WARN] Could not load YOLO model: {e}")
-    cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    if not cap.isOpened():
-        cap = cv2.VideoCapture(0)
-    if cap.isOpened():
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            print(f"[WARN] Could not load detector model: {e}")
+            # keep the original generic fallback if the custom model fails to open
+            if detector_cfg["model_kind"] == "custom_poultry_detector":
+                fallback_model = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yolo11n.pt")
+                if not os.path.exists(fallback_model):
+                    fallback_model = "yolo11n.pt"
+                try:
+                    print(f"[INFO] Falling back to YOLO detector: {fallback_model}")
+                    yolo_model = YOLO(fallback_model)
+                    detect_classes = _normalize_detect_classes(os.environ.get("POULTRYSENSE_DETECT_CLASSES", "14"))
+                except Exception:
+                    pass
+
+    owns_cap = False
+    if cap is None:
+        cap = open_camera()
+        owns_cap = True
+
+    if cap is None or not cap.isOpened():
+        # Keep serving a visible placeholder so the Android app isn't blank/offline forever
+        placeholder = _placeholder_jpeg("Camera unavailable")
+        with frame_lock:
+            latest_jpeg_bytes = placeholder
+            latest_status = {
+                "active": False,
+                "fps": 0.0,
+                "person_count": 0,
+                "hand_count": 0,
+                "flock_count": 0,
+                "track_count": 0,
+                "health_index": 0,
+                "healthy_count": 0,
+                "ill_count": 0,
+                "detections": [],
+                "error": "camera_unavailable",
+            }
+        while True:
+            time.sleep(2.0)
+            retry = open_camera()
+            if retry is not None and retry.isOpened():
+                cap = retry
+                owns_cap = True
+                print("[INFO] Camera recovered after retry")
+                break
+
     prev_time = time.time()
     while True:
         ret, frame = cap.read()
-        if not ret:
+        if not ret or frame is None:
             time.sleep(0.03)
             continue
         frame = cv2.flip(frame, 1)
@@ -290,65 +474,113 @@ def camera_loop():
         fps = 1.0 / (curr_time - prev_time + 1e-5)
         prev_time = curr_time
         detection_list = []
-        raw_person_detections = []
+        raw_detections = []
         if yolo_model is not None:
             try:
-                results = yolo_model(frame, classes=[0], conf=0.40, iou=0.45, verbose=False)
+                results = yolo_model(
+                    frame,
+                    classes=detect_classes,
+                    conf=0.35,
+                    iou=0.45,
+                    verbose=False,
+                )
                 if results and len(results) > 0:
                     boxes = results[0].boxes
                     if boxes is not None and len(boxes) > 0:
                         confs = boxes.conf.cpu().tolist()
                         xyxys = boxes.xyxy.cpu().tolist()
                         for box, conf in zip(xyxys, confs):
-                            raw_person_detections.append((box, conf))
+                            raw_detections.append((box, conf))
             except Exception:
                 pass
-        active_tracks = reid_tracker.update(frame, raw_person_detections)
-        person_count = len(active_tracks)
+        active_tracks = reid_tracker.update(frame, raw_detections)
+        flock_count = len(active_tracks)
+        healthy_count = 0
+        ill_count = 0
         for track_id, trk in active_tracks.items():
             x1, y1, x2, y2 = trk['bbox']
             conf = trk['conf']
             trail = trk.get('trail', [])
-            color = get_id_color(track_id)
+            health = behavior_engine.observe(track_id, trk['bbox'], frame.shape, now=curr_time)
+            status = health["status"]
+            behavior = health["behavior"]
+            if status == "HEALTHY":
+                healthy_count += 1
+                color = get_id_color(track_id)
+            else:
+                ill_count += 1
+                # Flagged birds in amber/red
+                color = (0, 165, 255) if behavior == "lethargic" else (0, 80, 255)
             badge_bg = (int(color[0] * 0.25), int(color[1] * 0.25), int(color[2] * 0.25))
             if len(trail) > 1:
                 pts = np.array(trail, dtype=np.int32).reshape((-1, 1, 2))
                 cv2.polylines(frame, [pts], isClosed=False, color=color, thickness=2)
                 cv2.circle(frame, trail[-1], 4, color, -1)
             draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=20)
-            label = f" Person #{track_id} ({int(conf * 100)}%) "
-            (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.52, 1)
+            label = f" Bird #{track_id} {behavior.upper()} ({int(conf * 100)}%) "
+            (text_w, text_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.48, 1)
             label_y = max(y1 - 10, text_h + 10)
             cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), badge_bg, -1)
             cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), color, 1)
-            cv2.putText(frame, label, (x1 + 4, label_y - 2), cv2.FONT_HERSHEY_DUPLEX, 0.52, (255, 255, 255), 1)
-            detection_list.append({"track_id": track_id, "class": "person", "confidence": round(conf, 2), "status": "HEALTHY", "bbox": [x1, y1, x2, y2]})
-        cv2.putText(frame, "POULTRYSENSE AI  |  PERSISTENT PERSON TRACKING & RE-ID", (16, 26), cv2.FONT_HERSHEY_DUPLEX, 0.45, (0, 230, 118), 1)
-        stats_text = f"FPS: {fps:.1f}  |  Active Persons: {person_count}  |  Gallery IDs: {len(reid_tracker.gallery)}"
+            cv2.putText(frame, label, (x1 + 4, label_y - 2), cv2.FONT_HERSHEY_DUPLEX, 0.48, (255, 255, 255), 1)
+            detection_list.append({
+                "track_id": track_id,
+                "class": "chicken",
+                "confidence": round(conf, 2),
+                "status": status,
+                "behavior": behavior,
+                "behavior_confidence": health["confidence"],
+                "speed": health["speed"],
+                "aspect": health["aspect"],
+                "bbox": [x1, y1, x2, y2],
+            })
+        health_index = behavior_engine.flock_health_index(detection_list)
+        cv2.putText(
+            frame,
+            "POULTRYSENSE AI  |  BEHAVIOR / POSTURE HEALTH",
+            (16, 26),
+            cv2.FONT_HERSHEY_DUPLEX,
+            0.45,
+            (0, 230, 118),
+            1,
+        )
+        stats_text = (
+            f"FPS: {fps:.1f}  |  Birds: {flock_count}  |  "
+            f"Healthy: {healthy_count}  Ill: {ill_count}  |  Index: {health_index}%"
+        )
         cv2.putText(frame, stats_text, (16, h_frame - 14), cv2.FONT_HERSHEY_DUPLEX, 0.45, (200, 200, 200), 1)
         _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
         with frame_lock:
             latest_frame = frame
             latest_jpeg_bytes = jpeg.tobytes()
             latest_status = {
-                "active": True, "fps": round(fps, 1),
-                "person_count": person_count,
-                "hand_count": person_count,
-                "flock_count": person_count,
-                "track_count": person_count,
-                "health_index": 100 if person_count > 0 else 95,
-                "detections": detection_list
+                "active": True,
+                "fps": round(fps, 1),
+                "person_count": flock_count,  # legacy Android field
+                "hand_count": flock_count,    # legacy Android field
+                "flock_count": flock_count,
+                "track_count": flock_count,
+                "healthy_count": healthy_count,
+                "ill_count": ill_count,
+                "health_index": health_index,
+                "detections": detection_list,
             }
-    cap.release()
+    if owns_cap and cap is not None:
+        cap.release()
+
 
 def main():
     print("=" * 65)
-    print("   POULTRYSENSE AI - PERSISTENT PERSON RE-ID & TRACKING SERVER   ")
+    print("   POULTRYSENSE AI - BEHAVIOR / POSTURE HEALTH MONITORING")
     print("=" * 65)
-    cam_thread = threading.Thread(target=camera_loop, daemon=True)
+    # Open camera on the main thread first (macOS TCC / AVFoundation requirement)
+    cap = open_camera()
+    cam_thread = threading.Thread(target=camera_loop, kwargs={"cap": cap}, daemon=True)
     cam_thread.start()
-    print("[INFO] Starting server on http://0.0.0.0:5000")
-    flask_app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    # Port 5050 avoids macOS AirPlay Receiver which monopolizes :5000
+    port = int(os.environ.get('POULTRYSENSE_PORT', '5050'))
+    print(f"[INFO] Starting server on http://0.0.0.0:{port}")
+    flask_app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
 
 if __name__ == "__main__":
     main()

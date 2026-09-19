@@ -44,9 +44,9 @@
     <string name="scans_completed">Scans Completed</string>
     <string name="active_system">Active System</string>
     <string name="ai_server_settings">AI Server Settings</string>
-    <string name="ai_server_settings_subtitle">Set the IP address of your PC running the AI server</string>
-    <string name="ai_server_ip_label">PC IP Address</string>
-    <string name="ai_server_ip_hint">e.g. 192.168.1.50</string>
+    <string name="ai_server_settings_subtitle">Laptop Wi‑Fi IP · port 5050 (emulator: 10.0.2.2)</string>
+    <string name="ai_server_ip_label">PC / Laptop IP Address</string>
+    <string name="ai_server_ip_hint">e.g. 192.168.1.50 or 10.0.2.2</string>
     <string name="test_connection">Test Connection</string>
     <string name="connection_ok">Connected — server is reachable</string>
     <string name="connection_failed">Cannot reach server — check IP and WiFi</string>

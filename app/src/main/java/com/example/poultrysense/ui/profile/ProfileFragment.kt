@@ -278,18 +278,21 @@ class ProfileFragment : Fragment() {
 
         // Test Connection
         dialogBinding.btnTestConnection.setOnClickListener {
-            val ip = dialogBinding.etServerIp.text?.toString()?.trim() ?: ""
-            if (ip.isEmpty()) {
+            val host = ServerPreferences.normalizeHost(
+                dialogBinding.etServerIp.text?.toString().orEmpty()
+            )
+            if (host.isEmpty()) {
                 dialogBinding.tilServerIp.error = "Please enter an IP address"
                 return@setOnClickListener
             }
+            dialogBinding.etServerIp.setText(host)
             dialogBinding.tilServerIp.error = null
             dialogBinding.btnTestConnection.isEnabled = false
             dialogBinding.btnTestConnection.text = "Testing…"
             dialogBinding.layoutConnectionStatus.visibility = View.GONE
 
             lifecycleScope.launch(Dispatchers.IO) {
-                val url = "http://$ip:5000/status"
+                val url = "http://$host:${ServerPreferences.PORT}/status"
                 val success = try {
                     val request = Request.Builder().url(url).build()
                     val response = testClient.newCall(request).execute()
@@ -328,14 +331,20 @@ class ProfileFragment : Fragment() {
 
         // Save
         dialogBinding.btnSaveServerSettings.setOnClickListener {
-            val ip = dialogBinding.etServerIp.text?.toString()?.trim() ?: ""
-            if (ip.isEmpty()) {
+            val host = ServerPreferences.normalizeHost(
+                dialogBinding.etServerIp.text?.toString().orEmpty()
+            )
+            if (host.isEmpty()) {
                 dialogBinding.tilServerIp.error = "Please enter an IP address"
                 return@setOnClickListener
             }
             dialogBinding.tilServerIp.error = null
-            ServerPreferences.saveIp(ctx, ip)
-            Toast.makeText(ctx, "Server IP saved: $ip", Toast.LENGTH_SHORT).show()
+            ServerPreferences.saveIp(ctx, host)
+            Toast.makeText(
+                ctx,
+                "Server saved: http://$host:${ServerPreferences.PORT}",
+                Toast.LENGTH_SHORT
+            ).show()
             dialog.dismiss()
         }
 

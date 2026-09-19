@@ -1,0 +1,7 @@
+# PoultrySense health-classifier training outputs / caches
+datasets/
+runs/
+models/*.pt
+*.pt
+__pycache__/
+.DS_Store
