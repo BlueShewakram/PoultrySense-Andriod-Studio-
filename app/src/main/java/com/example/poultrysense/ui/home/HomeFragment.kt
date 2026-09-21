@@ -283,22 +283,34 @@ class HomeFragment : Fragment() {
         }
     }
 
-    private fun updateClimateUI(temp: Double, hum: Double, ammonia: Int = 12, statusOverride: String? = null) {
+    private fun updateClimateUI(temp: Double, hum: Double, statusOverride: String? = null) {
         if (_binding == null) return
         liveTemp = temp
         liveHumidity = hum
+        val tempState = when {
+            temp >= 36.0 -> "Critical"
+            temp >= 33.0 -> "Watch"
+            temp <= 17.0 -> "Low"
+            else -> "Normal"
+        }
+        val humidityState = when {
+            hum >= 88.0 -> "Critical"
+            hum >= 82.0 -> "Watch"
+            hum <= 35.0 -> "Low"
+            else -> "Normal"
+        }
 
         // 1. Live Environment Overview Cards
-        binding.tvThumbnailHumidity.text = "Humidity: ${hum.toInt()}% (Good)"
-        binding.tvBarnHumidity.text = String.format("Current level: %.1f%% (Good)", hum)
+        binding.tvThumbnailHumidity.text = "Humidity: ${hum.toInt()}% ($humidityState)"
+        binding.tvBarnHumidity.text = String.format("Current level: %.1f%% (%s)", hum, humidityState)
         binding.tvBarnTemperature.text = String.format("Current temp: %.1f°C", temp)
 
         // 2. Climate Capsule Header Card
         binding.tvClimateCapsuleDesc.text = "${hum.toInt()}% Humidity\n${String.format("%.1f", temp)}°C temp"
         val climateStatus = statusOverride ?: com.example.poultrysense.data.repository.EnvironmentRepository.getClimateStatus(temp, hum)
         binding.tvClimateCapsuleStatus.text = climateStatus
-        binding.tvBarnTempStatus.text = if (temp > 30.0) "HIGH" else if (temp < 18.0) "LOW" else "NORMAL"
-        binding.tvBarnHumidityStatus.text = if (hum > 75.0) "HIGH" else if (hum < 40.0) "LOW" else "NORMAL"
+        binding.tvBarnTempStatus.text = tempState.uppercase(Locale.getDefault())
+        binding.tvBarnHumidityStatus.text = humidityState.uppercase(Locale.getDefault())
 
         // 3. Realtime update for open Climate Sheet if active
         activeClimateSheetBinding?.let { sheet ->
@@ -319,11 +331,10 @@ class HomeFragment : Fragment() {
                     ?: snapshot.child("temperature").getValue(Long::class.java)?.toDouble()
                 val hum = snapshot.child("humidity").getValue(Double::class.java)
                     ?: snapshot.child("humidity").getValue(Long::class.java)?.toDouble()
-                val ammonia = snapshot.child("ammonia").getValue(Int::class.java) ?: 12
                 val status = snapshot.child("status").getValue(String::class.java)
 
                 if (temp != null && hum != null) {
-                    updateClimateUI(temp, hum, ammonia, status)
+                    updateClimateUI(temp, hum, status)
                 }
             }
 
@@ -347,15 +358,13 @@ class HomeFragment : Fragment() {
                                 if (_binding != null) {
                                     val temp = status.temperature ?: 24.5
                                     val hum = status.humidity ?: 62.0
-                                    val ammonia = status.ammonia ?: 12
-                                    updateClimateUI(temp, hum, ammonia)
+                                    updateClimateUI(temp, hum)
 
                                     // Save to Firebase Realtime Database
                                     val activeZone = binding.tvActiveZoneName.text.toString()
                                     com.example.poultrysense.data.repository.EnvironmentRepository.syncEnvironmentData(
                                         temperature = temp,
                                         humidity = hum,
-                                        ammonia = ammonia,
                                         zone = activeZone
                                     )
                                 }

@@ -42,12 +42,12 @@ Please set up and launch PoultrySense AI on my machine:
 |---|---|
 | 🎯 **Strict Chicken Detection** | Powered by **YOLO11 Nano** with class filtering strictly for poultry. Rejects hands, phones, persons, and background noise. |
 | 🏷️ **Persistent Chicken IDs** | Custom **Spatial Re-Identification** and 120-frame **ByteTrack Kalman buffer** keep chicken IDs consistent (`Chicken #1` to `#10`) even during pecking, wing flapping, or brief occlusions. |
-| 🏥 **3-Tier Health Classification** | Multi-factor fusion engine combining deep visual classification with real-time locomotion vectors: <br>• 🟢 **HEALTHY**: Active walking, foraging, normal gait. <br>• 🟡 **WARNING**: Stationary, low-mobility, or spatially isolated from flock. <br>• 🔴 **UNHEALTHY**: Multi-factor confirmed lethargy (immobile + high visual defect confidence). |
+| 🏥 **Conservative Health Classification** | Multi-factor fusion engine combining deep visual classification, per-chicken tracking history, and locomotion vectors: <br>• 🟢 **HEALTHY**: Active walking, foraging, normal gait. <br>• 🟡 **NEEDS REVIEW**: Repeated low activity, weak visual health signal, or isolation. <br>• 🔴 **UNHEALTHY**: Strictly confirmed repeated lethargy evidence from the same chicken ID. |
 | 🏃 **Real-Time Behavior AI** | Dynamically classifies states into `WALK`, `STAND`, and `PECK` with instant 0ms latency centroid velocity tracking. |
 | ⚡ **Zero-Latency Multi-Threading** | Video capture and YOLO tracking run on the main thread (28–30 FPS), while secondary neural networks run on an asynchronous background worker thread. |
 | 🎥 **Dual-Camera Auto-Switching** | Connects to external USB webcam (`index 1`) with seamless fallback to laptop webcam (`index 0`). |
 | 📡 **Zero-Config Auto-Discovery** | Android app broadcasts on UDP port 5005 to automatically find the AI server IP on your LAN—no manual IP typing required! |
-| 🌡️ **IoT Climate & Heat Stress** | Integrates ESP32 DHT22 sensor data (Temperature, Humidity, Ammonia) and computes the Poultry **Temperature-Humidity Index (THI)**. |
+| 🌡️ **IoT Climate & Heat Stress** | Integrates ESP32 DHT22 sensor data (Temperature and Humidity) with stricter repeated-reading alert thresholds. |
 
 ---
 
@@ -78,7 +78,7 @@ PoultrySense/
 │       └── ui/                   # Home, Monitor, Alerts, Profile fragments
 │
 └── esp32/                        # IoT Environmental Sensor Firmware
-    └── poultrysense_dht22/       # Arduino / C++ code for DHT22 + MQ135 (Temp/Humidity/Ammonia)
+    └── poultrysense_dht22/       # Arduino / C++ code for DHT22 temperature/humidity telemetry
 ```
 
 ---
@@ -189,7 +189,7 @@ The server starts listening on:
 | `GET /status` | HTTP JSON | Real-time flock telemetry (`flock_count`, `healthy_count`, `warning_count`, `unhealthy_count`, `health_index`, `fps`) |
 | `GET /frame.jpg` | HTTP JPEG | High-resolution single frame snapshot |
 | `GET /reset_ids` | HTTP JSON | Resets the active chicken ID allocator |
-| `POST /sensor_data`| HTTP JSON | Ingestion endpoint for ESP32 climate telemetry (`temp`, `humidity`, `ammonia`) |
+| `POST /sensor_data`| HTTP JSON | Ingestion endpoint for ESP32 climate telemetry (`temperature`, `humidity`) |
 | `UDP 5005` | UDP Broadcast | Auto-discovery listener responding with server IP and port |
 
 ---

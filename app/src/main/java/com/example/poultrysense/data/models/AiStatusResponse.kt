@@ -14,6 +14,5 @@ data class AiStatusResponse(
     @SerializedName("fps") val fps: Double? = 0.0,
     @SerializedName("temperature") val temperature: Double? = 24.5,
     @SerializedName("humidity") val humidity: Double? = 62.0,
-    @SerializedName("ammonia") val ammonia: Int? = 12,
     @SerializedName("detections") val detections: List<Any>? = emptyList()
 )

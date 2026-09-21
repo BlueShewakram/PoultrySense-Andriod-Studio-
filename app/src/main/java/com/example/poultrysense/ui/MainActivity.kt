@@ -9,7 +9,7 @@ import androidx.navigation.NavController
 import androidx.navigation.NavOptions
 import androidx.navigation.fragment.NavHostFragment
 import com.example.poultrysense.R
-import com.example.poultrysense.    data.models.AlertSeverity
+import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.databinding.ActivityMainBinding
 
@@ -35,9 +35,15 @@ class MainActivity : AppCompatActivity() {
     private var currentTabId = R.id.navigation_home
 
     private var firebaseListener: ValueEventListener? = null
+    private val climateSamples = mutableListOf<ClimateSample>()
     private val realtimeDb by lazy {
         FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
     }
+
+    private data class ClimateSample(
+        val temperature: Double,
+        val humidity: Double
+    )
 
     val farmAlerts = mutableListOf(
         FarmAlert(
@@ -186,40 +192,69 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun evaluateDht22Alerts(temp: Double, hum: Double, timestamp: String, zone: String) {
+        climateSamples.add(ClimateSample(temp, hum))
+        while (climateSamples.size > 10) {
+            climateSamples.removeAt(0)
+        }
+
+        val sampleCount = climateSamples.size
+        val recentFive = climateSamples.takeLast(5)
+        val avgTemp = climateSamples.map { it.temperature }.average()
+        val avgHum = climateSamples.map { it.humidity }.average()
+        val isCalibrating = sampleCount < 5
+        val heatCriticalConfirmed = recentFive.count { it.temperature >= 36.0 } >= 3 || avgTemp >= 36.0
+        val heatWarningConfirmed = sampleCount >= 5 && recentFive.count { it.temperature >= 33.0 } >= 4
+        val coldWarningConfirmed = sampleCount >= 5 && recentFive.count { it.temperature <= 17.0 } >= 4
+        val humidityCriticalConfirmed = recentFive.count { it.humidity >= 88.0 } >= 3 || avgHum >= 88.0
+        val humidityWarningConfirmed = sampleCount >= 5 && recentFive.count { it.humidity >= 82.0 } >= 4
+        val dryAirConfirmed = sampleCount >= 5 && recentFive.count { it.humidity <= 35.0 } >= 4
         val newAlerts = mutableListOf<FarmAlert>()
 
         // 1. High Heat Check (DHT22 Temperature)
-        if (temp >= 35.0) {
+        if (isCalibrating) {
+            newAlerts.add(
+                FarmAlert(
+                    id = "alert-climate-calibrating",
+                    severity = AlertSeverity.INFO,
+                    title = "Climate Sensor Calibrating",
+                    description = "Collecting several DHT22 readings before deciding whether temperature or humidity needs farmer attention.",
+                    timeAgo = "Live Sensor Link",
+                    timestamp = timestamp,
+                    read = true,
+                    location = zone
+                )
+            )
+        } else if (heatCriticalConfirmed) {
             newAlerts.add(
                 FarmAlert(
                     id = "alert-heat-critical",
                     severity = AlertSeverity.CRITICAL,
-                    title = String.format(Locale.getDefault(), "Severe Heat Stress: %.1f°C", temp),
-                    description = "Dangerous heat level detected in coop. Turn on ventilation fans and misters immediately to avoid flock heat stroke.",
+                    title = String.format(Locale.getDefault(), "Confirmed Severe Heat: %.1f°C avg", avgTemp),
+                    description = "Multiple DHT22 readings confirm dangerous heat. Increase ventilation and cooling immediately, then inspect flock behavior.",
                     timeAgo = "Live Sensor Alert",
                     timestamp = timestamp,
                     location = zone
                 )
             )
-        } else if (temp >= 31.0) {
+        } else if (heatWarningConfirmed) {
             newAlerts.add(
                 FarmAlert(
                     id = "alert-heat-warning",
                     severity = AlertSeverity.WARNING,
-                    title = String.format(Locale.getDefault(), "High Temperature Spike: %.1f°C", temp),
-                    description = "Temperature is above comfortable flock range (20°C - 28°C). Increase airflow and monitor flock hydration.",
+                    title = String.format(Locale.getDefault(), "Sustained High Temperature: %.1f°C", avgTemp),
+                    description = "Temperature has stayed above the stricter warning level across repeated readings. Improve airflow and monitor hydration.",
                     timeAgo = "Live Sensor Alert",
                     timestamp = timestamp,
                     location = zone
                 )
             )
-        } else if (temp < 18.0) {
+        } else if (coldWarningConfirmed) {
             newAlerts.add(
                 FarmAlert(
                     id = "alert-cold-warning",
                     severity = AlertSeverity.WARNING,
-                    title = String.format(Locale.getDefault(), "Chilling Risk Alert: %.1f°C", temp),
-                    description = "Coop temperature dropped below 18°C. Ensure brooder heating lamps are active to prevent flock chilling.",
+                    title = String.format(Locale.getDefault(), "Sustained Cold Risk: %.1f°C", avgTemp),
+                    description = "Temperature stayed below the safe range across repeated readings. Check heating and inspect young or weak birds.",
                     timeAgo = "Live Sensor Alert",
                     timestamp = timestamp,
                     location = zone
@@ -228,37 +263,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 2. Humidity Check (DHT22 Humidity)
-        if (hum >= 85.0) {
+        if (!isCalibrating && humidityCriticalConfirmed) {
             newAlerts.add(
                 FarmAlert(
                     id = "alert-humidity-critical",
                     severity = AlertSeverity.CRITICAL,
-                    title = String.format(Locale.getDefault(), "Extreme Dampness: %.1f%%", hum),
-                    description = "Relative humidity exceeded 85%. Severe damp litter and respiratory infection risk. Maximum ventilation required.",
+                    title = String.format(Locale.getDefault(), "Confirmed Extreme Dampness: %.0f%% avg", avgHum),
+                    description = "Repeated DHT22 readings confirm extreme humidity. Increase ventilation and check litter moisture.",
                     timeAgo = "Live Sensor Alert",
                     timestamp = timestamp,
                     location = zone
                 )
             )
-        } else if (hum >= 78.0) {
+        } else if (!isCalibrating && humidityWarningConfirmed) {
             newAlerts.add(
                 FarmAlert(
                     id = "alert-humidity-warning",
                     severity = AlertSeverity.WARNING,
-                    title = String.format(Locale.getDefault(), "High Humidity Warning: %.1f%%", hum),
-                    description = "Relative humidity is above optimal range (50% - 70%). Check ventilation to keep bedding dry.",
+                    title = String.format(Locale.getDefault(), "Sustained High Humidity: %.0f%% avg", avgHum),
+                    description = "Humidity stayed high across repeated readings. Check ventilation and bedding before it becomes a litter problem.",
                     timeAgo = "Live Sensor Alert",
                     timestamp = timestamp,
                     location = zone
                 )
             )
-        } else if (hum < 40.0) {
+        } else if (!isCalibrating && dryAirConfirmed) {
             newAlerts.add(
                 FarmAlert(
                     id = "alert-dry-air",
                     severity = AlertSeverity.INFO,
-                    title = String.format(Locale.getDefault(), "Dry Air Advisory: %.1f%%", hum),
-                    description = "Low humidity (< 40%) may lead to airborne dust and dehydration. Monitor flock drinking water.",
+                    title = String.format(Locale.getDefault(), "Sustained Dry Air: %.0f%% avg", avgHum),
+                    description = "Humidity stayed low across repeated readings. Monitor dust, drinking water, and bird comfort.",
                     timeAgo = "Live Sensor Alert",
                     timestamp = timestamp,
                     location = zone
@@ -272,8 +307,8 @@ class MainActivity : AppCompatActivity() {
                 FarmAlert(
                     id = "alert-climate-optimal",
                     severity = AlertSeverity.INFO,
-                    title = String.format(Locale.getDefault(), "Optimal Climate: %.1f°C • %.0f%%", temp, hum),
-                    description = "Temperature and humidity are within the ideal flock comfort zone. DHT22 sensor running normally.",
+                    title = String.format(Locale.getDefault(), "Stable Climate: %.1f°C • %.0f%%", avgTemp, avgHum),
+                    description = "Repeated DHT22 readings are inside the accepted range. Temperature and humidity monitoring is stable.",
                     timeAgo = "Live Sensor Link",
                     timestamp = timestamp,
                     read = true,

@@ -259,7 +259,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:fontFamily="sans-serif"
-                            android:text="Triggers when humidity exceeds 78%"
+                            android:text="Triggers after repeated readings exceed 82%"
                             android:textColor="@color/text_muted"
                             android:textSize="11sp" />
                     </LinearLayout>

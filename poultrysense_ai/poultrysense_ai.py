@@ -77,13 +77,11 @@ latest_status = {
     "track_count": 0,
     "temperature": 24.5,
     "humidity": 62.0,
-    "ammonia": 12,
     "detections": []
 }
 latest_sensor_data = {
     "temperature": 24.5,
     "humidity": 62.0,
-    "ammonia": 12,
     "last_updated": 0
 }
 frame_lock = threading.Lock()
@@ -91,6 +89,7 @@ frame_lock = threading.Lock()
 # --- Motion & History State ---
 track_histories = defaultdict(lambda: deque(maxlen=30))
 track_motion_windows = defaultdict(lambda: deque(maxlen=90)) # 3-second rolling window at 30 FPS
+track_health_windows = defaultdict(lambda: deque(maxlen=180))
 track_first_seen = {}              # display_id -> first appearance timestamp
 track_stationary_duration = {}     # display_id -> continuous seconds stationary (motion < 1.6)
 track_display_ids = {}
@@ -101,8 +100,12 @@ inactive_tracks = {}
 classification_queue = queue.Queue(maxsize=6)
 classification_lock = threading.Lock()
 
-# Temporal Observation Window (seconds before declaring baseline health)
-OBSERVATION_WINDOW = 3.0
+# Temporal windows for conservative health classification.
+OBSERVATION_WINDOW = 10.0
+HEALTH_CONFIRMATION_WINDOW = 6.0
+WARNING_CONFIRMATION_RATIO = 0.65
+UNHEALTHY_CONFIRMATION_RATIO = 0.75
+MIN_HEALTH_HISTORY_POINTS = 18
 
 # Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
 MAX_TRACKED_CHICKENS = 10
@@ -327,6 +330,8 @@ def cleanup_stale_ids(active_raw_ids, max_missed=90):
                 del track_histories[disp_id]
             if disp_id in track_motion_windows:
                 del track_motion_windows[disp_id]
+            if disp_id in track_health_windows:
+                del track_health_windows[disp_id]
             if disp_id in track_first_seen:
                 del track_first_seen[disp_id]
             if disp_id in track_stationary_duration:
@@ -433,12 +438,9 @@ def handle_sensor():
                     if "humidity" in data:
                         latest_sensor_data["humidity"] = float(data["humidity"])
                         latest_status["humidity"] = latest_sensor_data["humidity"]
-                    if "ammonia" in data:
-                        latest_sensor_data["ammonia"] = int(data["ammonia"])
-                        latest_status["ammonia"] = latest_sensor_data["ammonia"]
                     latest_sensor_data["last_updated"] = time.time()
                 print(f"[ESP32] Live Sensor: Temp={latest_sensor_data['temperature']:.1f}°C, "
-                      f"Hum={latest_sensor_data['humidity']:.1f}%, Ammonia={latest_sensor_data['ammonia']}ppm")
+                      f"Hum={latest_sensor_data['humidity']:.1f}%")
                 return jsonify({"status": "success", "received": latest_sensor_data}), 200
         except Exception as e:
             return jsonify({"status": "error", "message": str(e)}), 400
@@ -949,60 +951,126 @@ def camera_loop():
                 behavior_label = "peck"
 
             # --- 3-Phase Temporal Observation & Anomaly Engine ---
-            # Phase 1: Observation & Calibration Window (First 3.0 seconds)
+            # Grounded in: Dawkins et al. (2009) optical-flow calibration,
+            #   Kestin et al. (1992) Bristol Gait Score, Zhuang & Zhang (2019)
+            #   lethargy markers, Febrer et al. (2006) spatial isolation,
+            #   Aydin (2017) 3-tier activity classification.
+
+            health_score = 0
+
+            # Phase 1: Behavioral Calibration Window — Dawkins et al. (2009)
+            # Collect optical-flow baseline before any diagnosis to prevent snap-judgments.
             if elapsed_obs < OBSERVATION_WINDOW:
-                health_label = f"OBSERVING {elapsed_obs:.1f}s"
-                color = (255, 215, 0) # Electric Cyan for observation window
+                health_label = "Calibrating"
+                health_detail = f"Optical-Flow Baseline {elapsed_obs:.1f}/{OBSERVATION_WINDOW:.0f}s"
+                color = (255, 215, 0)  # Gold — neutral calibration phase
                 observing_count += 1
             else:
                 recent_motion = list(track_motion_windows[display_id])
                 avg_motion = float(np.mean(recent_motion)) if recent_motion else motion
                 max_motion = float(np.max(recent_motion)) if recent_motion else motion
 
+                if stationary_sec >= 10.0:
+                    health_score += 35
+                elif stationary_sec >= 6.0:
+                    health_score += 20
+                if is_isolated:
+                    health_score += 25
+                if unhealthy_prob >= 0.85:
+                    health_score += 30
+                elif unhealthy_prob >= 0.60:
+                    health_score += 15
+                if avg_motion < 0.5:
+                    health_score += 15
+                elif avg_motion < 0.8:
+                    health_score += 8
+
+                raw_label = "Healthy"
+                raw_detail = "Normal Behavior (Gait Score 0-1)"
+                active_evidence = behavior_label == "walk" or max_motion > 3.0 or avg_motion > 2.0
+
+                # Raw evidence is intentionally stricter for Unhealthy than Warning.
+                if active_evidence:
+                    raw_label = "Healthy"
+                    if behavior_label == "walk":
+                        raw_detail = "Normal Locomotion (Gait Score 0-1)"
+                    elif behavior_label == "peck":
+                        raw_detail = "Active Foraging Behavior"
+                    else:
+                        raw_detail = "Adequate Movement Detected"
+                elif (stationary_sec >= 12.0 and unhealthy_prob >= 0.85 and is_isolated) or health_score >= 80:
+                    raw_label = "Unhealthy"
+                    raw_detail = f"Persistent lethargy evidence ({stationary_sec:.0f}s, score {health_score})"
+                elif stationary_sec >= 8.0 or unhealthy_prob >= 0.60 or (is_isolated and avg_motion < 0.8) or health_score >= 45:
+                    raw_label = "Needs Review"
+                    if stationary_sec >= 8.0:
+                        raw_detail = f"Low activity needs review ({stationary_sec:.0f}s stationary)"
+                    elif unhealthy_prob >= 0.60:
+                        raw_detail = f"Weak visual health signal ({unhealthy_prob:.0%})"
+                    elif is_isolated:
+                        raw_detail = "Isolation with reduced motion"
+                    else:
+                        raw_detail = "Repeated low movement indicators"
+
+                health_window = track_health_windows[display_id]
+                health_window.append((curr_time, raw_label))
+                while health_window and curr_time - health_window[0][0] > HEALTH_CONFIRMATION_WINDOW:
+                    health_window.popleft()
+
+                recent_labels = [label for ts, label in health_window if curr_time - ts <= HEALTH_CONFIRMATION_WINDOW]
+                history_ready = len(recent_labels) >= MIN_HEALTH_HISTORY_POINTS
+                review_ratio = recent_labels.count("Needs Review") / max(1, len(recent_labels))
+                unhealthy_ratio = recent_labels.count("Unhealthy") / max(1, len(recent_labels))
+
                 # Phase 2 & 3: Confirmed Temporal Diagnosis
-                # 1. HEALTHY: Bird exhibited locomotion (walked / pecked / stepped) during observation
-                if behavior_label == "walk" or max_motion > 2.6 or avg_motion > 1.8:
+                # ── HEALTHY (Kestin Gait Score 0-1): Normal locomotion confirmed ──
+                # Criteria: Active walking/foraging with sufficient displacement (Kestin 1992)
+                if raw_label == "Healthy":
                     health_label = "Healthy"
-                    color = get_id_color(display_id)
-                    healthy_count += 1
-                # 2. UNHEALTHY: Sustained immobility (continuous lethargy >= 5.0s) + high defect confidence
-                elif (stationary_sec >= 5.0 and unhealthy_prob >= 0.75) or (stationary_sec >= 8.0 and is_isolated):
-                    health_label = "Unhealthy"
-                    color = (70, 70, 255) # Vivid Red alert
-                    unhealthy_count += 1
-                # 3. WARNING: Isolated, resting, stationary, or visual defect uncertainty
-                elif is_isolated or stationary_sec >= 3.0 or unhealthy_prob >= 0.40 or avg_motion < 0.8:
-                    health_label = "Warning"
-                    color = (0, 180, 255) # Amber/Yellow warning
-                    warning_count += 1
-                else:
-                    health_label = "Healthy"
+                    health_detail = raw_detail
                     color = get_id_color(display_id)
                     healthy_count += 1
 
-            # Draw Motion Trail
-            if len(hist) > 1:
-                pts = np.array(list(hist), dtype=np.int32).reshape((-1, 1, 2))
-                cv2.polylines(frame, [pts], isClosed=False, color=color, thickness=2)
-                cv2.circle(frame, (int(cx), int(cy)), 4, color, -1)
+                # ── UNHEALTHY (Kestin Gait Score 4-5 / Zhuang & Zhang 2019): ──
+                # Requires repeated evidence for the same tracked chicken.
+                elif history_ready and unhealthy_ratio >= UNHEALTHY_CONFIRMATION_RATIO:
+                    health_label = "Unhealthy"
+                    health_detail = raw_detail
+                    color = (70, 70, 255)  # Vivid Red alert
+                    unhealthy_count += 1
+
+                # ── WARNING (Aydin 2017 Moderate Risk / Febrer 2006 Isolation): ──
+                # Sub-threshold anomaly confirmed over multiple observations.
+                elif history_ready and review_ratio >= WARNING_CONFIRMATION_RATIO:
+                    health_label = "Needs Review"
+                    health_detail = raw_detail
+                    color = (0, 180, 255)  # Amber warning
+                    warning_count += 1
+
+                # ── DEFAULT MONITORING: weak or new evidence only ──
+                else:
+                    health_label = "Monitoring"
+                    health_detail = f"Collecting repeated evidence ({len(recent_labels)}/{MIN_HEALTH_HISTORY_POINTS})"
+                    color = (255, 215, 0)
+                    observing_count += 1
 
             # Draw HUD Box
             draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=18)
 
-            # Draw Info Badge
+            # Draw Info Badge — shows RRL-grounded clinical indicator
             iso_tag = " • ISOLATED" if is_isolated else ""
             if elapsed_obs < OBSERVATION_WINDOW:
-                badge_text = f" Chicken #{display_id} | {behavior_label.upper()} | OBSERVING {elapsed_obs:.1f}s{iso_tag} "
+                badge_text = f" #{display_id} | {behavior_label.upper()} | CALIBRATING {elapsed_obs:.1f}s "
             else:
-                badge_text = f" Chicken #{display_id} | {behavior_label.upper()} | {health_label.upper()}{iso_tag} "
+                badge_text = f" #{display_id} | {behavior_label.upper()} | {health_label.upper()}: {health_detail}{iso_tag} "
 
-            (text_w, text_h), baseline = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_DUPLEX, 0.45, 1)
+            (text_w, text_h), baseline = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_DUPLEX, 0.40, 1)
             label_y = max(y1 - 10, text_h + 10)
             badge_bg = (int(color[0] * 0.25), int(color[1] * 0.25), int(color[2] * 0.25))
 
             cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), badge_bg, -1)
             cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), color, 1)
-            cv2.putText(frame, badge_text, (x1 + 4, label_y - 2), cv2.FONT_HERSHEY_DUPLEX, 0.45, (255, 255, 255), 1)
+            cv2.putText(frame, badge_text, (x1 + 4, label_y - 2), cv2.FONT_HERSHEY_DUPLEX, 0.40, (255, 255, 255), 1)
 
             detection_list.append({
                 "track_id": display_id,
@@ -1010,6 +1078,8 @@ def camera_loop():
                 "confidence": round(conf, 2),
                 "behavior": behavior_label,
                 "health": health_label,
+                "health_detail": health_detail,
+                "health_score": health_score,
                 "isolated": is_isolated,
                 "motion": round(motion, 1),
                 "observed_sec": round(elapsed_obs, 1),
@@ -1048,7 +1118,6 @@ def camera_loop():
                 "track_count": flock_count,
                 "temperature": latest_sensor_data["temperature"],
                 "humidity": latest_sensor_data["humidity"],
-                "ammonia": latest_sensor_data["ammonia"],
                 "detections": detection_list
             }
 

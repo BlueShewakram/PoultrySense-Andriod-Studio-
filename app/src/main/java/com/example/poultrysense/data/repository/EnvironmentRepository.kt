@@ -24,7 +24,6 @@ object EnvironmentRepository {
     suspend fun syncEnvironmentData(
         temperature: Double,
         humidity: Double,
-        ammonia: Int = 12,
         zone: String = "Barn Alpha • Zone 1"
     ) {
         try {
@@ -34,7 +33,6 @@ object EnvironmentRepository {
             val liveData = mapOf(
                 "temperature" to temperature,
                 "humidity" to humidity,
-                "ammonia" to ammonia,
                 "zone" to zone,
                 "status" to status,
                 "timestamp" to readableTimestamp
@@ -53,10 +51,12 @@ object EnvironmentRepository {
 
     fun getClimateStatus(temp: Double, hum: Double): String {
         return when {
-            temp > 30.0 -> "HEAT ALERT"
-            temp < 18.0 -> "COLD ALERT"
-            hum > 75.0 -> "HIGH HUMIDITY"
-            hum < 40.0 -> "DRY AIR"
+            temp >= 36.0 -> "CRITICAL HEAT"
+            temp >= 33.0 -> "HEAT WATCH"
+            temp <= 17.0 -> "COLD WATCH"
+            hum >= 88.0 -> "CRITICAL HUMIDITY"
+            hum >= 82.0 -> "HUMIDITY WATCH"
+            hum <= 35.0 -> "DRY AIR"
             else -> "NORMAL"
         }
     }

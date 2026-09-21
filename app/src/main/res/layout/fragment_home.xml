@@ -827,7 +827,7 @@
                     android:textSize="13sp" />
             </LinearLayout>
 
-            <!-- Environmental Conditions Card (Humidity, Temperature, Ammonia) -->
+            <!-- Environmental Conditions Card (Humidity, Temperature) -->
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

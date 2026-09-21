@@ -850,10 +850,12 @@ void sendToFirebase(float temp, float hum) {
 
   // Determine climate status
   String climateStatus = "NORMAL";
-  if (temp > 30.0) climateStatus = "HEAT ALERT";
-  else if (temp < 18.0) climateStatus = "COLD ALERT";
-  else if (hum > 75.0)  climateStatus = "HIGH HUMIDITY";
-  else if (hum < 40.0)  climateStatus = "DRY AIR";
+  if (temp >= 36.0) climateStatus = "CRITICAL HEAT";
+  else if (temp >= 33.0) climateStatus = "HEAT WATCH";
+  else if (temp <= 17.0) climateStatus = "COLD WATCH";
+  else if (hum >= 88.0)  climateStatus = "CRITICAL HUMIDITY";
+  else if (hum >= 82.0)  climateStatus = "HUMIDITY WATCH";
+  else if (hum <= 35.0)  climateStatus = "DRY AIR";
 
   // Human-readable timestamp (e.g. "13 Sep 2026, 06:46:15 PM")
   String timeStr = getFormattedTime();
