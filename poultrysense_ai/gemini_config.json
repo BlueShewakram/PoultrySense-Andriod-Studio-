@@ -1,0 +1,5 @@
+{
+  "gemini_api_key": "AQ.Ab8RN6IIlpAwkJynGIveJuFc-XcbTrDTAzdBaOP5BmL_K5f3zg",
+  "model": "gemini-2.5-flash",
+  "cooldown_seconds": 300
+}
