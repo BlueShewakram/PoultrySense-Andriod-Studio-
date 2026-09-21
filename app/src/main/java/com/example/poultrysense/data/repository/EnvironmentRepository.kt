@@ -16,7 +16,7 @@ object EnvironmentRepository {
 
     /**
      * Updates live sensor telemetry in Firebase Realtime Database.
-     * 
+     *
      * Storage Optimization:
      * Overwrites /sensor_data/live in-place.
      * Generates a clear, human-readable timestamp (e.g., "13 Sep 2026, 06:46 PM").
@@ -30,7 +30,7 @@ object EnvironmentRepository {
             val status = getClimateStatus(temperature, humidity)
             val readableTimestamp = dateFormat.format(Date())
 
-            val liveData = mapOf(
+            val liveData = mapOf<String, Any>(
                 "temperature" to temperature,
                 "humidity" to humidity,
                 "zone" to zone,
@@ -49,14 +49,25 @@ object EnvironmentRepository {
         }
     }
 
+    /**
+     * RRL-grounded climate status thresholds for adult broilers (Week 4+).
+     *
+     * References:
+     *   - Dawkins et al. (2004): housing conditions > stocking density for welfare
+     *   - Industry consensus: optimal adult broiler range 18–24°C, 50–70% RH
+     *   - Heat stress panting onset: ~30°C
+     *   - Critical heat stroke risk: ≥35°C
+     *   - Wet litter / footpad dermatitis: RH ≥80%
+     */
     fun getClimateStatus(temp: Double, hum: Double): String {
         return when {
-            temp >= 36.0 -> "CRITICAL HEAT"
-            temp >= 33.0 -> "HEAT WATCH"
-            temp <= 17.0 -> "COLD WATCH"
-            hum >= 88.0 -> "CRITICAL HUMIDITY"
-            hum >= 82.0 -> "HUMIDITY WATCH"
-            hum <= 35.0 -> "DRY AIR"
+            temp >= 35.0 -> "CRITICAL HEAT"
+            temp >= 30.0 -> "HEAT WATCH"
+            temp <= 18.0 -> "COLD WATCH"
+            hum >= 80.0 -> "CRITICAL HUMIDITY"
+            hum >= 75.0 -> "HUMIDITY WATCH"
+            hum <= 40.0 -> "DRY AIR"
+
             else -> "NORMAL"
         }
     }

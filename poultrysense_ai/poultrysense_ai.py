@@ -2,6 +2,13 @@
 PoultrySense AI Vision Server
 Real-time Chicken Detection, Multi-Object Tracking, Behavior Recognition,
 and Health Telemetry Engine powered by YOLOv8 trained weights.
+
+Health Classification grounded in:
+  - Kestin et al. (1992) Bristol Gait Score
+  - Dawkins et al. (2009) Optical-flow calibration
+  - Zhuang & Zhang (2019) Lethargy markers
+  - Febrer et al. (2006) Spatial isolation
+  - Aydin (2017) 3-tier activity classification
 """
 
 import cv2
@@ -13,9 +20,24 @@ import numpy as np
 import sys
 import socket
 import queue
+import base64
+
 from collections import defaultdict, deque
 
-# --- 1. Import Ultralytics YOLO ---
+# --- 1. Import Requests & Google Gemini ---
+try:
+    import requests
+except ImportError:
+    pass
+
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GEMINI = True
+except ImportError:
+    HAS_GEMINI = False
+
+# --- 2. Import Ultralytics YOLO ---
 try:
     from ultralytics import YOLO
     HAS_YOLO = True
@@ -44,6 +66,9 @@ DET_MODELS = [
     os.path.join(SCRIPT_DIR, "PoultrySense_YOLOv8_ChickenDet.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_YOLOv8_ChickenSeg.pt"),
     os.path.join(SCRIPT_DIR, "PoultrySense_YOLOv8_ChickenSeg.pt"),
+    os.path.join(SCRIPT_DIR, "yolo11n.pt"),
+    "yolo11n.pt",
+
 ]
 
 BEHAVIOR_MODELS = [
@@ -88,8 +113,8 @@ frame_lock = threading.Lock()
 
 # --- Motion & History State ---
 track_histories = defaultdict(lambda: deque(maxlen=30))
-track_motion_windows = defaultdict(lambda: deque(maxlen=90)) # 3-second rolling window at 30 FPS
-track_health_windows = defaultdict(lambda: deque(maxlen=180))
+track_motion_windows = defaultdict(lambda: deque(maxlen=90))  # 3-second rolling window at 30 FPS
+
 track_first_seen = {}              # display_id -> first appearance timestamp
 track_stationary_duration = {}     # display_id -> continuous seconds stationary (motion < 1.6)
 track_display_ids = {}
@@ -100,15 +125,355 @@ inactive_tracks = {}
 classification_queue = queue.Queue(maxsize=6)
 classification_lock = threading.Lock()
 
-# Temporal windows for conservative health classification.
-OBSERVATION_WINDOW = 10.0
-HEALTH_CONFIRMATION_WINDOW = 6.0
-WARNING_CONFIRMATION_RATIO = 0.65
-UNHEALTHY_CONFIRMATION_RATIO = 0.75
-MIN_HEALTH_HISTORY_POINTS = 18
+# Temporal Observation Window (seconds before declaring baseline health)
+OBSERVATION_WINDOW = 3.0
+
 
 # Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
 MAX_TRACKED_CHICKENS = 10
+
+# --- Camera Configuration ---
+# Camera index: 1 = external USB camera ("HD Camera")
+#               0 = built-in laptop camera (fallback)
+EXTERNAL_CAMERA_INDEX = 1
+FALLBACK_CAMERA_INDEX = 0
+
+
+# =====================================================================
+#   POULTRYSENSE MULTI-STAGE BEHAVIOR & GEMINI 2.5 ESCALATION ENGINE
+# =====================================================================
+
+class ChickenBehaviorHistory:
+    """
+    Maintains time-series behavior history and normal baseline per tracked chicken ID.
+    Calculates walking, feeding/pecking, resting/inactivity, drinking percentages,
+    continuous inactivity duration, average optical motion, and spatial isolation frequency.
+    """
+    def __init__(self, window_sec=180.0):
+        self.window_sec = window_sec
+        self.records = defaultdict(lambda: deque())
+        self.baselines = {}
+
+    def record(self, track_id, timestamp, behavior, motion, is_isolated, center_pt):
+        q = self.records[track_id]
+        q.append((timestamp, behavior, motion, is_isolated, center_pt))
+        cutoff = timestamp - self.window_sec
+        while q and q[0][0] < cutoff:
+            q.popleft()
+
+    def get_stats(self, track_id, current_time):
+        q = self.records[track_id]
+        if not q:
+            return {
+                "observed_sec": 0.0,
+                "walk_pct": 50.0,
+                "feed_pct": 25.0,
+                "drink_pct": 5.0,
+                "rest_pct": 20.0,
+                "avg_motion": 2.5,
+                "isolation_pct": 0.0,
+                "continuous_inactivity_sec": 0.0,
+                "sample_count": 0
+            }
+
+        total = len(q)
+        observed_sec = max(0.1, current_time - q[0][0])
+        walk_cnt = sum(1 for _, b, _, _, _ in q if b == "walk")
+        feed_cnt = sum(1 for _, b, _, _, _ in q if b == "peck")
+        drink_cnt = sum(1 for _, b, _, _, _ in q if b == "drink")
+        rest_cnt = sum(1 for _, b, _, _, _ in q if b in ("stand", "sit", "rest", "sleep"))
+        iso_cnt = sum(1 for _, _, _, iso, _ in q if iso)
+        avg_motion = float(np.mean([m for _, _, m, _, _ in q]))
+
+        # Calculate continuous inactivity duration from recent samples
+        inact_sec = 0.0
+        for ts, _, m, _, _ in reversed(q):
+            if m < 1.6:
+                inact_sec = current_time - ts
+            else:
+                break
+
+        stats = {
+            "observed_sec": round(observed_sec, 1),
+            "walk_pct": round((walk_cnt / total) * 100.0, 1),
+            "feed_pct": round((feed_cnt / total) * 100.0, 1),
+            "drink_pct": round((drink_cnt / total) * 100.0, 1),
+            "rest_pct": round((rest_cnt / total) * 100.0, 1),
+            "avg_motion": round(avg_motion, 2),
+            "isolation_pct": round((iso_cnt / total) * 100.0, 1),
+            "continuous_inactivity_sec": round(inact_sec, 1),
+            "sample_count": total
+        }
+
+        # Initialize rolling baseline once chicken has been observed for >= 10 seconds
+        if observed_sec >= 10.0 and track_id not in self.baselines:
+            self.baselines[track_id] = {
+                "walk_pct": max(20.0, stats["walk_pct"]),
+                "feed_pct": max(15.0, stats["feed_pct"]),
+                "drink_pct": max(5.0, stats["drink_pct"]),
+                "rest_pct": min(40.0, stats["rest_pct"]),
+                "avg_motion": max(1.5, stats["avg_motion"])
+            }
+
+        return stats
+
+    def get_baseline(self, track_id):
+        return self.baselines.get(track_id, {
+            "walk_pct": 40.0,
+            "feed_pct": 25.0,
+            "drink_pct": 8.0,
+            "rest_pct": 27.0,
+            "avg_motion": 2.2
+        })
+
+
+class AnomalyDetectionEngine:
+    """
+    Computes 5-component weighted Anomaly Score (0–100) per chicken:
+      - Activity anomaly: 35%
+      - Feeding anomaly:  25%
+      - Movement anomaly: 20%
+      - Isolation:        10%
+      - Posture anomaly:  10%
+
+    Tiers:
+      0–29:   Normal
+      30–59:  Monitor
+      60–79:  Suspicious  (Triggers Gemini 2.5 Escalation)
+      80–100: High Concern (Immediate Critical Alert)
+    """
+    @staticmethod
+    def compute_anomaly(stats, baseline, unhealthy_prob, is_isolated, stationary_sec):
+        # 1. Activity sub-score (0-100, weight 0.35)
+        if stationary_sec >= 12.0:
+            act_score = 100.0
+        elif stationary_sec >= 6.0:
+            act_score = 65.0 + (stationary_sec - 6.0) * 5.8
+        elif stats["rest_pct"] > 75.0:
+            act_score = min(85.0, stats["rest_pct"])
+        elif stats["walk_pct"] < 15.0 and stats["observed_sec"] >= 10.0:
+            act_score = 45.0
+        else:
+            base_walk = baseline.get("walk_pct", 40.0)
+            act_score = max(0.0, (1.0 - (stats["walk_pct"] / max(1.0, base_walk))) * 35.0)
+
+        # 2. Feeding sub-score (0-100, weight 0.25)
+        base_feed = baseline.get("feed_pct", 25.0)
+        feed_drop = max(0.0, base_feed - stats["feed_pct"])
+        feed_score = min(100.0, (feed_drop / max(1.0, base_feed)) * 100.0) if base_feed > 5.0 else 0.0
+        if stats["feed_pct"] == 0.0 and stats["observed_sec"] >= 25.0:
+            feed_score = max(feed_score, 65.0)
+
+        # 3. Movement / Optical-flow sub-score (0-100, weight 0.20)
+        if stats["avg_motion"] < 0.6:
+            motion_score = 100.0
+        elif stats["avg_motion"] < 1.2:
+            motion_score = 65.0
+        elif stats["avg_motion"] < 2.0:
+            motion_score = 30.0
+        else:
+            motion_score = 0.0
+
+        # 4. Spatial Isolation sub-score (0-100, weight 0.10)
+        iso_score = 100.0 if (is_isolated and stats["isolation_pct"] >= 50.0) else (60.0 if is_isolated else min(100.0, stats["isolation_pct"]))
+
+        # 5. Posture / Visual anomaly sub-score (0-100, weight 0.10)
+        posture_score = min(100.0, unhealthy_prob * 100.0)
+
+        # 5-Component Weighted Total
+        raw_score = (
+            0.35 * act_score +
+            0.25 * feed_score +
+            0.20 * motion_score +
+            0.10 * iso_score +
+            0.10 * posture_score
+        )
+        total_score = int(round(min(100.0, max(0.0, raw_score))))
+
+        if total_score < 30:
+            tier = "Normal"
+            status = "Healthy"
+        elif total_score < 60:
+            tier = "Monitor"
+            status = "Monitor"
+        elif total_score < 80:
+            tier = "Suspicious"
+            status = "Needs Attention"
+        else:
+            tier = "High Concern"
+            status = "High Concern"
+
+        return {
+            "anomaly_score": total_score,
+            "anomaly_tier": tier,
+            "status": status,
+            "sub_scores": {
+                "activity": round(act_score, 1),
+                "feeding": round(feed_score, 1),
+                "movement": round(motion_score, 1),
+                "isolation": round(iso_score, 1),
+                "posture": round(posture_score, 1)
+            }
+        }
+
+
+class GeminiEscalationWorker:
+    """
+    Asynchronous, non-blocking high-level veterinary behavioral assessment agent.
+    Escalates persistent anomalies (Score >= 60) to Google Gemini 2.5 Flash.
+    """
+    def __init__(self, cooldown_sec=300.0):
+        self.cooldown_sec = cooldown_sec
+        self.last_escalated = {}    # track_id -> timestamp
+        self.active_alerts = {}     # track_id -> alert dict
+        self.chicken_summaries = {} # track_id -> 1-sentence gemini interpretation
+        self.api_key = self._find_api_key()
+        self.client = None
+        self._init_client()
+
+    def _find_api_key(self):
+        # 1. Environment variable
+        key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if key:
+            return key
+        # 2. Local config json
+        cfg_path = os.path.join(SCRIPT_DIR, "gemini_config.json")
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path, "r") as f:
+                    data = json.load(f)
+                    k = data.get("gemini_api_key", "").strip()
+                    if k and k != "YOUR_GEMINI_API_KEY_HERE":
+                        return k
+            except Exception:
+                pass
+        # 3. Local .env file
+        env_path = os.path.join(SCRIPT_DIR, ".env")
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r") as f:
+                    for line in f:
+                        if line.strip().startswith("GEMINI_API_KEY="):
+                            k = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+                            if k:
+                                return k
+            except Exception:
+                pass
+        return ""
+
+    def _init_client(self):
+        if self.api_key and HAS_GEMINI:
+            try:
+                self.client = genai.Client(api_key=self.api_key)
+                print("[Gemini 2.5] Initialized Gemini 2.5 Flash client successfully.")
+            except Exception as e:
+                print(f"[Gemini 2.5] Client init notice: {e}")
+        else:
+            if not self.api_key:
+                print("[Gemini 2.5] Notice: GEMINI_API_KEY not found. Operating in local heuristic anomaly mode.")
+                print("             Add key to poultrysense_ai/gemini_config.json to enable Gemini 2.5 Flash.")
+
+    def trigger_escalation_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time):
+        last_t = self.last_escalated.get(track_id, 0.0)
+        if curr_time - last_t < self.cooldown_sec:
+            return  # In cooldown window to prevent repeated API calls
+
+        self.last_escalated[track_id] = curr_time
+        threading.Thread(
+            target=self._worker_task,
+            args=(track_id, stats, baseline, anomaly_info, crop.copy() if crop is not None else None, curr_time),
+            daemon=True
+        ).start()
+
+    def _worker_task(self, track_id, stats, baseline, anomaly_info, crop, curr_time):
+        score = anomaly_info["anomaly_score"]
+        tier = anomaly_info["anomaly_tier"]
+        sub = anomaly_info["sub_scores"]
+
+        # Default local heuristic fallback alert (guaranteed instantaneous reliability)
+        severity = "High" if score >= 80 else "Moderate"
+        reason = f"Activity deficit ({stats['continuous_inactivity_sec']:.0f}s immobile) with {stats['isolation_pct']:.0f}% flock isolation"
+        recommendation = f"Continue monitoring and physically inspect Chicken #{track_id} if inactivity persists."
+        gemini_evaluated = False
+
+        if self.client is not None and crop is not None and crop.size > 0:
+            try:
+                # Encode crop to JPEG base64
+                _, buf = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                img_bytes = buf.tobytes()
+
+                prompt = (
+                    f"You are PoultrySense AI's high-level veterinary behavioral assessment model.\n"
+                    f"Analyze the following evidence for Chicken #{track_id}:\n"
+                    f"- Observation Window: {stats['observed_sec']:.1f}s\n"
+                    f"- Behavior Distribution: Walking: {stats['walk_pct']}%, Feeding: {stats['feed_pct']}%, Resting: {stats['rest_pct']}%\n"
+                    f"- Continuous Inactivity: {stats['continuous_inactivity_sec']:.1f}s\n"
+                    f"- Movement (Optical Flow): {stats['avg_motion']} (Normal: >= 2.0, Lethargic: < 0.8)\n"
+                    f"- Flock Isolation: {stats['isolation_pct']}% time isolated\n"
+                    f"- Anomaly Score: {score}/100 ({tier})\n"
+                    f"- Sub-Scores: Activity={sub['activity']}, Feeding={sub['feeding']}, Movement={sub['movement']}, Isolation={sub['isolation']}, Posture={sub['posture']}\n\n"
+                    f"CRITICAL ETHICAL & RELIABILITY RULES:\n"
+                    f"1. Strictly poultry welfare and behavioral assessment.\n"
+                    f"2. DO NOT state a definitive disease diagnosis from vision alone.\n"
+                    f"3. Return concise JSON only with keys:\n"
+                    f"   {{\"status\": \"Needs Attention\" or \"High Concern\", \"severity\": \"Moderate\" or \"Severe\", \"reason\": \"<1 sentence explanation>\", \"recommendation\": \"<farmer action>\"}}"
+                )
+
+                response = self.client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=[
+                        types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
+                        prompt
+                    ]
+                )
+
+                resp_text = response.text.strip()
+                # Strip markdown codeblocks if returned
+                if resp_text.startswith("```"):
+                    resp_text = resp_text.split("```")[1]
+                    if resp_text.startswith("json"):
+                        resp_text = resp_text[4:]
+                resp_text = resp_text.strip()
+
+                parsed = json.loads(resp_text)
+                if isinstance(parsed, dict):
+                    reason = parsed.get("reason", reason)
+                    recommendation = parsed.get("recommendation", recommendation)
+                    severity = parsed.get("severity", severity)
+                    gemini_evaluated = True
+                    print(f"[Gemini 2.5] Evaluated Chicken #{track_id}: {reason}")
+            except Exception as ex:
+                print(f"[Gemini 2.5] API call notice for Chicken #{track_id}: {ex}")
+
+        # Store active alert
+        alert_obj = {
+            "chicken_id": track_id,
+            "status": anomaly_info["status"],
+            "anomaly_score": score,
+            "anomaly_tier": tier,
+            "behavior": f"Resting {stats['rest_pct']}% • Walking {stats['walk_pct']}%",
+            "duration_sec": stats["observed_sec"],
+            "severity": severity,
+            "reason": reason,
+            "recommendation": recommendation,
+            "gemini_evaluated": gemini_evaluated,
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+        }
+        self.active_alerts[track_id] = alert_obj
+        self.chicken_summaries[track_id] = reason
+
+    def get_active_alerts(self):
+        return list(self.active_alerts.values())
+
+    def get_chicken_summary(self, track_id):
+        return self.chicken_summaries.get(track_id, "")
+
+
+# Global Multi-Stage Architecture Instances
+behavior_history = ChickenBehaviorHistory(window_sec=180.0)
+anomaly_engine = AnomalyDetectionEngine()
+gemini_escalator = GeminiEscalationWorker(cooldown_sec=300.0)
+
 
 
 def classification_worker(beh_model, hlth_model):
@@ -149,12 +514,6 @@ def classification_worker(beh_model, hlth_model):
             }
 
 
-# --- Camera Configuration ---
-# Camera index: 1 = external USB camera ("HD Camera")
-#               0 = built-in laptop camera (fallback)
-EXTERNAL_CAMERA_INDEX = 1
-FALLBACK_CAMERA_INDEX = 0
-
 
 # --- Threaded Camera Reader for 30 FPS capture ---
 class ThreadedCamera:
@@ -190,7 +549,8 @@ class ThreadedCamera:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            
+
+
             # Enable natural auto-exposure and optimal brightness for clear, vivid display
             self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
             self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 128)
@@ -330,8 +690,7 @@ def cleanup_stale_ids(active_raw_ids, max_missed=90):
                 del track_histories[disp_id]
             if disp_id in track_motion_windows:
                 del track_motion_windows[disp_id]
-            if disp_id in track_health_windows:
-                del track_health_windows[disp_id]
+
             if disp_id in track_first_seen:
                 del track_first_seen[disp_id]
             if disp_id in track_stationary_duration:
@@ -357,24 +716,21 @@ def get_id_color(track_id):
     return ID_COLORS[(track_id - 1) % len(ID_COLORS)]
 
 
-def draw_hud_box(img, pt1, pt2, color, thickness=2, line_len=20):
+def draw_hud_box(img, pt1, pt2, color, thickness=2, line_len=16):
     x1, y1 = max(0, int(pt1[0])), max(0, int(pt1[1]))
     x2, y2 = min(img.shape[1], int(pt2[0])), min(img.shape[0], int(pt2[1]))
-    if x2 > x1 and y2 > y1:
-        roi = img[y1:y2, x1:x2]
-        tint = np.full_like(roi, color)
-        cv2.addWeighted(tint, 0.08, roi, 0.92, 0, roi)
-    cv2.rectangle(img, (x1, y1), (x2, y2), color, 1)
-    
-    # Corner brackets for futuristic HUD aesthetic
-    cv2.line(img, (x1, y1), (x1 + line_len, y1), color, thickness + 1)
-    cv2.line(img, (x1, y1), (x1, y1 + line_len), color, thickness + 1)
-    cv2.line(img, (x2, y1), (x2 - line_len, y1), color, thickness + 1)
-    cv2.line(img, (x2, y1), (x2, y1 + line_len), color, thickness + 1)
-    cv2.line(img, (x1, y2), (x1 + line_len, y2), color, thickness + 1)
-    cv2.line(img, (x1, y2), (x1, y2 - line_len), color, thickness + 1)
-    cv2.line(img, (x2, y2), (x2 - line_len, y2), color, thickness + 1)
-    cv2.line(img, (x2, y2), (x2, y2 - line_len), color, thickness + 1)
+
+    # Clean corner-only brackets (no full rectangle, no tint)
+    cv2.line(img, (x1, y1), (x1 + line_len, y1), color, thickness)
+    cv2.line(img, (x1, y1), (x1, y1 + line_len), color, thickness)
+    cv2.line(img, (x2, y1), (x2 - line_len, y1), color, thickness)
+    cv2.line(img, (x2, y1), (x2, y1 + line_len), color, thickness)
+    cv2.line(img, (x1, y2), (x1 + line_len, y2), color, thickness)
+    cv2.line(img, (x1, y2), (x1, y2 - line_len), color, thickness)
+    cv2.line(img, (x2, y2), (x2 - line_len, y2), color, thickness)
+    cv2.line(img, (x2, y2), (x2, y2 - line_len), color, thickness)
+
+
 
 
 # --- Flask Application ---
@@ -410,6 +766,17 @@ def status():
     """Real-time JSON telemetry endpoint for PoultrySense."""
     with frame_lock:
         return jsonify(latest_status)
+
+
+@flask_app.route('/api/alerts')
+def api_alerts():
+    """Returns active chicken health alerts generated by the anomaly engine and Gemini 2.5."""
+    with frame_lock:
+        return jsonify({
+            "status": "success",
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "alerts": gemini_escalator.get_active_alerts()
+        })
 
 
 @flask_app.route('/api/discover')
@@ -453,11 +820,15 @@ def handle_sensor():
 @flask_app.route('/reset_ids')
 def reset_ids():
     """Reset persistent chicken IDs and track histories."""
-    global next_auto_id
     track_display_ids.clear()
     track_missed_counts.clear()
     track_histories.clear()
-    next_auto_id = 1
+    track_first_seen.clear()
+    track_stationary_duration.clear()
+    track_classifications.clear()
+    track_last_positions.clear()
+    track_motion_windows.clear()
+    inactive_tracks.clear()
     return jsonify({"status": "success", "message": "Chicken tracking IDs and histories reset successfully."})
 
 
@@ -923,7 +1294,7 @@ def camera_loop():
 
             # Crop for Behavior & Health Classification
             crop = frame[y1:y2, x1:x2]
-            
+
             # Read non-blocking classification from background worker thread (0ms latency on video!)
             with classification_lock:
                 cached = track_classifications.get(display_id)
@@ -935,6 +1306,7 @@ def camera_loop():
                     behavior_label = "stand"
                     unhealthy_prob = 0.0
                     last_time = 0
+
 
             # Queue crop to background worker if expired (>1.5s old) without blocking video stream
             if (curr_time - last_time > 1.5) and not classification_queue.full():
@@ -950,127 +1322,126 @@ def camera_loop():
             elif motion > 2.5 and behavior_label == "peck":
                 behavior_label = "peck"
 
-            # --- 3-Phase Temporal Observation & Anomaly Engine ---
-            # Grounded in: Dawkins et al. (2009) optical-flow calibration,
-            #   Kestin et al. (1992) Bristol Gait Score, Zhuang & Zhang (2019)
-            #   lethargy markers, Febrer et al. (2006) spatial isolation,
-            #   Aydin (2017) 3-tier activity classification.
+            # 1. Update ChickenBehaviorHistory
+            cx = int((x1 + x2) / 2)
+            cy = int((y1 + y2) / 2)
+            behavior_history.record(display_id, curr_time, behavior_label, motion, is_isolated, (cx, cy))
+            stats = behavior_history.get_stats(display_id, curr_time)
+            baseline = behavior_history.get_baseline(display_id)
 
-            health_score = 0
-
-            # Phase 1: Behavioral Calibration Window — Dawkins et al. (2009)
-            # Collect optical-flow baseline before any diagnosis to prevent snap-judgments.
+            # 2. Calibration vs 5-Component Weighted Anomaly Evaluation
             if elapsed_obs < OBSERVATION_WINDOW:
                 health_label = "Calibrating"
-                health_detail = f"Optical-Flow Baseline {elapsed_obs:.1f}/{OBSERVATION_WINDOW:.0f}s"
+                anomaly_score = 0
+                anomaly_tier = "Normal"
+                gemini_summary = ""
+                health_detail = f"Baseline Calibration {elapsed_obs:.1f}/{OBSERVATION_WINDOW:.0f}s"
                 color = (255, 215, 0)  # Gold — neutral calibration phase
                 observing_count += 1
             else:
-                recent_motion = list(track_motion_windows[display_id])
-                avg_motion = float(np.mean(recent_motion)) if recent_motion else motion
-                max_motion = float(np.max(recent_motion)) if recent_motion else motion
+                # 3. Compute 5-Component Weighted Anomaly Score
+                anomaly_info = anomaly_engine.compute_anomaly(
+                    stats=stats,
+                    baseline=baseline,
+                    unhealthy_prob=unhealthy_prob,
+                    is_isolated=is_isolated,
+                    stationary_sec=stationary_sec
+                )
+                anomaly_score = anomaly_info["anomaly_score"]
+                anomaly_tier = anomaly_info["anomaly_tier"]
 
-                if stationary_sec >= 10.0:
-                    health_score += 35
-                elif stationary_sec >= 6.0:
-                    health_score += 20
-                if is_isolated:
-                    health_score += 25
-                if unhealthy_prob >= 0.85:
-                    health_score += 30
-                elif unhealthy_prob >= 0.60:
-                    health_score += 15
-                if avg_motion < 0.5:
-                    health_score += 15
-                elif avg_motion < 0.8:
-                    health_score += 8
-
-                raw_label = "Healthy"
-                raw_detail = "Normal Behavior (Gait Score 0-1)"
-                active_evidence = behavior_label == "walk" or max_motion > 3.0 or avg_motion > 2.0
-
-                # Raw evidence is intentionally stricter for Unhealthy than Warning.
-                if active_evidence:
-                    raw_label = "Healthy"
-                    if behavior_label == "walk":
-                        raw_detail = "Normal Locomotion (Gait Score 0-1)"
-                    elif behavior_label == "peck":
-                        raw_detail = "Active Foraging Behavior"
-                    else:
-                        raw_detail = "Adequate Movement Detected"
-                elif (stationary_sec >= 12.0 and unhealthy_prob >= 0.85 and is_isolated) or health_score >= 80:
-                    raw_label = "Unhealthy"
-                    raw_detail = f"Persistent lethargy evidence ({stationary_sec:.0f}s, score {health_score})"
-                elif stationary_sec >= 8.0 or unhealthy_prob >= 0.60 or (is_isolated and avg_motion < 0.8) or health_score >= 45:
-                    raw_label = "Needs Review"
-                    if stationary_sec >= 8.0:
-                        raw_detail = f"Low activity needs review ({stationary_sec:.0f}s stationary)"
-                    elif unhealthy_prob >= 0.60:
-                        raw_detail = f"Weak visual health signal ({unhealthy_prob:.0%})"
-                    elif is_isolated:
-                        raw_detail = "Isolation with reduced motion"
-                    else:
-                        raw_detail = "Repeated low movement indicators"
-
-                health_window = track_health_windows[display_id]
-                health_window.append((curr_time, raw_label))
-                while health_window and curr_time - health_window[0][0] > HEALTH_CONFIRMATION_WINDOW:
-                    health_window.popleft()
-
-                recent_labels = [label for ts, label in health_window if curr_time - ts <= HEALTH_CONFIRMATION_WINDOW]
-                history_ready = len(recent_labels) >= MIN_HEALTH_HISTORY_POINTS
-                review_ratio = recent_labels.count("Needs Review") / max(1, len(recent_labels))
-                unhealthy_ratio = recent_labels.count("Unhealthy") / max(1, len(recent_labels))
-
-                # Phase 2 & 3: Confirmed Temporal Diagnosis
-                # ── HEALTHY (Kestin Gait Score 0-1): Normal locomotion confirmed ──
-                # Criteria: Active walking/foraging with sufficient displacement (Kestin 1992)
-                if raw_label == "Healthy":
+                # 4. Map to 4-tier decision hierarchy
+                if anomaly_tier == "Normal":
                     health_label = "Healthy"
-                    health_detail = raw_detail
+                    if behavior_label == "walk":
+                        health_detail = "Normal Locomotion (Gait Score 0-1)"
+                    elif behavior_label == "peck":
+                        health_detail = "Active Foraging Behavior"
+                    else:
+                        health_detail = "Adequate Movement Detected"
                     color = get_id_color(display_id)
                     healthy_count += 1
-
-                # ── UNHEALTHY (Kestin Gait Score 4-5 / Zhuang & Zhang 2019): ──
-                # Requires repeated evidence for the same tracked chicken.
-                elif history_ready and unhealthy_ratio >= UNHEALTHY_CONFIRMATION_RATIO:
-                    health_label = "Unhealthy"
-                    health_detail = raw_detail
-                    color = (70, 70, 255)  # Vivid Red alert
-                    unhealthy_count += 1
-
-                # ── WARNING (Aydin 2017 Moderate Risk / Febrer 2006 Isolation): ──
-                # Sub-threshold anomaly confirmed over multiple observations.
-                elif history_ready and review_ratio >= WARNING_CONFIRMATION_RATIO:
-                    health_label = "Needs Review"
-                    health_detail = raw_detail
-                    color = (0, 180, 255)  # Amber warning
-                    warning_count += 1
-
-                # ── DEFAULT MONITORING: weak or new evidence only ──
-                else:
-                    health_label = "Monitoring"
-                    health_detail = f"Collecting repeated evidence ({len(recent_labels)}/{MIN_HEALTH_HISTORY_POINTS})"
-                    color = (255, 215, 0)
+                elif anomaly_tier == "Monitor":
+                    health_label = "Monitor"
+                    if is_isolated:
+                        health_detail = "Flock Edge / Moderate Separation"
+                    elif stationary_sec >= 3.0:
+                        health_detail = f"Stationary Pause ({stationary_sec:.0f}s)"
+                    else:
+                        health_detail = "Mild Activity Deviation"
+                    color = (0, 215, 255)  # Amber-Yellow
                     observing_count += 1
+                elif anomaly_tier == "Suspicious":
+                    health_label = "Needs Attention"
+                    if is_isolated and stats["isolation_pct"] >= 50.0:
+                        health_detail = "Persistent Isolation (Febrer 2006)"
+                    elif stationary_sec >= 5.0:
+                        health_detail = f"Reduced Locomotion ({stationary_sec:.0f}s)"
+                    else:
+                        health_detail = f"Suspicious Activity ({anomaly_score}%)"
+                    color = (0, 140, 255)  # Bright Amber-Orange
+                    warning_count += 1
+                    # Trigger asynchronous non-blocking Gemini 2.5 escalation
+                    gemini_escalator.trigger_escalation_async(
+                        track_id=display_id,
+                        stats=stats,
+                        baseline=baseline,
+                        anomaly_info=anomaly_info,
+                        crop=crop,
+                        curr_time=curr_time
+                    )
+                else:  # High Concern (>= 80)
+                    health_label = "High Concern"
+                    health_detail = f"Severe Lethargy Marker ({stationary_sec:.0f}s immobile)"
+                    color = (70, 70, 255)  # Vivid Alert Red
+                    unhealthy_count += 1
+                    # Trigger asynchronous non-blocking Gemini 2.5 escalation
+                    gemini_escalator.trigger_escalation_async(
+                        track_id=display_id,
+                        stats=stats,
+                        baseline=baseline,
+                        anomaly_info=anomaly_info,
+                        crop=crop,
+                        curr_time=curr_time
+                    )
+
+                # Check if Gemini 2.5 has returned an active assessment for this chicken
+                gemini_summary = gemini_escalator.get_chicken_summary(display_id)
+                if gemini_summary and anomaly_tier in ("Suspicious", "High Concern"):
+                    health_detail = gemini_summary
+
 
             # Draw HUD Box
-            draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=18)
+            draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=16)
 
-            # Draw Info Badge — shows RRL-grounded clinical indicator
-            iso_tag = " • ISOLATED" if is_isolated else ""
+            # Clean minimal badge: "#3 NORMAL" or "#3 ALERT 72%"
             if elapsed_obs < OBSERVATION_WINDOW:
-                badge_text = f" #{display_id} | {behavior_label.upper()} | CALIBRATING {elapsed_obs:.1f}s "
+                badge_text = f"#{display_id}"
+            elif anomaly_tier == "Normal":
+                badge_text = f"#{display_id} {behavior_label.upper()}"
+            elif anomaly_tier == "Monitor":
+                badge_text = f"#{display_id} WATCH"
             else:
-                badge_text = f" #{display_id} | {behavior_label.upper()} | {health_label.upper()}: {health_detail}{iso_tag} "
+                badge_text = f"#{display_id} {anomaly_tier.upper()} {anomaly_score}%"
 
-            (text_w, text_h), baseline = cv2.getTextSize(badge_text, cv2.FONT_HERSHEY_DUPLEX, 0.40, 1)
-            label_y = max(y1 - 10, text_h + 10)
-            badge_bg = (int(color[0] * 0.25), int(color[1] * 0.25), int(color[2] * 0.25))
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.45
+            (text_w, text_h), baseline_y = cv2.getTextSize(badge_text, font, font_scale, 1)
+            label_y = max(y1 - 6, text_h + 6)
 
-            cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), badge_bg, -1)
-            cv2.rectangle(frame, (x1, label_y - text_h - 6), (x1 + text_w + 8, label_y + baseline + 2), color, 1)
-            cv2.putText(frame, badge_text, (x1 + 4, label_y - 2), cv2.FONT_HERSHEY_DUPLEX, 0.40, (255, 255, 255), 1)
+            # Small semi-transparent pill background
+            pad_x, pad_y = 6, 4
+            bg_x1 = max(0, x1)
+            bg_y1 = max(0, label_y - text_h - pad_y)
+            bg_x2 = min(frame.shape[1], x1 + text_w + pad_x * 2)
+            bg_y2 = min(frame.shape[0], label_y + pad_y)
+
+            if bg_x2 > bg_x1 and bg_y2 > bg_y1:
+                roi = frame[bg_y1:bg_y2, bg_x1:bg_x2]
+                dark = (roi * 0.4).astype(np.uint8)
+                frame[bg_y1:bg_y2, bg_x1:bg_x2] = dark
+            cv2.putText(frame, badge_text, (x1 + pad_x, label_y - 1), font, font_scale, color, 1, cv2.LINE_AA)
+
 
             detection_list.append({
                 "track_id": display_id,
@@ -1079,7 +1450,10 @@ def camera_loop():
                 "behavior": behavior_label,
                 "health": health_label,
                 "health_detail": health_detail,
-                "health_score": health_score,
+                "anomaly_score": anomaly_score,
+                "anomaly_tier": anomaly_tier,
+                "gemini_summary": gemini_summary,
+
                 "isolated": is_isolated,
                 "motion": round(motion, 1),
                 "observed_sec": round(elapsed_obs, 1),
@@ -1095,7 +1469,6 @@ def camera_loop():
         else:
             health_index = 100
 
-        # Clean frame without text overlays
 
         # Encode Frame with high visual clarity
         _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -1118,7 +1491,10 @@ def camera_loop():
                 "track_count": flock_count,
                 "temperature": latest_sensor_data["temperature"],
                 "humidity": latest_sensor_data["humidity"],
-                "detections": detection_list
+                "ammonia": latest_sensor_data["ammonia"],
+                "detections": detection_list,
+                "alerts": gemini_escalator.get_active_alerts()
+
             }
 
     cam.release()
@@ -1151,7 +1527,7 @@ def main():
     print("=" * 65)
     print("   POULTRYSENSE AI - CHICKEN HEALTH & BEHAVIOR MONITORING SERVER   ")
     print("=" * 65)
-    
+
     # 1. Start AI Camera loop
     cam_thread = threading.Thread(target=camera_loop, daemon=True)
     cam_thread.start()

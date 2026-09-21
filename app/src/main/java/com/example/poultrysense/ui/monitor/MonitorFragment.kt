@@ -21,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import com.example.poultrysense.R
 import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.models.AiStatusResponse
+import com.example.poultrysense.data.models.DetectionItem
 import com.example.poultrysense.databinding.FragmentMonitorBinding
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +57,7 @@ class MonitorFragment : Fragment() {
     private var streamJob: Job? = null
     private var statusJob: Job? = null
     private var sessionTickerJob: Job? = null
+    private var latestAiStatus: AiStatusResponse? = null
 
     // Multi-Camera State
     enum class CameraChannel {
@@ -332,35 +334,37 @@ class MonitorFragment : Fragment() {
                         val body = response.body?.string()
                         if (body != null) {
                             val status = gson.fromJson(body, AiStatusResponse::class.java)
+                            latestAiStatus = status
                             withContext(Dispatchers.Main) {
                                 if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
                                     val isConnected = status.active == true
                                     val fps = status.fps ?: 0.0
                                     val count = status.flockCount ?: (status.handCount ?: (status.detections?.size ?: 0))
+                                    val healthIndex = status.healthIndex ?: 100
+
 
                                     updateStatusBadge(isConnected, if (isConnected) "AI Connected" else "AI Offline")
                                     binding.tvHudFps.text = String.format("%.1f FPS", fps)
                                     binding.tvDetectionCount.text = "$count Subjects"
                                     binding.tvTelemetryCountVal.text = count.toString()
-                                    binding.tvTelemetryPostureVal.text = "${status.healthIndex ?: 100}%"
+                                    binding.tvTelemetryPostureVal.text = "$healthIndex%"
                                     binding.tvTelemetryLatencyVal.text = "0.03s"
 
-                                    // Dynamic Flock Subject List - hide dummy entries when 0 chickens detected
-                                    if (count == 0) {
+                                    // Dynamic Flock Subject List - bound to actual detections
+                                    val detections = status.detections ?: emptyList()
+                                    if (count == 0 || detections.isEmpty()) {
                                         binding.rowTrackSubject1.visibility = View.GONE
                                         binding.rowTrackSubject2.visibility = View.GONE
-                                    } else if (count == 1) {
+                                    } else if (count == 1 || detections.size == 1) {
                                         binding.rowTrackSubject1.visibility = View.VISIBLE
                                         binding.rowTrackSubject2.visibility = View.GONE
-                                        binding.tvSubject1Title.text = "Tracked Chicken #1"
-                                        binding.tvSubject1Sub.text = "ByteTrack Active • High Confidence"
+                                        updateSubjectRow(1, detections[0], binding.tvSubject1Title, binding.tvSubject1Sub, binding.tvSubject1Status)
                                     } else {
                                         binding.rowTrackSubject1.visibility = View.VISIBLE
                                         binding.rowTrackSubject2.visibility = View.VISIBLE
-                                        binding.tvSubject1Title.text = "Tracked Chicken #1"
-                                        binding.tvSubject1Sub.text = "ByteTrack Active • High Confidence"
-                                        binding.tvSubject2Title.text = "Tracked Chicken #2"
-                                        binding.tvSubject2Sub.text = "ByteTrack Active • High Confidence"
+                                        updateSubjectRow(1, detections[0], binding.tvSubject1Title, binding.tvSubject1Sub, binding.tvSubject1Status)
+                                        updateSubjectRow(2, detections[1], binding.tvSubject2Title, binding.tvSubject2Sub, binding.tvSubject2Status)
+
                                     }
                                 }
                             }
@@ -417,6 +421,54 @@ class MonitorFragment : Fragment() {
         binding.tvStatusBadge.text = label
     }
 
+    private fun updateSubjectRow(
+        index: Int,
+        detection: DetectionItem,
+        tvTitle: android.widget.TextView,
+        tvSub: android.widget.TextView,
+        tvStatus: android.widget.TextView
+    ) {
+        val trackId = detection.trackId ?: index
+        val conf = ((detection.confidence ?: 0.9) * 100).toInt()
+        val behavior = detection.behavior?.replaceFirstChar { it.uppercase() } ?: "Active"
+        val health = detection.health ?: "Healthy"
+        val detail = detection.healthDetail?.takeIf { it.isNotEmpty() } ?: "Normal Locomotion"
+        val score = detection.anomalyScore ?: 0
+        val tier = detection.anomalyTier ?: "Normal"
+        val gemini = detection.geminiSummary?.takeIf { it.isNotEmpty() }
+
+        tvTitle.text = "Tracked Chicken #$trackId (Anomaly: $score% • $tier)"
+        if (gemini != null) {
+            tvSub.text = "Gemini 2.5: $gemini"
+        } else {
+            tvSub.text = "ByteTrack Conf $conf% • $behavior • $detail"
+        }
+
+        val ctx = context ?: return
+        when {
+            tier == "High Concern" || health.lowercase(Locale.getDefault()) == "unhealthy" -> {
+                tvStatus.setBackgroundResource(R.drawable.bg_critical_badge)
+                tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.critical))
+                tvStatus.text = "CONCERN"
+            }
+            tier == "Suspicious" || health.lowercase(Locale.getDefault()) in listOf("warning", "needs review") -> {
+                tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
+                tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
+                tvStatus.text = "ATTENTION"
+            }
+            tier == "Monitor" -> {
+                tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
+                tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
+                tvStatus.text = "MONITOR"
+            }
+            else -> {
+                tvStatus.setBackgroundResource(R.drawable.bg_healthy_badge)
+                tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
+                tvStatus.text = "NORMAL"
+            }
+        }
+    }
+
     private fun stopCameraStream() {
         streamJob?.cancel()
         streamJob = null
@@ -470,9 +522,11 @@ class MonitorFragment : Fragment() {
             val ctx = context ?: return@setOnClickListener
             val isRunning = CheckupSessionManager.isSessionActive(ctx)
             if (isRunning) {
-                val detectedCount = binding.tvTelemetryCountVal.text.toString().toIntOrNull() ?: 42
-                val healthyCount = (detectedCount * 0.98).toInt().coerceAtLeast(1)
-                CheckupSessionManager.stopSession(ctx, totalFlock = detectedCount, healthyCount = healthyCount, illCount = (detectedCount - healthyCount).coerceAtLeast(0))
+                val status = latestAiStatus
+                val detectedCount = status?.flockCount ?: (binding.tvTelemetryCountVal.text.toString().toIntOrNull() ?: 0)
+                val healthyCount = status?.healthyCount ?: detectedCount
+                val illCount = (status?.unhealthyCount ?: 0) + (status?.warningCount ?: 0)
+                CheckupSessionManager.stopSession(ctx, totalFlock = detectedCount, healthyCount = healthyCount, illCount = illCount)
                 Toast.makeText(ctx, "Checkup session saved to History", Toast.LENGTH_SHORT).show()
                 updateSessionUI()
             } else {
