@@ -358,12 +358,12 @@ class MonitorFragment : Fragment() {
                                     } else if (count == 1 || detections.size == 1) {
                                         binding.rowTrackSubject1.visibility = View.VISIBLE
                                         binding.rowTrackSubject2.visibility = View.GONE
-                                        updateSubjectRow(1, detections[0], binding.tvSubject1Title, binding.tvSubject1Sub, binding.tvSubject1Status)
+                                        updateSubjectRow(1, detections[0], binding.tvSubject1Title, binding.tvSubject1Sub, binding.tvSubject1Status, binding.tvSubject1Num)
                                     } else {
                                         binding.rowTrackSubject1.visibility = View.VISIBLE
                                         binding.rowTrackSubject2.visibility = View.VISIBLE
-                                        updateSubjectRow(1, detections[0], binding.tvSubject1Title, binding.tvSubject1Sub, binding.tvSubject1Status)
-                                        updateSubjectRow(2, detections[1], binding.tvSubject2Title, binding.tvSubject2Sub, binding.tvSubject2Status)
+                                        updateSubjectRow(1, detections[0], binding.tvSubject1Title, binding.tvSubject1Sub, binding.tvSubject1Status, binding.tvSubject1Num)
+                                        updateSubjectRow(2, detections[1], binding.tvSubject2Title, binding.tvSubject2Sub, binding.tvSubject2Status, binding.tvSubject2Num)
 
                                     }
                                 }
@@ -426,7 +426,8 @@ class MonitorFragment : Fragment() {
         detection: DetectionItem,
         tvTitle: android.widget.TextView,
         tvSub: android.widget.TextView,
-        tvStatus: android.widget.TextView
+        tvStatus: android.widget.TextView,
+        tvNum: android.widget.TextView
     ) {
         val trackId = detection.trackId ?: index
         val conf = ((detection.confidence ?: 0.9) * 100).toInt()
@@ -440,6 +441,7 @@ class MonitorFragment : Fragment() {
 
         val verdictSource = if (geminiVerified) "✓ Gemini" else "Local"
         tvTitle.text = "Chicken #$trackId ($verdictSource • $tier)"
+        tvNum.text = "#$trackId"
         if (gemini != null) {
             tvSub.text = "$gemini"
         } else {

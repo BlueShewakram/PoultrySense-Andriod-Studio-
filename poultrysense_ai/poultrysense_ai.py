@@ -125,6 +125,13 @@ inactive_tracks = {}
 track_hit_streaks = defaultdict(int)         # raw_id -> consecutive confident detections
 track_confirmed_raw_ids = set()             # set of raw_ids confirmed (debounce >= 3)
 display_coasting_boxes = {}                 # display_id -> last known bbox & metadata for anti-blink coasting
+track_crop_sig = {}                         # raw_id -> last 16x16 gray crop signature (static-phantom gate)
+track_frozen_streaks = defaultdict(int)     # raw_id -> consecutive pixel-identical observations
+
+# Pixel-churn gate tuning: mean-abs-diff (/255) below CHURN_EPS counts as frozen;
+# CHURN_MAX_FROZEN consecutive frozen observations veto a confirmation hit.
+CHURN_EPS = 2.0
+CHURN_MAX_FROZEN = 2
 classification_queue = queue.Queue(maxsize=6)
 classification_lock = threading.Lock()
 
@@ -759,6 +766,29 @@ def resolve_openvino(pt_path, imgsz=640):
     return pt_path
 
 
+def _crop_is_frozen(frame, box, raw_id):
+    """Pixel-churn gate: True when this track's crop is pixel-identical to its
+    last observation (static screen chrome / paused video / UI icons).
+
+    A real camera scene always churns (sensor noise + motion), so frozen ==
+    phantom. Fails open (returns False) on any error or tiny box."""
+    try:
+        h, w = frame.shape[:2]
+        x1, y1 = max(0, int(box[0])), max(0, int(box[1]))
+        x2, y2 = min(w, int(box[2])), min(h, int(box[3]))
+        if x2 - x1 < 8 or y2 - y1 < 8:
+            return False
+        small = cv2.resize(frame[y1:y2, x1:x2], (16, 16), interpolation=cv2.INTER_AREA)
+        sig = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+        prev = track_crop_sig.get(raw_id)
+        track_crop_sig[raw_id] = sig
+        if prev is None or prev.shape != sig.shape:
+            return False
+        return bool(np.mean(np.abs(sig - prev)) < CHURN_EPS)
+    except Exception:
+        return False
+
+
 # --- Persistent Chicken ID Allocator with Spatial Re-Identification ---
 def assign_display_id(raw_id, cx=None, cy=None, box=None):
     """Guarantees consistent Chicken IDs (#1 to #10). If tracking momentarily blips or drops
@@ -847,6 +877,8 @@ def cleanup_stale_ids(active_raw_ids, max_missed=90):
                     del track_last_positions[raw_id]
                 if raw_id in track_hit_streaks:
                     del track_hit_streaks[raw_id]
+                track_crop_sig.pop(raw_id, None)
+                track_frozen_streaks.pop(raw_id, None)
                 track_confirmed_raw_ids.discard(raw_id)
 
     # Clean up inactive tracks older than 6.0 seconds
@@ -1377,10 +1409,19 @@ def camera_loop():
             seen_display_ids = set()
 
             for box, conf, raw_id in zip(raw_boxes, raw_confs, active_raw_ids):
-                # Debounce: require 3 hits at conf >= 0.25 before confirming a new track
+                # Debounce: require 3 hits at conf >= 0.25 before confirming a new track.
+                # Pixel-churn gate: static screen regions (paused UI, icons) are
+                # pixel-identical frame-to-frame and can never confirm; real scenes
+                # always churn, so the streak is frozen (not reset) on frozen hits.
                 if raw_id in track_confirmed_raw_ids:
                     pass
                 elif conf >= 0.25:
+                    if _crop_is_frozen(frame, box, raw_id):
+                        track_frozen_streaks[raw_id] += 1
+                        if track_frozen_streaks[raw_id] >= CHURN_MAX_FROZEN:
+                            continue
+                    else:
+                        track_frozen_streaks[raw_id] = 0
                     track_hit_streaks[raw_id] += 1
                     if track_hit_streaks[raw_id] >= 3:
                         track_confirmed_raw_ids.add(raw_id)

@@ -575,6 +575,7 @@
                         android:padding="12dp">
 
                         <TextView
+                            android:id="@+id/tvSubject1Num"
                             android:layout_width="32dp"
                             android:layout_height="32dp"
                             android:background="@drawable/bg_circular_badge_white"
@@ -636,6 +637,7 @@
                         android:padding="12dp">
 
                         <TextView
+                            android:id="@+id/tvSubject2Num"
                             android:layout_width="32dp"
                             android:layout_height="32dp"
                             android:background="@drawable/bg_circular_badge_white"
