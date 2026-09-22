@@ -60,6 +60,9 @@ if not os.path.exists(TRACKER_YAML):
     TRACKER_YAML = "botsort.yaml"
 
 DET_MODELS = [
+    # v3 = YOLO26n fine-tuned on chicken_det (Colab T4, 40 epochs). Scoreboard:
+    # P .85 / R .78 / mAP50 .77 @94ms torch-CPU. Beats v2 (.72/.65/.64 @258ms).
+    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
     # v2 = friend's poultry_detector_v1 best.pt (val: P .72 / R .65 / mAP50 .64 on
     # chicken_det, vs v1 P .48 / R .36 / mAP50 .22). Winner of A-vs-B scoreboard.
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v2.pt"),
