@@ -33,6 +33,9 @@ poultrysense_ai/err.log
 # YOLO model weights (large binary — users download separately)
 # poultrysense_ai/yolo11n.pt
 
+# Gemini API key — NEVER commit the real one (use gemini_config.json.example as template)
+poultrysense_ai/gemini_config.json
+
 # Friend-shared datasets & training runs (large, machine-local only — see poultrysense_ai/datasets/README.md)
 poultrysense_ai/datasets/
 poultrysense_ai/training/
