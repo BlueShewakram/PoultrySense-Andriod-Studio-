@@ -55,9 +55,9 @@ except ImportError:
 # --- Paths and Models ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
-TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", "bytetrack.yaml")
+TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", "botsort.yaml")
 if not os.path.exists(TRACKER_YAML):
-    TRACKER_YAML = "bytetrack.yaml"
+    TRACKER_YAML = "botsort.yaml"
 
 DET_MODELS = [
     # v2 = friend's poultry_detector_v1 best.pt (val: P .72 / R .65 / mAP50 .64 on
@@ -1373,7 +1373,7 @@ def camera_loop():
             raw_confs = []
 
             try:
-                tracker_cfg = TRACKER_YAML if os.path.exists(TRACKER_YAML) else "bytetrack.yaml"
+                tracker_cfg = TRACKER_YAML if os.path.exists(TRACKER_YAML) else "botsort.yaml"
                 results = det_model.track(
                     frame,
                     persist=True,

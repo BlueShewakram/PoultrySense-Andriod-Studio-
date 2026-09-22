@@ -1,0 +1,21 @@
+# PoultrySense tracker config for BoT-SORT (chicken tracking)
+# Migrated from ByteTrack: adds appearance (ReID) memory so IDs survive
+# occlusion/deformation that motion-only matching loses.
+tracker_type: botsort
+track_high_thresh: 0.25
+track_low_thresh: 0.10
+new_track_thresh: 0.28
+track_buffer: 120
+match_thresh: 0.5
+fuse_score: true
+
+# BoT-SORT specifics
+gmc_method: none  # static USB coop camera: GMC burns CPU for zero gain
+
+# ReID: appearance memory per track (the reason for BoT-SORT).
+# appearance_thresh kept strict (0.8): same-breed birds look alike,
+# so loose matching would merge different chickens into one ID.
+proximity_thresh: 0.5
+appearance_thresh: 0.8
+with_reid: true
+model: auto
