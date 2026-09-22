@@ -33,6 +33,11 @@ poultrysense_ai/err.log
 # YOLO model weights (large binary — users download separately)
 # poultrysense_ai/yolo11n.pt
 
+# Friend-shared datasets & training runs (large, machine-local only — see poultrysense_ai/datasets/README.md)
+poultrysense_ai/datasets/
+poultrysense_ai/training/
+*.zip
+
 # OS
 .DS_Store
 Thumbs.db

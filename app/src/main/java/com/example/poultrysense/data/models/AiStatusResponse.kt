@@ -25,6 +25,7 @@ data class DetectionItem(
     @SerializedName("anomaly_score") val anomalyScore: Int? = 0,
     @SerializedName("anomaly_tier") val anomalyTier: String? = "Normal",
     @SerializedName("gemini_summary") val geminiSummary: String? = "",
+    @SerializedName("gemini_verified") val geminiVerified: Boolean? = false,
     @SerializedName("isolated") val isolated: Boolean? = false,
     @SerializedName("motion") val motion: Double? = 0.0,
     @SerializedName("observed_sec") val observedSec: Double? = 0.0,

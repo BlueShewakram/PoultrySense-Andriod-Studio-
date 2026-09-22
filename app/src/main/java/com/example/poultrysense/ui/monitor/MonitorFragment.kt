@@ -436,22 +436,24 @@ class MonitorFragment : Fragment() {
         val score = detection.anomalyScore ?: 0
         val tier = detection.anomalyTier ?: "Normal"
         val gemini = detection.geminiSummary?.takeIf { it.isNotEmpty() }
+        val geminiVerified = detection.geminiVerified ?: false
 
-        tvTitle.text = "Tracked Chicken #$trackId (Anomaly: $score% • $tier)"
+        val verdictSource = if (geminiVerified) "✓ Gemini" else "Local"
+        tvTitle.text = "Chicken #$trackId ($verdictSource • $tier)"
         if (gemini != null) {
-            tvSub.text = "Gemini 2.5: $gemini"
+            tvSub.text = "$gemini"
         } else {
             tvSub.text = "ByteTrack Conf $conf% • $behavior • $detail"
         }
 
         val ctx = context ?: return
         when {
-            tier == "High Concern" || health.lowercase(Locale.getDefault()) == "unhealthy" -> {
+            tier == "High Concern" || health.lowercase(Locale.getDefault()) == "high concern" -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_critical_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.critical))
                 tvStatus.text = "CONCERN"
             }
-            tier == "Suspicious" || health.lowercase(Locale.getDefault()) in listOf("warning", "needs review") -> {
+            tier == "Suspicious" || health.lowercase(Locale.getDefault()) in listOf("needs attention", "warning", "needs review") -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
                 tvStatus.text = "ATTENTION"
@@ -464,7 +466,7 @@ class MonitorFragment : Fragment() {
             else -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_healthy_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
-                tvStatus.text = "NORMAL"
+                tvStatus.text = if (geminiVerified) "✓ HEALTHY" else "NORMAL"
             }
         }
     }
