@@ -720,6 +720,45 @@ def get_model_path(candidates):
     return None
 
 
+def resolve_openvino(pt_path, imgsz=640):
+    """Prefer an OpenVINO export of pt_path (exports once, caches beside the .pt).
+
+    Returns the path to load with YOLO(): the *_openvino_model dir when usable,
+    else the original .pt (torch fallback). Deleting the export folder is a
+    complete rollback — the .pt files are never modified."""
+    if not pt_path or not pt_path.endswith(".pt"):
+        return pt_path
+    try:
+        import openvino  # noqa: F401
+    except ImportError:
+        return pt_path
+    import shutil
+    try:
+        from ultralytics import YOLO
+        abs_pt = os.path.abspath(pt_path)
+        stem = os.path.splitext(os.path.basename(abs_pt))[0] + "_openvino_model"
+        beside = os.path.join(os.path.dirname(abs_pt), stem)
+        if os.path.isdir(beside):
+            print(f"[OpenVINO] Using cached export: {beside}")
+            return beside
+        print(f"[OpenVINO] Exporting {os.path.basename(abs_pt)} (imgsz={imgsz}, one-time, minutes)...")
+        YOLO(abs_pt).export(format="openvino", imgsz=imgsz)
+        if os.path.isdir(beside):
+            print(f"[OpenVINO] Export ready: {beside}")
+            return beside
+        # Ultralytics may drop the export in CWD instead — relocate it beside the .pt
+        cwd_copy = os.path.join(os.getcwd(), stem)
+        if os.path.isdir(cwd_copy):
+            if os.path.isdir(beside):
+                shutil.rmtree(beside)
+            shutil.move(cwd_copy, beside)
+            print(f"[OpenVINO] Export ready: {beside}")
+            return beside
+    except Exception as e:
+        print(f"[OpenVINO] Export notice ({e}); using torch .pt fallback.")
+    return pt_path
+
+
 # --- Persistent Chicken ID Allocator with Spatial Re-Identification ---
 def assign_display_id(raw_id, cx=None, cy=None, box=None):
     """Guarantees consistent Chicken IDs (#1 to #10). If tracking momentarily blips or drops
@@ -1204,7 +1243,7 @@ def camera_loop():
         if det_path:
             try:
                 print(f"[INFO] Loading Detection Model from: {det_path}")
-                det_model = YOLO(det_path)
+                det_model = YOLO(resolve_openvino(det_path, imgsz=640))
                 print("[INFO] YOLO Detection Model loaded successfully!")
 
                 # Determine strict chicken class ID(s)
@@ -1234,7 +1273,7 @@ def camera_loop():
         if beh_path:
             try:
                 print(f"[INFO] Loading Behavior Model from: {beh_path}")
-                behavior_model = YOLO(beh_path)
+                behavior_model = YOLO(resolve_openvino(beh_path, imgsz=160))
                 print("[INFO] Behavior Classification Model loaded successfully!")
             except Exception as e:
                 print(f"[WARN] Could not load Behavior Model: {e}")
@@ -1244,7 +1283,7 @@ def camera_loop():
         if hlth_path:
             try:
                 print(f"[INFO] Loading Health Classifier Model from: {hlth_path}")
-                health_model = YOLO(hlth_path)
+                health_model = YOLO(resolve_openvino(hlth_path, imgsz=160))
                 print("[INFO] Health Classifier Model loaded successfully!")
             except Exception as e:
                 print(f"[WARN] Could not load Health Model: {e}")
@@ -1310,7 +1349,7 @@ def camera_loop():
                     classes=chicken_classes,
                     conf=0.10,          # Enables ByteTrack low-score association stage
                     iou=0.50,
-                    imgsz=480,          # Native 480p height matches camera aspect ratio (faster inference)
+                    imgsz=640,          # Matches OpenVINO export shape (OV-640 beats torch-480)
                     max_det=20,          # Feed candidates to ByteTrack without pre-truncation
                     verbose=False
                 )[0]

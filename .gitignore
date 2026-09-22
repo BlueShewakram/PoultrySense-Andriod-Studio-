@@ -41,6 +41,9 @@ poultrysense_ai/datasets/
 poultrysense_ai/training/
 *.zip
 
+# OpenVINO export cache (regenerated locally on first run — delete to roll back to torch)
+*_openvino_model/
+
 # OS
 .DS_Store
 Thumbs.db
