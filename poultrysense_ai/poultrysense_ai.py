@@ -63,13 +63,7 @@ DET_MODELS = [
     # v3 = YOLO26n fine-tuned on chicken_det (Colab T4, 40 epochs). Scoreboard:
     # P .85 / R .78 / mAP50 .77 @94ms torch-CPU. Beats v2 (.72/.65/.64 @258ms).
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
-    # v2 = friend's poultry_detector_v1 best.pt (val: P .72 / R .65 / mAP50 .64 on
-    # chicken_det, vs v1 P .48 / R .36 / mAP50 .22). Winner of A-vs-B scoreboard.
-    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v2.pt"),
-    os.path.join(MODELS_DIR, "PoultrySense_YOLOv8_ChickenDet.pt"),
-    os.path.join(SCRIPT_DIR, "PoultrySense_YOLOv8_ChickenDet.pt"),
-    os.path.join(MODELS_DIR, "PoultrySense_YOLOv8_ChickenSeg.pt"),
-    os.path.join(SCRIPT_DIR, "PoultrySense_YOLOv8_ChickenSeg.pt"),
+    # Emergency generic fallback (COCO bird). Only loads if v3 is missing.
     os.path.join(SCRIPT_DIR, "yolo11n.pt"),
     "yolo11n.pt",
 ]
@@ -365,11 +359,11 @@ class AnomalyDetectionEngine:
 
 class GeminiVerdictEngine:
     """
-    Gemini 2.5 Flash as the PRIMARY HEALTH VERDICT ENGINE for every tracked chicken.
+    Gemini 3.6 Flash as the PRIMARY HEALTH VERDICT ENGINE for every tracked chicken.
 
     Architecture:
     1. Local anomaly engine provides real-time preliminary scoring (instant, 30 FPS)
-    2. Gemini 2.5 Flash receives the FULL behavioral dataset + crop image
+    2. Gemini 3.6 Flash receives the FULL behavioral dataset + crop image
     3. Gemini returns the DEFINITIVE health verdict that OVERRIDES local heuristics
     4. Adaptive cooldowns prevent API spam while keeping verdicts fresh
 
@@ -431,12 +425,12 @@ class GeminiVerdictEngine:
         if self.api_key and HAS_GEMINI:
             try:
                 self.client = genai.Client(api_key=self.api_key)
-                print("[Gemini 2.5] ✓ Initialized as PRIMARY VERDICT ENGINE (Gemini 2.5 Flash).")
+                print("[Gemini] ✓ Initialized as PRIMARY VERDICT ENGINE (gemini-3.6-flash).")
             except Exception as e:
-                print(f"[Gemini 2.5] Client init notice: {e}")
+                print(f"[Gemini] Client init notice: {e}")
         else:
             if not self.api_key:
-                print("[Gemini 2.5] Notice: GEMINI_API_KEY not found. Operating in LOCAL heuristic-only mode.")
+                print("[Gemini] Notice: GEMINI_API_KEY not found. Operating in LOCAL heuristic-only mode.")
                 print("             Add key to poultrysense_ai/gemini_config.json to enable Gemini verdicts.")
 
     def request_verdict_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec):
@@ -465,7 +459,7 @@ class GeminiVerdictEngine:
         ).start()
 
     def _verdict_worker(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec):
-        """Background worker: sends full behavioral dataset + image to Gemini 2.5 Flash."""
+        """Background worker: sends full behavioral dataset + image to Gemini 3.6 Flash."""
         score = anomaly_info["anomaly_score"]
         tier = anomaly_info["anomaly_tier"]
         sub = anomaly_info["sub_scores"]
@@ -555,10 +549,10 @@ class GeminiVerdictEngine:
                     override_msg = ""
                     if verdict_tier != tier:
                         override_msg = f" [OVERRIDE: local={tier} → gemini={verdict_tier}]"
-                    print(f"[Gemini 2.5] ✓ Verdict for Chicken #{track_id}: {raw_verdict} — {verdict_reason}{override_msg}")
+                    print(f"[Gemini] ✓ Verdict for Chicken #{track_id}: {raw_verdict} — {verdict_reason}{override_msg}")
 
             except Exception as ex:
-                print(f"[Gemini 2.5] API notice for Chicken #{track_id}: {ex}")
+                print(f"[Gemini] API notice for Chicken #{track_id}: {ex}")
 
         # Store the full verdict (accessible from camera loop on next frame)
         self.verdicts[track_id] = {
@@ -1643,7 +1637,7 @@ def camera_loop():
                     color = (70, 70, 255)  # Vivid Alert Red
                     unhealthy_count += 1
 
-                # 5. Request Gemini 2.5 Flash Verdict for EVERY chicken (adaptive cooldown)
+                # 5. Request Gemini 3.6 Flash Verdict for EVERY chicken (adaptive cooldown)
                 gemini_escalator.request_verdict_async(
                     track_id=display_id,
                     stats=stats,

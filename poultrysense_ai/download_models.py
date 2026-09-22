@@ -34,17 +34,10 @@ MODEL_CONFIGS = [
         "required": False
     },
     {
-        "name": "PoultrySense_ChickenDet_v2.pt",
-        "target_path": os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v2.pt"),
-        "url": "https://github.com/BlueShewakram/PoultrySense-Andriod-Studio-/releases/download/v2.0.0/PoultrySense_ChickenDet_v2.pt",
-        "description": "PoultrySense Chicken Detector v2 (poultry_detector_v1 best.pt, wins A-vs-B: mAP50 .64 vs .22)",
-        "required": False
-    },
-    {
-        "name": "PoultrySense_YOLOv8_ChickenDet.pt",
-        "target_path": os.path.join(MODELS_DIR, "PoultrySense_YOLOv8_ChickenDet.pt"),
-        "url": "https://github.com/BlueShewakram/PoultrySense-Andriod-Studio-/releases/download/v1.0.0/PoultrySense_YOLOv8_ChickenDet.pt",
-        "description": "PoultrySense Custom Chicken Detector",
+        "name": "yolo26n-cls.pt",
+        "target_path": os.path.join(SCRIPT_DIR, "yolo26n-cls.pt"),
+        "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-cls.pt",
+        "description": "ReID appearance brain for BoT-SORT tracker (auto-fetched on first track if missing)",
         "required": False
     }
 ]

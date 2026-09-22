@@ -20,7 +20,7 @@ import numpy as np
 from ultralytics import YOLO
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL = os.path.join(HERE, "..", "models", "PoultrySense_YOLOv8_ChickenDet.pt")
+MODEL = os.path.join(HERE, "..", "models", "PoultrySense_ChickenDet_v3_26n.pt")
 TRACKER = os.path.join(HERE, "bytetrack.yaml")
 VIDEO = os.path.join(HERE, "..", "input_videos", "job_000008_400frames.mp4")
 ANN = os.path.join(HERE, "..", "input_videos", "annotations_000008.json")
