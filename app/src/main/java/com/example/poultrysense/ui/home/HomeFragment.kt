@@ -49,8 +49,6 @@ class HomeFragment : Fragment() {
     private val realtimeDb by lazy {
         FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
     }
-    private val calendar = Calendar.getInstance()
-    private val dateFormat = SimpleDateFormat("dd MMM", Locale.getDefault())
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -68,7 +66,6 @@ class HomeFragment : Fragment() {
         setupNavigationActions()
         setupCapsuleInteractions()
         setupSwipeRefresh()
-        animateNormalRing(42, 48)
         updateAlertsAndMetrics()
         playEntranceAnimation()
     }
@@ -125,8 +122,10 @@ class HomeFragment : Fragment() {
     }
 
     private fun animateNormalRing(targetNormal: Int, totalCapacity: Int) {
-        binding.progressHealthRing.max = totalCapacity
-        val animator = ValueAnimator.ofInt(0, targetNormal).apply {
+        val maxCap = if (totalCapacity > 0) totalCapacity else 1
+        binding.progressHealthRing.max = maxCap
+        val target = targetNormal.coerceIn(0, maxCap)
+        val animator = ValueAnimator.ofInt(0, target).apply {
             duration = 900
             interpolator = DecelerateInterpolator()
             addUpdateListener { animation ->
@@ -139,9 +138,27 @@ class HomeFragment : Fragment() {
     }
 
     private fun updateAlertsAndMetrics() {
-        val mainActivity = activity as? MainActivity ?: return
-        val activeAlertsCount = mainActivity.farmAlerts.count { !it.read }
+        val ctx = context ?: return
+        val mainActivity = activity as? MainActivity
+        val activeAlertsCount = mainActivity?.farmAlerts?.count { !it.read } ?: 0
         binding.tvActiveAlertsCount.text = if (activeAlertsCount == 1) "1 Alert" else "$activeAlertsCount Alerts"
+
+        // Dynamic inspection metrics from CheckupSessionManager
+        val latestSession = com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull()
+        val totalFlock = latestSession?.totalFlock ?: 48
+        val healthy = latestSession?.healthyCount ?: (totalFlock - (latestSession?.illCount ?: 2))
+        val flagged = latestSession?.illCount ?: 2
+        val lastTime = latestSession?.time ?: "10:42 AM"
+
+        binding.tvTotalFlockCount.text = "$totalFlock"
+        binding.tvBarnCapacity.text = "${(totalFlock * 1.25).toInt()}"
+        binding.tvFlaggedCount.text = "$flagged Flagged"
+        binding.tvLastScanTime.text = lastTime
+
+        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\nBarn Alpha"
+        binding.tvActiveCapsuleDesc.text = "$healthy active\nAll zones OK"
+
+        animateNormalRing(healthy, totalFlock)
     }
 
     private fun setupCapsuleInteractions() {
@@ -287,18 +304,8 @@ class HomeFragment : Fragment() {
         if (_binding == null) return
         liveTemp = temp
         liveHumidity = hum
-        val tempState = when {
-            temp >= 36.0 -> "Critical"
-            temp >= 33.0 -> "Watch"
-            temp <= 17.0 -> "Low"
-            else -> "Normal"
-        }
-        val humidityState = when {
-            hum >= 88.0 -> "Critical"
-            hum >= 82.0 -> "Watch"
-            hum <= 35.0 -> "Low"
-            else -> "Normal"
-        }
+        val tempState = com.example.poultrysense.data.repository.EnvironmentRepository.getTemperatureState(temp)
+        val humidityState = com.example.poultrysense.data.repository.EnvironmentRepository.getHumidityState(hum)
 
         // 1. Live Environment Overview Cards
         binding.tvThumbnailHumidity.text = "Humidity: ${hum.toInt()}% ($humidityState)"

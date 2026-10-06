@@ -1,11 +1,14 @@
 package com.example.poultrysense.ui.alerts
 
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.example.poultrysense.R
+import com.example.poultrysense.data.ChickenTagHelper
 import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.databinding.ItemAlertBinding
@@ -35,6 +38,32 @@ class AlertsAdapter(private var alerts: List<FarmAlert>) :
                 tvAlertLocation.text = alert.location
             } else {
                 layoutAlertLocation.visibility = View.GONE
+            }
+
+            // Physical Chicken Tag Color Band Chip
+            val tagInfo = ChickenTagHelper.resolveTag(alert.chickenId, alert.title, alert.description)
+            if (tagInfo != null) {
+                layoutChickenTag.visibility = View.VISIBLE
+                tvChickenTagText.text = "${tagInfo.colorName} TAG #${tagInfo.tagNumber}"
+
+                val density = context.resources.displayMetrics.density
+                val chipBg = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 14f * density
+                    setColor(Color.parseColor(tagInfo.chipBgHex))
+                    setStroke((1 * density).toInt(), Color.parseColor(tagInfo.chipBorderHex))
+                }
+                layoutChickenTag.background = chipBg
+
+                val dotBg = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(Color.parseColor(tagInfo.colorHex))
+                }
+                viewChickenTagDot.background = dotBg
+
+                tvChickenTagText.setTextColor(Color.parseColor(tagInfo.chipTextHex))
+            } else {
+                layoutChickenTag.visibility = View.GONE
             }
 
             // Clean white card — severity indicated by left accent bar + small chip only

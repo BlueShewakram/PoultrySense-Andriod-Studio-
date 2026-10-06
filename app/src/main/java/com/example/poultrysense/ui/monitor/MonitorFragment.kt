@@ -38,6 +38,12 @@ import com.google.android.material.timepicker.TimeFormat
 import android.animation.ValueAnimator
 import android.view.animation.OvershootInterpolator
 import com.example.poultrysense.data.AiServerScanner
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import com.example.poultrysense.data.ChickenTagHelper
+import com.example.poultrysense.data.models.AlertSeverity
+import com.example.poultrysense.data.models.FarmAlert
+import com.example.poultrysense.ui.MainActivity
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.Locale
@@ -104,7 +110,7 @@ class MonitorFragment : Fragment() {
         hasShownOfflineMascotAlert = false
         showMascotScanOnce()
 
-        setupCameraChannelSwitcher()
+        setupPoultryFarmMapView()
         setupLensFlipButton()
         setupSnapshotButton()
         setupOfflineRetry()
@@ -116,6 +122,123 @@ class MonitorFragment : Fragment() {
                 binding.mascotPopupScanner.showPopupAndScan(2600L)
             }
         }
+    }
+
+    private fun setupPoultryFarmMapView() {
+        binding.farmMapView.onZoneSelectedListener = { zoneId ->
+            when (zoneId) {
+                PoultryFarmMapView.PoultryZoneId.OVERVIEW -> {
+                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
+                }
+                PoultryFarmMapView.PoultryZoneId.COOP_1 -> {
+                    switchChannel(CameraChannel.CAM_1)
+                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.COOP_1)
+                }
+                PoultryFarmMapView.PoultryZoneId.BROODER -> {
+                    switchChannel(CameraChannel.CAM_2)
+                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.BROODER)
+                }
+                PoultryFarmMapView.PoultryZoneId.NESTING -> {
+                    switchChannel(CameraChannel.CAM_3)
+                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.NESTING)
+                }
+            }
+        }
+
+        binding.btnResetOverview.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            binding.farmMapView.selectZone(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
+            updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
+        }
+
+        binding.btnScrollToLiveFeed.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            binding.nestedScrollView.smoothScrollTo(0, binding.cardVideoViewport.top - 24)
+        }
+
+        binding.btnActionPhoneCam.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            switchChannel(CameraChannel.PHONE_CAM)
+            updateSelectedZoneCardForPhone()
+        }
+
+        // Initialize with default Coop 1
+        updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.COOP_1)
+    }
+
+    private fun updateSelectedZoneCard(zoneId: PoultryFarmMapView.PoultryZoneId) {
+        if (_binding == null) return
+        when (zoneId) {
+            PoultryFarmMapView.PoultryZoneId.OVERVIEW -> {
+                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_fullscreen_overview)
+                binding.tvSelectedZoneTitle.text = "All Coops • Entire Poultry Farm"
+                binding.tvSelectedZoneSubtitle.text = "Overview • 3 Active Pens • Tap a coop to zoom"
+                binding.tvSelectedZoneBadge.text = "FARM OVERVIEW"
+                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
+                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))
+                val liveBirds = latestAiStatus?.flockCount ?: 128
+                binding.tvZoneBirdsVal.text = liveBirds.toString()
+                binding.tvZoneHealthVal.text = "${latestAiStatus?.healthIndex ?: 98}%"
+                binding.tvZoneClimateVal.text = "26.5°C"
+                binding.tvZoneClimateLabel.text = "Farm Climate"
+                binding.btnScrollToLiveFeed.text = "View Camera Feeds ↓"
+            }
+            PoultryFarmMapView.PoultryZoneId.COOP_1 -> {
+                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
+                binding.tvSelectedZoneTitle.text = "Coop 1 • Main Barn Flock"
+                binding.tvSelectedZoneSubtitle.text = "Broiler Barn • Cam 1 Active"
+                binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
+                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
+                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
+                val count = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 48)
+                binding.tvZoneBirdsVal.text = count.toString()
+                binding.tvZoneHealthVal.text = "${latestAiStatus?.healthIndex ?: 98}%"
+                binding.tvZoneClimateVal.text = "26.4°C"
+                binding.tvZoneClimateLabel.text = "Temperature"
+                binding.btnScrollToLiveFeed.text = "View Live Cam 1 Feed ↓"
+            }
+            PoultryFarmMapView.PoultryZoneId.BROODER -> {
+                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_env)
+                binding.tvSelectedZoneTitle.text = "Brooder • Nursery Shed"
+                binding.tvSelectedZoneSubtitle.text = "Chicks Warming Lamp • Cam 2 Active"
+                binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
+                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
+                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
+                binding.tvZoneBirdsVal.text = "25"
+                binding.tvZoneHealthVal.text = "99%"
+                binding.tvZoneClimateVal.text = "32.2°C"
+                binding.tvZoneClimateLabel.text = "Brooder Temp"
+                binding.btnScrollToLiveFeed.text = "View Live Cam 2 Feed ↓"
+            }
+            PoultryFarmMapView.PoultryZoneId.NESTING -> {
+                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
+                binding.tvSelectedZoneTitle.text = "Nesting • Layer Paddock"
+                binding.tvSelectedZoneSubtitle.text = "Free-Range Run • Cam 3 Active"
+                binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
+                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
+                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
+                binding.tvZoneBirdsVal.text = "55"
+                binding.tvZoneHealthVal.text = "96%"
+                binding.tvZoneClimateVal.text = "25.8°C"
+                binding.tvZoneClimateLabel.text = "Run Temp"
+                binding.btnScrollToLiveFeed.text = "View Live Cam 3 Feed ↓"
+            }
+        }
+    }
+
+    private fun updateSelectedZoneCardForPhone() {
+        if (_binding == null) return
+        binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_photo_camera)
+        binding.tvSelectedZoneTitle.text = "Phone Camera Sensor"
+        binding.tvSelectedZoneSubtitle.text = "Handheld Portable Sensor Active"
+        binding.tvSelectedZoneBadge.text = "PHONE CAM"
+        binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_status_connected)
+        binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
+        binding.tvZoneBirdsVal.text = "Live"
+        binding.tvZoneHealthVal.text = "100%"
+        binding.tvZoneClimateVal.text = "Local"
+        binding.tvZoneClimateLabel.text = "Sensor Mode"
+        binding.btnScrollToLiveFeed.text = "View Phone Sensor Preview ↓"
     }
 
     private fun showMascotScanOnce() {
@@ -141,21 +264,6 @@ class MonitorFragment : Fragment() {
         stopSessionTicker()
         stopCameraStream()
         stopPhoneCamera()
-    }
-
-    // ─── Multi-Camera Channel Switching (1-3 + Phone) ───
-
-    private fun setupCameraChannelSwitcher() {
-        binding.toggleCameraChannel.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (isChecked) {
-                when (checkedId) {
-                    R.id.btnCam1 -> switchChannel(CameraChannel.CAM_1)
-                    R.id.btnCam2 -> switchChannel(CameraChannel.CAM_2)
-                    R.id.btnCam3 -> switchChannel(CameraChannel.CAM_3)
-                    R.id.btnCamPhone -> switchChannel(CameraChannel.PHONE_CAM)
-                }
-            }
-        }
     }
 
     private fun switchChannel(channel: CameraChannel) {
@@ -350,6 +458,15 @@ class MonitorFragment : Fragment() {
                                     binding.tvTelemetryPostureVal.text = "$healthIndex%"
                                     binding.tvTelemetryLatencyVal.text = "0.03s"
 
+                                    // Synchronize live telemetry with farm map and coop card
+                                    if (currentChannel == CameraChannel.CAM_1) {
+                                        binding.farmMapView.updateZoneData(PoultryFarmMapView.PoultryZoneId.COOP_1, count, healthIndex, 26.4)
+                                        if (binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.COOP_1) {
+                                            binding.tvZoneBirdsVal.text = count.toString()
+                                            binding.tvZoneHealthVal.text = "$healthIndex%"
+                                        }
+                                    }
+
                                     // Dynamic Flock Subject List - bound to actual detections
                                     val detections = status.detections ?: emptyList()
                                     if (count == 0 || detections.isEmpty()) {
@@ -364,7 +481,29 @@ class MonitorFragment : Fragment() {
                                         binding.rowTrackSubject2.visibility = View.VISIBLE
                                         updateSubjectRow(1, detections[0], binding.tvSubject1Title, binding.tvSubject1Sub, binding.tvSubject1Status, binding.tvSubject1Num)
                                         updateSubjectRow(2, detections[1], binding.tvSubject2Title, binding.tvSubject2Sub, binding.tvSubject2Status, binding.tvSubject2Num)
+                                    }
 
+                                    // Forward active chicken alerts to MainActivity with bright physical color tag
+                                    status.alerts?.forEach { alertItem ->
+                                        val cId = alertItem.chickenId ?: 0
+                                        if (cId > 0 && alertItem.status != "Healthy") {
+                                            val tag = ChickenTagHelper.getTagInfo(cId)
+                                            val isCrit = alertItem.severity.equals("critical", ignoreCase = true) || (alertItem.anomalyScore ?: 0) >= 70
+                                            val alert = FarmAlert(
+                                                id = "alert-ai-c$cId",
+                                                severity = if (isCrit) AlertSeverity.CRITICAL else AlertSeverity.WARNING,
+                                                title = "${alertItem.status ?: "Needs Attention"} • ${tag.displayLabel}",
+                                                description = "Chicken physically tagged with ${tag.physicalDescription}: ${alertItem.reason?.takeIf { it.isNotEmpty() } ?: alertItem.behavior ?: "Abnormal behavior detected"}. ${alertItem.recommendation ?: ""}".trim(),
+                                                timeAgo = "Live Feed",
+                                                timestamp = alertItem.timestamp?.takeIf { it.isNotEmpty() } ?: "Live Stream",
+                                                chickenId = cId.toString(),
+                                                location = "Coop 1 (Main Barn)",
+                                                tagColorName = tag.colorName,
+                                                tagColorHex = tag.colorHex,
+                                                tagNumber = tag.tagNumber
+                                            )
+                                            (activity as? MainActivity)?.addAlert(alert)
+                                        }
                                     }
                                 }
                             }
@@ -430,18 +569,27 @@ class MonitorFragment : Fragment() {
         tvNum: android.widget.TextView
     ) {
         val trackId = detection.trackId ?: index
+        val tagInfo = ChickenTagHelper.getTagInfo(trackId)
         val conf = ((detection.confidence ?: 0.9) * 100).toInt()
         val behavior = detection.behavior?.replaceFirstChar { it.uppercase() } ?: "Active"
         val health = detection.health ?: "Healthy"
         val detail = detection.healthDetail?.takeIf { it.isNotEmpty() } ?: "Normal Locomotion"
-        val score = detection.anomalyScore ?: 0
         val tier = detection.anomalyTier ?: "Normal"
         val gemini = detection.geminiSummary?.takeIf { it.isNotEmpty() }
         val geminiVerified = detection.geminiVerified ?: false
 
         val verdictSource = if (geminiVerified) "✓ Gemini" else "Local"
-        tvTitle.text = "Chicken #$trackId ($verdictSource • $tier)"
+        tvTitle.text = "Chicken #$trackId [${tagInfo.colorName} Tag] ($verdictSource • $tier)"
         tvNum.text = "#$trackId"
+
+        // Set the circular badge to the chicken's bright physical tag color
+        val numDrawable = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.parseColor(tagInfo.colorHex))
+        }
+        tvNum.background = numDrawable
+        tvNum.setTextColor(Color.parseColor(tagInfo.textColorHex))
+
         if (gemini != null) {
             tvSub.text = "$gemini"
         } else {
@@ -756,7 +904,8 @@ class MonitorFragment : Fragment() {
     }
 
     private fun switchToPhoneCamera() {
-        binding.toggleCameraChannel.check(R.id.btnCamPhone)
+        switchChannel(CameraChannel.PHONE_CAM)
+        updateSelectedZoneCardForPhone()
         Toast.makeText(context, "Switched to Phone Camera", Toast.LENGTH_SHORT).show()
     }
 

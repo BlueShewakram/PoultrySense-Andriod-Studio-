@@ -86,79 +86,270 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- 2. Clean Camera Channel Switcher -->
-            <HorizontalScrollView
+            <!-- 2. Interactive Poultry Farm Simulation Viewport -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardFarmMapContainer"
+                android:layout_width="match_parent"
+                android:layout_height="280dp"
+                android:layout_marginTop="16dp"
+                app:cardBackgroundColor="#5E9636"
+                app:cardCornerRadius="24dp"
+                app:cardElevation="4dp"
+                app:cardPreventCornerOverlap="false"
+                app:cardUseCompatPadding="false"
+                app:strokeColor="#7CB342"
+                app:strokeWidth="2dp">
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:clipChildren="true"
+                    android:clipToPadding="true">
+
+                    <com.example.poultrysense.ui.monitor.PoultryFarmMapView
+                        android:id="@+id/farmMapView"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
+
+                    <!-- Floating Overview Reset Button (Top-Right) -->
+                    <ImageView
+                        android:id="@+id/btnResetOverview"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_gravity="top|end"
+                        android:layout_margin="12dp"
+                        android:background="@drawable/bg_dock_btn_circle"
+                        android:clickable="true"
+                        android:elevation="6dp"
+                        android:focusable="true"
+                        android:padding="8dp"
+                        android:src="@drawable/ic_fullscreen_overview"
+                        app:tint="@color/primary"
+                        tools:ignore="ContentDescription" />
+
+                </FrameLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 2C. Selected Coop Telemetry & Quick Action Card (Matches Reference UI) -->
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardSelectedZoneInfo"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:overScrollMode="never"
-                android:scrollbars="none">
+                android:layout_marginTop="14dp"
+                app:cardBackgroundColor="@color/white"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="2dp"
+                app:strokeColor="#E2E8F0"
+                app:strokeWidth="1dp">
 
-                <com.google.android.material.button.MaterialButtonToggleGroup
-                    android:id="@+id/toggleCameraChannel"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    app:checkedButton="@id/btnCam1"
-                    app:selectionRequired="true"
-                    app:singleSelection="true">
+                    android:orientation="vertical"
+                    android:padding="16dp">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCam1"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="Coop 1"
-                        android:textAllCaps="false"
-                        android:textSize="11.5sp"
-                        app:cornerRadius="12dp"
-                        app:icon="@drawable/ic_videocam"
-                        app:iconSize="15dp"
-                        app:strokeColor="#CBD5E1" />
+                    <!-- Header Row -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCam2"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="Brooder"
-                        android:textAllCaps="false"
-                        android:textSize="11.5sp"
-                        app:cornerRadius="12dp"
-                        app:icon="@drawable/ic_videocam"
-                        app:iconSize="15dp"
-                        app:strokeColor="#CBD5E1" />
+                        <ImageView
+                            android:id="@+id/ivSelectedZoneIcon"
+                            android:layout_width="36dp"
+                            android:layout_height="36dp"
+                            android:background="@drawable/bg_date_chip"
+                            android:padding="7dp"
+                            android:src="@drawable/ic_chicken_normal"
+                            app:tint="@color/primary"
+                            tools:ignore="ContentDescription" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCam3"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="Nesting"
-                        android:textAllCaps="false"
-                        android:textSize="11.5sp"
-                        app:cornerRadius="12dp"
-                        app:icon="@drawable/ic_videocam"
-                        app:iconSize="15dp"
-                        app:strokeColor="#CBD5E1" />
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCamPhone"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="Phone Cam"
-                        android:textAllCaps="false"
-                        android:textSize="11.5sp"
-                        app:cornerRadius="12dp"
-                        app:icon="@drawable/ic_photo_camera"
-                        app:iconSize="15dp"
-                        app:strokeColor="#CBD5E1" />
-                </com.google.android.material.button.MaterialButtonToggleGroup>
-            </HorizontalScrollView>
+                            <TextView
+                                android:id="@+id/tvSelectedZoneTitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-black"
+                                android:text="Coop 1 • Main Barn Flock"
+                                android:textColor="#0F172A"
+                                android:textSize="15.5sp" />
+
+                            <TextView
+                                android:id="@+id/tvSelectedZoneSubtitle"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp"
+                                android:fontFamily="sans-serif-medium"
+                                android:text="Interactive Poultry Zone • Tap map to focus"
+                                android:textColor="#64748B"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvSelectedZoneBadge"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_healthy_badge"
+                            android:fontFamily="sans-serif-bold"
+                            android:paddingHorizontal="10dp"
+                            android:paddingVertical="4dp"
+                            android:text="ACTIVE CAM"
+                            android:textColor="@color/primary"
+                            android:textSize="10.5sp" />
+                    </LinearLayout>
+
+                    <!-- Triplet Metric Cards -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:orientation="horizontal">
+
+                        <!-- Chickens -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="4dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_kpi_stat_card"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:paddingVertical="10dp">
+
+                            <TextView
+                                android:id="@+id/tvZoneBirdsVal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-black"
+                                android:text="48"
+                                android:textColor="@color/primary"
+                                android:textSize="19sp" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="Tracked Birds"
+                                android:textColor="#64748B"
+                                android:textSize="10sp" />
+                        </LinearLayout>
+
+                        <!-- Health -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginHorizontal="4dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_kpi_stat_card"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:paddingVertical="10dp">
+
+                            <TextView
+                                android:id="@+id/tvZoneHealthVal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-black"
+                                android:text="98%"
+                                android:textColor="@color/primary"
+                                android:textSize="19sp" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="Health Index"
+                                android:textColor="#64748B"
+                                android:textSize="10sp" />
+                        </LinearLayout>
+
+                        <!-- Climate / Feeding -->
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="4dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_kpi_stat_card"
+                            android:gravity="center"
+                            android:orientation="vertical"
+                            android:paddingVertical="10dp">
+
+                            <TextView
+                                android:id="@+id/tvZoneClimateVal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-black"
+                                android:text="26.4°C"
+                                android:textColor="#1976D2"
+                                android:textSize="19sp" />
+
+                            <TextView
+                                android:id="@+id/tvZoneClimateLabel"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="Temperature"
+                                android:textColor="#64748B"
+                                android:textSize="10sp" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <!-- Unified Monitoring Action Controls -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnScrollToLiveFeed"
+                            android:layout_width="0dp"
+                            android:layout_height="46dp"
+                            android:layout_weight="1"
+                            android:layout_marginEnd="8dp"
+                            android:backgroundTint="@color/primary"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="View Live Feed ↓"
+                            android:textAllCaps="false"
+                            android:textColor="@color/white"
+                            android:textSize="13sp"
+                            app:cornerRadius="12dp"
+                            app:elevation="1dp"
+                            app:icon="@drawable/ic_videocam"
+                            app:iconGravity="textStart"
+                            app:iconSize="16dp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/btnActionPhoneCam"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="46dp"
+                            android:fontFamily="sans-serif-bold"
+                            android:paddingHorizontal="14dp"
+                            android:text="Phone Cam"
+                            android:textAllCaps="false"
+                            android:textColor="@color/primary"
+                            android:textSize="12sp"
+                            app:cornerRadius="12dp"
+                            app:icon="@drawable/ic_photo_camera"
+                            app:iconGravity="textStart"
+                            app:iconSize="15dp"
+                            app:iconTint="@color/primary"
+                            app:strokeColor="#CBD5E1" />
+                    </LinearLayout>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <!-- 3. Clean 16:9 Video Viewport -->
             <com.google.android.material.card.MaterialCardView

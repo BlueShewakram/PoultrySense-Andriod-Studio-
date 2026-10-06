@@ -16,12 +16,6 @@ object AppSettingsPreferences {
     private const val KEY_ALERT_SOUND_ENABLED = "key_alert_sound_enabled"
     private const val KEY_ALERT_VIBRATE_ENABLED = "key_alert_vibrate_enabled"
 
-    // Privacy & Security Preferences
-    private const val KEY_LOCAL_PROCESSING_ONLY = "key_local_processing_only"
-    private const val KEY_BIOMETRIC_LOCK = "key_biometric_lock"
-    private const val KEY_LOCAL_LOGGING = "key_local_logging"
-    private const val KEY_ANONYMOUS_METRICS = "key_anonymous_metrics"
-
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -69,30 +63,4 @@ object AppSettingsPreferences {
 
     fun setAlertVibrateEnabled(context: Context, enabled: Boolean) =
         getPrefs(context).edit().putBoolean(KEY_ALERT_VIBRATE_ENABLED, enabled).apply()
-
-    // ─── Privacy & Security Getters & Setters ───
-
-    fun isLocalProcessingOnly(context: Context): Boolean =
-        getPrefs(context).getBoolean(KEY_LOCAL_PROCESSING_ONLY, true)
-
-    fun setLocalProcessingOnly(context: Context, enabled: Boolean) =
-        getPrefs(context).edit().putBoolean(KEY_LOCAL_PROCESSING_ONLY, enabled).apply()
-
-    fun isBiometricLockEnabled(context: Context): Boolean =
-        getPrefs(context).getBoolean(KEY_BIOMETRIC_LOCK, false)
-
-    fun setBiometricLockEnabled(context: Context, enabled: Boolean) =
-        getPrefs(context).edit().putBoolean(KEY_BIOMETRIC_LOCK, enabled).apply()
-
-    fun isLocalLoggingEnabled(context: Context): Boolean =
-        getPrefs(context).getBoolean(KEY_LOCAL_LOGGING, true)
-
-    fun setLocalLoggingEnabled(context: Context, enabled: Boolean) =
-        getPrefs(context).edit().putBoolean(KEY_LOCAL_LOGGING, enabled).apply()
-
-    fun isAnonymousMetricsEnabled(context: Context): Boolean =
-        getPrefs(context).getBoolean(KEY_ANONYMOUS_METRICS, false)
-
-    fun setAnonymousMetricsEnabled(context: Context, enabled: Boolean) =
-        getPrefs(context).edit().putBoolean(KEY_ANONYMOUS_METRICS, enabled).apply()
 }

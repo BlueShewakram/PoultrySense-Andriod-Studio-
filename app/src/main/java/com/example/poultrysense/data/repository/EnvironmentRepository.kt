@@ -49,26 +49,45 @@ object EnvironmentRepository {
         }
     }
 
+    // ─── Calibrated Agronomic Thresholds (Adult Broilers) ───
+    const val TEMP_CRITICAL_HEAT = 36.0
+    const val TEMP_HEAT_WATCH = 33.0
+    const val TEMP_COLD_WATCH = 17.0
+
+    const val HUM_CRITICAL = 88.0
+    const val HUM_WATCH = 82.0
+    const val HUM_DRY_AIR = 35.0
+
     /**
-     * RRL-grounded climate status thresholds for adult broilers (Week 4+).
-     *
-     * References:
-     *   - Dawkins et al. (2004): housing conditions > stocking density for welfare
-     *   - Industry consensus: optimal adult broiler range 18–24°C, 50–70% RH
-     *   - Heat stress panting onset: ~30°C
-     *   - Critical heat stroke risk: ≥35°C
-     *   - Wet litter / footpad dermatitis: RH ≥80%
+     * Unified RRL-grounded climate status evaluation.
      */
     fun getClimateStatus(temp: Double, hum: Double): String {
         return when {
-            temp >= 35.0 -> "CRITICAL HEAT"
-            temp >= 30.0 -> "HEAT WATCH"
-            temp <= 18.0 -> "COLD WATCH"
-            hum >= 80.0 -> "CRITICAL HUMIDITY"
-            hum >= 75.0 -> "HUMIDITY WATCH"
-            hum <= 40.0 -> "DRY AIR"
-
+            temp >= TEMP_CRITICAL_HEAT -> "CRITICAL HEAT"
+            temp >= TEMP_HEAT_WATCH -> "HEAT WATCH"
+            temp <= TEMP_COLD_WATCH -> "COLD WATCH"
+            hum >= HUM_CRITICAL -> "CRITICAL HUMIDITY"
+            hum >= HUM_WATCH -> "HUMIDITY WATCH"
+            hum <= HUM_DRY_AIR -> "DRY AIR"
             else -> "NORMAL"
+        }
+    }
+
+    fun getTemperatureState(temp: Double): String {
+        return when {
+            temp >= TEMP_CRITICAL_HEAT -> "Critical"
+            temp >= TEMP_HEAT_WATCH -> "Watch"
+            temp <= TEMP_COLD_WATCH -> "Low"
+            else -> "Normal"
+        }
+    }
+
+    fun getHumidityState(hum: Double): String {
+        return when {
+            hum >= HUM_CRITICAL -> "Critical"
+            hum >= HUM_WATCH -> "Watch"
+            hum <= HUM_DRY_AIR -> "Low"
+            else -> "Normal"
         }
     }
 }

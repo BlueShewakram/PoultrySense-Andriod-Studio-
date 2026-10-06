@@ -54,6 +54,39 @@
                     android:textColor="@color/white"
                     android:textSize="9sp" />
 
+                <!-- Physical Chicken Color Tag Badge -->
+                <LinearLayout
+                    android:id="@+id/layoutChickenTag"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_chicken_tag_chip"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="2.5dp"
+                    android:visibility="gone"
+                    tools:visibility="visible">
+
+                    <View
+                        android:id="@+id/viewChickenTagDot"
+                        android:layout_width="8dp"
+                        android:layout_height="8dp"
+                        android:background="@drawable/bg_tag_dot" />
+
+                    <TextView
+                        android:id="@+id/tvChickenTagText"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="5dp"
+                        android:fontFamily="sans-serif-black"
+                        android:letterSpacing="0.02"
+                        android:text="RED TAG #1"
+                        android:textAllCaps="true"
+                        android:textColor="#BE123C"
+                        android:textSize="9.5sp" />
+                </LinearLayout>
+
                 <View
                     android:layout_width="0dp"
                     android:layout_height="0dp"

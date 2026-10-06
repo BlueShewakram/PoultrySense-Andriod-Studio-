@@ -445,6 +445,7 @@
                             android:textSize="13sp" />
 
                         <TextView
+                            android:id="@+id/tvAnomalyCapsuleDesc"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
@@ -508,6 +509,7 @@
                             android:textSize="13sp" />
 
                         <TextView
+                            android:id="@+id/tvActiveCapsuleDesc"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
@@ -974,25 +976,6 @@
 
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
-
-            <!-- Hidden Views for Binding Compatibility -->
-            <TextView
-                android:id="@+id/tvHealthScore"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:visibility="gone" />
-
-            <Button
-                android:id="@+id/btnFlockDetails"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:visibility="gone" />
-
-            <Button
-                android:id="@+id/btnViewReport"
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:visibility="gone" />
 
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>

@@ -9,8 +9,11 @@ import androidx.navigation.NavController
 import androidx.navigation.NavOptions
 import androidx.navigation.fragment.NavHostFragment
 import com.example.poultrysense.R
+import com.example.poultrysense.data.CheckupSessionManager
+import com.example.poultrysense.data.ChickenTagHelper
 import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
+import com.example.poultrysense.data.repository.EnvironmentRepository
 import com.example.poultrysense.databinding.ActivityMainBinding
 
 import androidx.core.content.ContextCompat
@@ -47,13 +50,39 @@ class MainActivity : AppCompatActivity() {
 
     val farmAlerts = mutableListOf(
         FarmAlert(
+            id = "alert-tag-3",
+            severity = AlertSeverity.CRITICAL,
+            title = "Prolonged Inactivity • 🟡 Yellow Tag #3",
+            description = "Chicken physically tagged with Bright Yellow Leg Band #3 has remained stationary for >180s with drooping posture in Coop 1.",
+            timeAgo = "3 mins ago",
+            timestamp = "Today at 10:14 AM",
+            chickenId = "3",
+            location = "Coop 1 (Main Barn)",
+            tagColorName = "Yellow",
+            tagColorHex = "#FFD600",
+            tagNumber = 3
+        ),
+        FarmAlert(
+            id = "alert-tag-1",
+            severity = AlertSeverity.WARNING,
+            title = "Flock Isolation • 🔴 Red Tag #1",
+            description = "Chicken physically tagged with Bright Red Leg Band #1 has separated from the main flock for >6 minutes near the feeding station.",
+            timeAgo = "15 mins ago",
+            timestamp = "Today at 10:02 AM",
+            chickenId = "1",
+            location = "Coop 1 (Main Barn)",
+            tagColorName = "Red",
+            tagColorHex = "#FF1744",
+            tagNumber = 1
+        ),
+        FarmAlert(
             id = "alert-initial",
             severity = AlertSeverity.INFO,
             title = "DHT22 Climate Monitor Active",
             description = "Listening for live temperature and humidity readings from ESP32...",
-            timeAgo = "Initializing",
+            timeAgo = "Live Sensor",
             timestamp = "Just now",
-            location = "Main Barn"
+            location = "Coop 1 (Main Barn)"
         )
     )
 
@@ -202,12 +231,12 @@ class MainActivity : AppCompatActivity() {
         val avgTemp = climateSamples.map { it.temperature }.average()
         val avgHum = climateSamples.map { it.humidity }.average()
         val isCalibrating = sampleCount < 5
-        val heatCriticalConfirmed = recentFive.count { it.temperature >= 36.0 } >= 3 || avgTemp >= 36.0
-        val heatWarningConfirmed = sampleCount >= 5 && recentFive.count { it.temperature >= 33.0 } >= 4
-        val coldWarningConfirmed = sampleCount >= 5 && recentFive.count { it.temperature <= 17.0 } >= 4
-        val humidityCriticalConfirmed = recentFive.count { it.humidity >= 88.0 } >= 3 || avgHum >= 88.0
-        val humidityWarningConfirmed = sampleCount >= 5 && recentFive.count { it.humidity >= 82.0 } >= 4
-        val dryAirConfirmed = sampleCount >= 5 && recentFive.count { it.humidity <= 35.0 } >= 4
+        val heatCriticalConfirmed = recentFive.count { it.temperature >= EnvironmentRepository.TEMP_CRITICAL_HEAT } >= 3 || avgTemp >= EnvironmentRepository.TEMP_CRITICAL_HEAT
+        val heatWarningConfirmed = sampleCount >= 5 && recentFive.count { it.temperature >= EnvironmentRepository.TEMP_HEAT_WATCH } >= 4
+        val coldWarningConfirmed = sampleCount >= 5 && recentFive.count { it.temperature <= EnvironmentRepository.TEMP_COLD_WATCH } >= 4
+        val humidityCriticalConfirmed = recentFive.count { it.humidity >= EnvironmentRepository.HUM_CRITICAL } >= 3 || avgHum >= EnvironmentRepository.HUM_CRITICAL
+        val humidityWarningConfirmed = sampleCount >= 5 && recentFive.count { it.humidity >= EnvironmentRepository.HUM_WATCH } >= 4
+        val dryAirConfirmed = sampleCount >= 5 && recentFive.count { it.humidity <= EnvironmentRepository.HUM_DRY_AIR } >= 4
         val newAlerts = mutableListOf<FarmAlert>()
 
         // 1. High Heat Check (DHT22 Temperature)
@@ -317,10 +346,47 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        // 4. Flock Health Inspection Check
+        val latestSession = CheckupSessionManager.getCompletedSessions(this).firstOrNull()
+        if (latestSession != null && latestSession.illCount > 0) {
+            val taggedBirds = (1..latestSession.illCount.coerceAtMost(3)).map { i ->
+                val chickenNum = if (i == 1) 3 else (if (i == 2) 1 else 5)
+                ChickenTagHelper.getTagInfo(chickenNum)
+            }
+            val tagsSummary = taggedBirds.joinToString(", ") { it.displayLabel }
+            val firstTag = taggedBirds.firstOrNull()
+            newAlerts.add(
+                0,
+                FarmAlert(
+                    id = "alert-flock-${latestSession.id}",
+                    severity = AlertSeverity.CRITICAL,
+                    title = "Unhealthy Birds: $tagsSummary",
+                    description = "Latest scan (${latestSession.sessionNumber}) identified ${latestSession.illCount} distressed bird(s) needing attention: ${taggedBirds.joinToString { it.physicalDescription }}. Inspect bird posture in $zone.",
+                    timeAgo = latestSession.time,
+                    timestamp = "${latestSession.date} at ${latestSession.time}",
+                    chickenId = firstTag?.tagNumber?.toString() ?: "3",
+                    location = zone,
+                    tagColorName = firstTag?.colorName,
+                    tagColorHex = firstTag?.colorHex,
+                    tagNumber = firstTag?.tagNumber
+                )
+            )
+        }
+
         // Update active alerts list
         farmAlerts.clear()
         farmAlerts.addAll(newAlerts)
 
+        updateNotificationBadge()
+    }
+
+    fun addAlert(alert: FarmAlert) {
+        val existingIndex = farmAlerts.indexOfFirst { it.id == alert.id }
+        if (existingIndex >= 0) {
+            farmAlerts[existingIndex] = alert
+        } else {
+            farmAlerts.add(0, alert)
+        }
         updateNotificationBadge()
     }
 

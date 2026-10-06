@@ -357,6 +357,35 @@ class AnomalyDetectionEngine:
         }
 
 
+# 8 Bright Poultry Tag Colors matching Android ChickenTagHelper
+POULTRY_TAG_PALETTE = [
+    {"name": "Red", "hex": "#FF1744", "emoji": "🔴"},
+    {"name": "Blue", "hex": "#0091EA", "emoji": "🔵"},
+    {"name": "Yellow", "hex": "#FFD600", "emoji": "🟡"},
+    {"name": "Green", "hex": "#00E676", "emoji": "🟢"},
+    {"name": "Orange", "hex": "#FF6D00", "emoji": "🟠"},
+    {"name": "Purple", "hex": "#AA00FF", "emoji": "🟣"},
+    {"name": "Pink", "hex": "#FF4081", "emoji": "🌸"},
+    {"name": "Cyan", "hex": "#00E5FF", "emoji": "🔷"},
+]
+
+def get_poultry_tag_info(track_id):
+    try:
+        num = int(track_id)
+    except Exception:
+        num = 1
+    idx = (abs(num - 1)) % len(POULTRY_TAG_PALETTE)
+    tag = POULTRY_TAG_PALETTE[idx]
+    return {
+        "tag_number": num,
+        "tag_color": tag["name"],
+        "tag_color_hex": tag["hex"],
+        "tag_emoji": tag["emoji"],
+        "tag_label": f"{tag['emoji']} {tag['name']} Tag #{num}",
+        "physical_description": f"Bright {tag['name']} Leg Band #{num}"
+    }
+
+
 class GeminiVerdictEngine:
     """
     Gemini 3.6 Flash as the PRIMARY HEALTH VERDICT ENGINE for every tracked chicken.
@@ -568,9 +597,14 @@ class GeminiVerdictEngine:
         # Backwards-compatible summary and alert storage
         self.chicken_summaries[track_id] = f"Gemini: {verdict_reason}" if gemini_evaluated else verdict_reason
 
+        tag_info = get_poultry_tag_info(track_id)
         alert_obj = {
             "chicken_id": track_id,
-            "status": verdict_label,
+            "tag_number": tag_info["tag_number"],
+            "tag_color": tag_info["tag_color"],
+            "tag_color_hex": tag_info["tag_color_hex"],
+            "tag_label": tag_info["tag_label"],
+            "status": f"{verdict_label} • {tag_info['tag_label']}",
             "anomaly_score": score,
             "anomaly_tier": verdict_tier,
             "behavior": f"Resting {stats['rest_pct']}% • Walking {stats['walk_pct']}%",
