@@ -19,15 +19,18 @@ import com.example.poultrysense.data.AppSettingsPreferences
 import com.example.poultrysense.data.CheckupSessionManager
 import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.UserPreferences
+import com.example.poultrysense.data.WakeOnLanHelper
 import com.example.poultrysense.data.models.User
 import com.example.poultrysense.data.repository.AuthRepository
 import com.example.poultrysense.databinding.DialogAiServerSettingsBinding
+import com.example.poultrysense.databinding.DialogDesktopPowerBinding
 import com.example.poultrysense.databinding.DialogHelpDiagnosticsBinding
 import com.example.poultrysense.databinding.DialogNotificationPreferencesBinding
 import com.example.poultrysense.databinding.DialogSystemSettingsBinding
 import com.example.poultrysense.databinding.FragmentProfileBinding
 import com.example.poultrysense.ui.auth.LoginActivity
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -357,6 +360,11 @@ class ProfileFragment : Fragment() {
             showNotificationPreferencesDialog()
         }
 
+        // Desktop Power Controls (Shutdown & Turn On)
+        binding.btnDesktopPower.setOnClickListener {
+            showDesktopPowerDialog()
+        }
+
         // Help & Diagnostics
         binding.btnHelpDiagnostics.setOnClickListener {
             showHelpDiagnosticsDialog()
@@ -422,6 +430,128 @@ class ProfileFragment : Fragment() {
         }
 
         dialogBinding.btnCloseNotificationDialog.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialog.show()
+    }
+
+    // ─── 2. Desktop Power Controls Dialog ───
+
+    private fun showDesktopPowerDialog() {
+        val ctx = context ?: return
+        val dialog = BottomSheetDialog(ctx)
+        val dialogBinding = DialogDesktopPowerBinding.inflate(layoutInflater)
+        dialog.setContentView(dialogBinding.root)
+
+        val ip = ServerPreferences.getIp(ctx)
+
+        // Live desktop server connection check
+        val checkDesktopStatus = {
+            dialogBinding.dotDesktopStatus.backgroundTintList =
+                ColorStateList.valueOf(ContextCompat.getColor(ctx, R.color.text_muted))
+            dialogBinding.tvDesktopStatusTitle.text = "Checking Desktop Status..."
+            dialogBinding.tvDesktopStatusTitle.setTextColor(ContextCompat.getColor(ctx, R.color.text_primary))
+            dialogBinding.tvDesktopStatusSubtext.text = "$ip • Port 5000"
+
+            lifecycleScope.launch(Dispatchers.IO) {
+                val url = "http://$ip:5000/status"
+                val isOnline = try {
+                    val request = Request.Builder().url(url).build()
+                    val response = httpClient.newCall(request).execute()
+                    val ok = response.isSuccessful
+                    response.close()
+                    ok
+                } catch (_: Exception) {
+                    false
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (_binding == null) return@withContext
+                    if (isOnline) {
+                        dialogBinding.dotDesktopStatus.backgroundTintList =
+                            ColorStateList.valueOf(ContextCompat.getColor(ctx, R.color.healthy))
+                        dialogBinding.tvDesktopStatusTitle.text = "Desktop AI Server Online"
+                        dialogBinding.tvDesktopStatusTitle.setTextColor(ContextCompat.getColor(ctx, R.color.healthy))
+                        dialogBinding.tvDesktopStatusSubtext.text = "Connected at http://$ip:5000"
+                    } else {
+                        dialogBinding.dotDesktopStatus.backgroundTintList =
+                            ColorStateList.valueOf(ContextCompat.getColor(ctx, R.color.critical))
+                        dialogBinding.tvDesktopStatusTitle.text = "Desktop PC Offline / Standby"
+                        dialogBinding.tvDesktopStatusTitle.setTextColor(ContextCompat.getColor(ctx, R.color.critical))
+                        dialogBinding.tvDesktopStatusSubtext.text = "Host unreachable at $ip:5000"
+                    }
+                }
+            }
+        }
+
+        checkDesktopStatus()
+
+        dialogBinding.btnRefreshDesktopStatus.setOnClickListener {
+            checkDesktopStatus()
+        }
+
+        // Shut Down Desktop Computer
+        dialogBinding.btnShutdownDesktop.setOnClickListener {
+            MaterialAlertDialogBuilder(ctx)
+                .setTitle("Shut Down Desktop Computer?")
+                .setMessage("Are you sure you want to shut down your desktop computer ($ip)? The AI vision server and stream will go offline.")
+                .setPositiveButton("Shut Down") { _, _ ->
+                    dialogBinding.btnShutdownDesktop.isEnabled = false
+                    dialogBinding.btnShutdownDesktop.text = "Sending Shutdown Signal..."
+
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        // 1. Dispatch cloud shutdown signal to Firebase (received by ESP32)
+                        try {
+                            val db = com.google.firebase.database.FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
+                            db.getReference("system_control").updateChildren(mapOf("shutdown" to true, "timestamp" to System.currentTimeMillis()))
+                        } catch (_: Exception) {}
+
+                        // 2. Dispatch direct HTTP shutdown signal to Desktop AI Server
+                        val shutdownUrl = "http://$ip:5000/power/shutdown"
+                        val emptyBody = okhttp3.RequestBody.create(null, ByteArray(0))
+                        var success = false
+                        var message = ""
+
+                        try {
+                            val request = Request.Builder().url(shutdownUrl).post(emptyBody).build()
+                            val response = httpClient.newCall(request).execute()
+                            success = response.isSuccessful
+                            response.close()
+                            message = "Shutdown command acknowledged by Desktop PC ($ip)"
+                        } catch (e: Exception) {
+                            try {
+                                val getReq = Request.Builder().url(shutdownUrl).build()
+                                val resp = httpClient.newCall(getReq).execute()
+                                success = resp.isSuccessful
+                                resp.close()
+                                message = "Shutdown command sent to Desktop PC ($ip)"
+                            } catch (ex: Exception) {
+                                message = "Failed to contact desktop at $ip. Ensure server is running."
+                            }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            dialogBinding.btnShutdownDesktop.isEnabled = true
+                            dialogBinding.btnShutdownDesktop.text = "Shut Down Desktop Computer"
+                            if (success) {
+                                Toast.makeText(ctx, "Desktop Computer shutdown initiated!", Toast.LENGTH_LONG).show()
+                                dialogBinding.dotDesktopStatus.backgroundTintList =
+                                    ColorStateList.valueOf(ContextCompat.getColor(ctx, R.color.critical))
+                                dialogBinding.tvDesktopStatusTitle.text = "Desktop Shutting Down..."
+                                dialogBinding.tvDesktopStatusTitle.setTextColor(ContextCompat.getColor(ctx, R.color.critical))
+                                dialogBinding.tvDesktopStatusSubtext.text = "PC power down in progress"
+                            } else {
+                                Toast.makeText(ctx, message, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
+
+        dialogBinding.btnCloseDesktopPowerDialog.setOnClickListener {
             dialog.dismiss()
         }
 

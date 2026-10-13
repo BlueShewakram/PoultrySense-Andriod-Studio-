@@ -38,6 +38,8 @@ except ImportError:
     HAS_GEMINI = False
 
 # --- 2. Import Ultralytics YOLO ---
+os.environ["YOLO_AUTOINSTALL"] = "0"
+os.environ["ULTRALYTICS_SKIP_REQUIREMENTS_CHECKS"] = "1"
 try:
     from ultralytics import YOLO
     HAS_YOLO = True
@@ -60,15 +62,15 @@ if not os.path.exists(TRACKER_YAML):
     TRACKER_YAML = "botsort.yaml"
 
 DET_MODELS = [
-    # v3 = YOLO26n fine-tuned on chicken_det (Colab T4, 40 epochs). Scoreboard:
-    # P .85 / R .78 / mAP50 .77 @94ms torch-CPU. Beats v2 (.72/.65/.64 @258ms).
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
-    # Emergency generic fallback (COCO bird). Only loads if v3 is missing.
+    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v4_26n.pt"),
     os.path.join(SCRIPT_DIR, "yolo11n.pt"),
     "yolo11n.pt",
 ]
 
 BEHAVIOR_MODELS = [
+    os.path.join(MODELS_DIR, "PoultrySense_BehaviorModel_v2_26n.pt"),
+    os.path.join(MODELS_DIR, "PoultrySense_BehaviorModel_v2.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_BehaviorModel.pt"),
     os.path.join(SCRIPT_DIR, "PoultrySense_BehaviorModel.pt"),
 ]
@@ -119,8 +121,10 @@ track_missed_counts = {}
 track_classifications = {}
 track_last_positions = {}
 inactive_tracks = {}
+track_velocities = defaultdict(lambda: (0.0, 0.0))  # display_id -> (vx, vy) in px/sec
+display_id_last_positions = {}                       # display_id -> (cx, cy, time)
 track_hit_streaks = defaultdict(int)         # raw_id -> consecutive confident detections
-track_confirmed_raw_ids = set()             # set of raw_ids confirmed (debounce >= 3)
+track_confirmed_raw_ids = set()             # set of raw_ids confirmed (debounce >= 2 or handoff)
 display_coasting_boxes = {}                 # display_id -> last known bbox & metadata for anti-blink coasting
 track_crop_sig = {}                         # raw_id -> last 16x16 gray crop signature (static-phantom gate)
 track_frozen_streaks = defaultdict(int)     # raw_id -> consecutive pixel-identical observations
@@ -724,18 +728,43 @@ def get_model_path(candidates):
     return None
 
 
-def resolve_openvino(pt_path, imgsz=640):
-    """Prefer an OpenVINO export of pt_path (exports once, caches beside the .pt).
+def get_execution_device():
+    """Detects available hardware acceleration (NVIDIA CUDA GPU, or CPU with OpenVINO AVX2)."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            print(f"[AI ENGINE] 🚀 NVIDIA GPU detected! CUDA acceleration active ({gpu_name}).")
+            return 0
+    except Exception:
+        pass
 
-    Returns the path to load with YOLO(): the *_openvino_model dir when usable,
-    else the original .pt (torch fallback). Deleting the export folder is a
-    complete rollback — the .pt files are never modified."""
+    print("[AI ENGINE] ⚡ OpenVINO AVX2 Engine active (AMD Ryzen 5 3500G).")
+    return "cpu"
+
+
+def resolve_accelerated_model(pt_path, imgsz=640):
+    """Exports and resolves the fastest hardware-accelerated model.
+
+    1. OpenVINO export directory (*_openvino_model) for high-speed AVX2 execution (~32ms/frame).
+    2. Fallback: PyTorch model (*.pt)."""
+    return resolve_openvino(pt_path, imgsz=imgsz)
+
+
+def resolve_openvino(pt_path, imgsz=640):
+    """Resolves OpenVINO export format if supported, else returns PyTorch .pt path."""
     if not pt_path or not pt_path.endswith(".pt"):
         return pt_path
+
+    if os.environ.get("DISABLE_OPENVINO", "").lower() in ["1", "true", "yes", "amd"]:
+        print(f"[AI ENGINE] Native PyTorch mode requested for {os.path.basename(pt_path)}")
+        return pt_path
+
     try:
         import openvino  # noqa: F401
     except ImportError:
         return pt_path
+
     import shutil
     try:
         from ultralytics import YOLO
@@ -743,14 +772,13 @@ def resolve_openvino(pt_path, imgsz=640):
         stem = os.path.splitext(os.path.basename(abs_pt))[0] + "_openvino_model"
         beside = os.path.join(os.path.dirname(abs_pt), stem)
         if os.path.isdir(beside):
-            print(f"[OpenVINO] Using cached export: {beside}")
+            print(f"[OpenVINO] Using cached model export: {beside}")
             return beside
-        print(f"[OpenVINO] Exporting {os.path.basename(abs_pt)} (imgsz={imgsz}, one-time, minutes)...")
+        print(f"[OpenVINO] Exporting {os.path.basename(abs_pt)} (imgsz={imgsz})...")
         YOLO(abs_pt).export(format="openvino", imgsz=imgsz)
         if os.path.isdir(beside):
             print(f"[OpenVINO] Export ready: {beside}")
             return beside
-        # Ultralytics may drop the export in CWD instead — relocate it beside the .pt
         cwd_copy = os.path.join(os.getcwd(), stem)
         if os.path.isdir(cwd_copy):
             if os.path.isdir(beside):
@@ -759,7 +787,7 @@ def resolve_openvino(pt_path, imgsz=640):
             print(f"[OpenVINO] Export ready: {beside}")
             return beside
     except Exception as e:
-        print(f"[OpenVINO] Export notice ({e}); using torch .pt fallback.")
+        print(f"[AI ENGINE] OpenVINO notice ({e}); using native PyTorch .pt engine.")
     return pt_path
 
 
@@ -786,45 +814,107 @@ def _crop_is_frozen(frame, box, raw_id):
         return False
 
 
-# --- Persistent Chicken ID Allocator with Spatial Re-Identification ---
+# --- Persistent Chicken ID Allocator with Motion-Predictive Spatial Re-Identification ---
+def update_track_velocity(disp_id, cx, cy, curr_time):
+    """Updates exponential moving average velocity vector (vx, vy) in px/sec for running chicken prediction."""
+    if disp_id in display_id_last_positions:
+        prev_cx, prev_cy, prev_t = display_id_last_positions[disp_id]
+        dt_pos = max(0.01, min(1.0, curr_time - prev_t))
+        inst_vx = (cx - prev_cx) / dt_pos
+        inst_vy = (cy - prev_cy) / dt_pos
+
+        old_vx, old_vy = track_velocities[disp_id]
+        vx = 0.6 * old_vx + 0.4 * inst_vx
+        vy = 0.6 * old_vy + 0.4 * inst_vy
+        track_velocities[disp_id] = (vx, vy)
+
+    display_id_last_positions[disp_id] = (cx, cy, curr_time)
+
+
 def assign_display_id(raw_id, cx=None, cy=None, box=None):
-    """Guarantees consistent Chicken IDs (#1 to #10). If tracking momentarily blips or drops
-    due to pecking/occlusion, re-identifies the chicken at its previous coordinates rather than
-    assigning a new ID."""
+    """Guarantees consistent Chicken IDs (#1 to #10) even when chickens run fast or change direction.
+    Uses linear motion prediction (velocity vectors) and dynamic search radii to match running chickens."""
     curr_time = time.time()
 
-    # 1. If this raw tracker ID is already mapped, update position and return
+    # 1. If this raw tracker ID is already mapped, update position, velocity, and return
     if raw_id in track_display_ids:
+        disp_id = track_display_ids[raw_id]
         track_missed_counts[raw_id] = 0
         if cx is not None and cy is not None:
             track_last_positions[raw_id] = (cx, cy, curr_time)
-        return track_display_ids[raw_id]
+            update_track_velocity(disp_id, cx, cy, curr_time)
+        return disp_id
 
-    # 2. Spatial Re-Identification:
-    # Check if a chicken disappeared within the last 3.5 seconds close to (cx, cy)
+    # 2. Spatial & Motion-Predictive Re-Identification:
+    # Check candidates from BOTH:
+    #   A) Active tracks that were missed in current frame (raw ID handoff during running)
+    #   B) Inactive archived tracks
     best_match_id = None
     best_dist = float("inf")
+    matched_from_active_raw = None
 
     if cx is not None and cy is not None:
-        for disp_id, info in list(inactive_tracks.items()):
-            elapsed = curr_time - info["time"]
-            if elapsed < 3.5:
-                # Dynamic velocity-decay gating: 60px base + 30px per elapsed second (max 130px)
-                dynamic_radius = min(130.0, 60.0 + 30.0 * elapsed)
-                dist = float(np.hypot(cx - info["cx"], cy - info["cy"]))
-                if dist < dynamic_radius and dist < best_dist:
-                    best_dist = dist
-                    best_match_id = disp_id
+        # Candidate source A: missed active display IDs
+        missed_active_candidates = []
+        for r_id, d_id in list(track_display_ids.items()):
+            m_cnt = track_missed_counts.get(r_id, 0)
+            if m_cnt > 0:  # Currently un-matched in this frame
+                last_pos = track_last_positions.get(r_id)
+                if last_pos:
+                    missed_active_candidates.append((d_id, last_pos[0], last_pos[1], last_pos[2], r_id))
+
+        # Candidate source B: inactive archived tracks
+        inactive_candidates = []
+        for d_id, info in list(inactive_tracks.items()):
+            inactive_candidates.append((d_id, info["cx"], info["cy"], info["time"], None))
+
+        all_candidates = missed_active_candidates + inactive_candidates
+
+        for disp_id, last_cx, last_cy, last_t, old_raw_id in all_candidates:
+            elapsed = curr_time - last_t
+            if elapsed > 2.5:
+                continue
+
+            # Linear motion extrapolation: predict where running chicken moved to
+            vx, vy = track_velocities.get(disp_id, (0.0, 0.0))
+            pred_cx = last_cx + vx * elapsed
+            pred_cy = last_cy + vy * elapsed
+            speed = float(np.hypot(vx, vy))
+
+            # Dynamic velocity-expanded matching radius (tightened from 350px to 120px max)
+            dynamic_radius = min(120.0, max(50.0, 40.0 + (speed * 0.2) + (15.0 * elapsed)))
+
+            # Distance to predicted location and last known location
+            dist_pred = float(np.hypot(cx - pred_cx, cy - pred_cy))
+            dist_last = float(np.hypot(cx - last_cx, cy - last_cy))
+            dist = min(dist_pred, dist_last)
+
+            if dist < dynamic_radius and dist < best_dist:
+                best_dist = dist
+                best_match_id = disp_id
+                matched_from_active_raw = old_raw_id
 
     if best_match_id is not None:
-        # Reclaim the same chicken's persistent identity!
-        info = inactive_tracks.pop(best_match_id, {})
+        # Seamless ID handoff
+        if matched_from_active_raw is not None:
+            old_raw = matched_from_active_raw
+            track_display_ids.pop(old_raw, None)
+            track_missed_counts.pop(old_raw, None)
+            track_last_positions.pop(old_raw, None)
+            track_hit_streaks.pop(old_raw, None)
+            track_confirmed_raw_ids.discard(old_raw)
+        else:
+            inactive_tracks.pop(best_match_id, None)
+
         track_display_ids[raw_id] = best_match_id
         track_missed_counts[raw_id] = 0
+        track_hit_streaks[raw_id] = 2  # Require at least 1 more confident hit before re-confirming
         if cx is not None and cy is not None:
             track_last_positions[raw_id] = (cx, cy, curr_time)
+            update_track_velocity(best_match_id, cx, cy, curr_time)
+
         if best_match_id not in track_first_seen:
-            track_first_seen[best_match_id] = info.get("first_seen", curr_time)
+            track_first_seen[best_match_id] = curr_time
         return best_match_id
 
     # 3. New Chicken: Allocate the lowest available ID between 1 and MAX_TRACKED_CHICKENS
@@ -835,19 +925,19 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
             track_missed_counts[raw_id] = 0
             if cx is not None and cy is not None:
                 track_last_positions[raw_id] = (cx, cy, curr_time)
+                update_track_velocity(cand, cx, cy, curr_time)
             if cand not in track_first_seen:
                 track_first_seen[cand] = curr_time
                 track_stationary_duration[cand] = 0.0
             return cand
 
     # All slots (1..MAX_TRACKED_CHICKENS) occupied.
-    # Return None to preserve slots #1..#10 and avoid clobbering ID 1.
     return None
 
 
-def cleanup_stale_ids(active_raw_ids, max_missed=90):
-    """Keeps tracks alive through brief occlusions (90 frames = 3 seconds) and archives
-    inactive chickens for seamless spatial re-identification."""
+def cleanup_stale_ids(active_raw_ids, max_missed=120):
+    """Keeps tracks alive through brief occlusions / fast movement (120 frames = 4 seconds)
+    and archives inactive chickens for seamless spatial re-identification."""
     curr_time = time.time()
 
     for raw_id in list(track_display_ids.keys()):
@@ -866,33 +956,26 @@ def cleanup_stale_ids(active_raw_ids, max_missed=90):
                         "time": curr_time,
                         "first_seen": track_first_seen.get(disp_id, curr_time)
                     }
-                if raw_id in track_display_ids:
-                    del track_display_ids[raw_id]
-                if raw_id in track_missed_counts:
-                    del track_missed_counts[raw_id]
-                if raw_id in track_last_positions:
-                    del track_last_positions[raw_id]
-                if raw_id in track_hit_streaks:
-                    del track_hit_streaks[raw_id]
+                track_display_ids.pop(raw_id, None)
+                track_missed_counts.pop(raw_id, None)
+                track_last_positions.pop(raw_id, None)
+                track_hit_streaks.pop(raw_id, None)
                 track_crop_sig.pop(raw_id, None)
                 track_frozen_streaks.pop(raw_id, None)
                 track_confirmed_raw_ids.discard(raw_id)
 
-    # Clean up inactive tracks older than 6.0 seconds
+    # Clean up inactive tracks older than 3.0 seconds
     for disp_id in list(inactive_tracks.keys()):
-        if curr_time - inactive_tracks[disp_id]["time"] > 6.0:
+        if curr_time - inactive_tracks[disp_id]["time"] > 3.0:
             del inactive_tracks[disp_id]
-            if disp_id in track_histories:
-                del track_histories[disp_id]
-            if disp_id in track_motion_windows:
-                del track_motion_windows[disp_id]
+            track_histories.pop(disp_id, None)
+            track_motion_windows.pop(disp_id, None)
+            track_first_seen.pop(disp_id, None)
+            track_stationary_duration.pop(disp_id, None)
+            track_classifications.pop(disp_id, None)
+            track_velocities.pop(disp_id, None)
+            display_id_last_positions.pop(disp_id, None)
 
-            if disp_id in track_first_seen:
-                del track_first_seen[disp_id]
-            if disp_id in track_stationary_duration:
-                del track_stationary_duration[disp_id]
-            if disp_id in track_classifications:
-                del track_classifications[disp_id]
 
 
 # --- Color Palette for Chicken HUD Badges ---
@@ -986,6 +1069,25 @@ def api_discover():
     })
 
 
+@flask_app.route('/power/shutdown', methods=['GET', 'POST'])
+def power_shutdown():
+    """Remote desktop computer shutdown endpoint triggered by PoultrySense app."""
+    print("[POWER] Remote shutdown signal received from PoultrySense App!")
+
+    def execute_shutdown():
+        time.sleep(1)
+        if sys.platform.startswith('win'):
+            os.system('shutdown /s /t 5 /c "PoultrySense Remote Shutdown"')
+        else:
+            os.system('shutdown -h +1 "PoultrySense Remote Shutdown"')
+
+    threading.Thread(target=execute_shutdown, daemon=True).start()
+    return jsonify({
+        "status": "success",
+        "message": "Desktop computer shutdown sequence initiated. PC will turn off in 5 seconds."
+    })
+
+
 @flask_app.route('/api/sensor', methods=['GET', 'POST'])
 def handle_sensor():
     """Receive or retrieve live environmental sensor data from ESP32."""
@@ -1025,6 +1127,11 @@ def reset_ids():
     track_last_positions.clear()
     track_motion_windows.clear()
     inactive_tracks.clear()
+    track_velocities.clear()
+    display_id_last_positions.clear()
+    track_hit_streaks.clear()
+    track_confirmed_raw_ids.clear()
+    display_coasting_boxes.clear()
     return jsonify({"status": "success", "message": "Chicken tracking IDs and histories reset successfully."})
 
 
@@ -1261,6 +1368,8 @@ def camera_loop():
 
     print("[INFO] Initializing PoultrySense AI Engine...")
 
+    exec_device = get_execution_device()
+
     det_model = None
     behavior_model = None
     health_model = None
@@ -1271,8 +1380,14 @@ def camera_loop():
         det_path = get_model_path(DET_MODELS)
         if det_path:
             try:
-                print(f"[INFO] Loading Detection Model from: {det_path}")
-                det_model = YOLO(resolve_openvino(det_path, imgsz=640))
+                resolved_det = resolve_accelerated_model(det_path, imgsz=640)
+                print(f"[INFO] Loading Detection Model from: {resolved_det}")
+                try:
+                    det_model = YOLO(resolved_det)
+                except Exception as ex_ov:
+                    print(f"[WARN] Accelerated load notice ({ex_ov}); falling back to native PyTorch .pt: {det_path}")
+                    det_model = YOLO(det_path)
+
                 print("[INFO] YOLO Detection Model loaded successfully!")
 
                 # Determine strict chicken class ID(s)
@@ -1297,12 +1412,27 @@ def camera_loop():
             except Exception as e:
                 print(f"[WARN] Failed to load Detection Model: {e}")
 
+        # Human / Person Veto Filter (prevents hands, arms, and people from false-triggering chicken tracks)
+        person_model = None
+        yolo11_path = os.path.join(SCRIPT_DIR, "yolo11n.pt")
+        if os.path.exists(yolo11_path):
+            try:
+                person_model = YOLO(yolo11_path)
+                print("[INFO] Human & Hand Veto Filter active (yolo11n.pt)")
+            except Exception:
+                pass
+
         # 2. Behavior Classification Model
         beh_path = get_model_path(BEHAVIOR_MODELS)
         if beh_path:
             try:
-                print(f"[INFO] Loading Behavior Model from: {beh_path}")
-                behavior_model = YOLO(resolve_openvino(beh_path, imgsz=160))
+                resolved_beh = resolve_accelerated_model(beh_path, imgsz=160)
+                print(f"[INFO] Loading Behavior Model from: {resolved_beh}")
+                try:
+                    behavior_model = YOLO(resolved_beh)
+                except Exception as ex_beh:
+                    print(f"[WARN] Accelerated load notice ({ex_beh}); using PyTorch .pt: {beh_path}")
+                    behavior_model = YOLO(beh_path)
                 print("[INFO] Behavior Classification Model loaded successfully!")
             except Exception as e:
                 print(f"[WARN] Could not load Behavior Model: {e}")
@@ -1311,8 +1441,13 @@ def camera_loop():
         hlth_path = get_model_path(HEALTH_MODELS)
         if hlth_path:
             try:
-                print(f"[INFO] Loading Health Classifier Model from: {hlth_path}")
-                health_model = YOLO(resolve_openvino(hlth_path, imgsz=160))
+                resolved_hlth = resolve_accelerated_model(hlth_path, imgsz=160)
+                print(f"[INFO] Loading Health Classifier Model from: {resolved_hlth}")
+                try:
+                    health_model = YOLO(resolved_hlth)
+                except Exception as ex_hlth:
+                    print(f"[WARN] Accelerated load notice ({ex_hlth}); using PyTorch .pt: {hlth_path}")
+                    health_model = YOLO(hlth_path)
                 print("[INFO] Health Classifier Model loaded successfully!")
             except Exception as e:
                 print(f"[WARN] Could not load Health Model: {e}")
@@ -1364,6 +1499,16 @@ def camera_loop():
         # Interleaved frames reuse confirmed tracking positions for silky-smooth 25-30 FPS!
         is_detection_frame = (frame_count % 2 == 0) or (len(display_coasting_boxes) == 0)
 
+        # Human / Person Veto: detect persons every 5 frames to reject human hands, arms, and bodies
+        person_boxes = []
+        if person_model is not None and (frame_count % 5 == 0):
+            try:
+                p_res = person_model.predict(frame, classes=[0], conf=0.35, imgsz=480, verbose=False)[0]
+                if p_res.boxes is not None and len(p_res.boxes) > 0:
+                    person_boxes = p_res.boxes.xyxy.cpu().numpy()
+            except Exception:
+                pass
+
         if det_model is not None and is_detection_frame:
             active_raw_ids = []
             raw_boxes = []
@@ -1376,10 +1521,11 @@ def camera_loop():
                     persist=True,
                     tracker=tracker_cfg,
                     classes=chicken_classes,
-                    conf=0.10,          # Enables ByteTrack low-score association stage
+                    conf=0.35,          # Confident chicken threshold
                     iou=0.50,
-                    imgsz=640,          # Matches OpenVINO export shape (OV-640 beats torch-480)
-                    max_det=20,          # Feed candidates to ByteTrack without pre-truncation
+                    imgsz=640,          # 640 native resolution matching PoultrySense v3
+                    max_det=20,
+                    device=exec_device,
                     verbose=False
                 )[0]
 
@@ -1393,6 +1539,26 @@ def camera_loop():
                     for box, conf, raw_id, c_id in zip(xyxys, confs, ids, cls_ids):
                         if int(c_id) not in chicken_classes:
                             continue
+
+                        # 1. Human / Person Veto: Reject if center is inside or overlaps a detected person/body
+                        bx1, by1, bx2, by2 = box
+                        bcx = (bx1 + bx2) / 2.0
+                        bcy = (by1 + by2) / 2.0
+                        is_human = False
+                        for pbox in person_boxes:
+                            if pbox[0] <= bcx <= pbox[2] and pbox[1] <= bcy <= pbox[3]:
+                                is_human = True
+                                break
+                        if is_human:
+                            continue
+
+                        # 2. Minimum Box Dimensions & Plump Aspect Ratio Filter (rejects fingers, cords, and specks)
+                        box_w = abs(bx2 - bx1)
+                        box_h = abs(by2 - by1)
+                        aspect = box_w / max(1.0, box_h)
+                        if box_w < 45 or box_h < 45 or aspect < 0.28 or aspect > 3.2:
+                            continue
+
                         raw_boxes.append(box)
                         raw_confs.append(float(conf))
                         active_raw_ids.append(int(raw_id))
@@ -1401,37 +1567,44 @@ def camera_loop():
 
             cleanup_stale_ids(active_raw_ids)
 
-            # Collect display items (both active detections and anti-blink coasting tracks)
+            # Collect display items (both active detections and motion-extrapolated coasting tracks)
             display_items = []
             seen_display_ids = set()
 
             for box, conf, raw_id in zip(raw_boxes, raw_confs, active_raw_ids):
-                # Debounce: require 3 hits at conf >= 0.25 before confirming a new track.
-                # Pixel-churn gate: static screen regions (paused UI, icons) are
-                # pixel-identical frame-to-frame and can never confirm; real scenes
-                # always churn, so the streak is frozen (not reset) on frozen hits.
-                if raw_id in track_confirmed_raw_ids:
-                    pass
-                elif conf >= 0.25:
-                    if _crop_is_frozen(frame, box, raw_id):
-                        track_frozen_streaks[raw_id] += 1
-                        if track_frozen_streaks[raw_id] >= CHURN_MAX_FROZEN:
-                            continue
-                    else:
-                        track_frozen_streaks[raw_id] = 0
-                    track_hit_streaks[raw_id] += 1
-                    if track_hit_streaks[raw_id] >= 3:
-                        track_confirmed_raw_ids.add(raw_id)
-                    else:
-                        continue
-                else:
-                    continue
-
                 cx = (box[0] + box[2]) / 2.0
                 cy = (box[1] + box[3]) / 2.0
+
+                # 1. Spatial/Motion-Predictive Display ID allocation (instant handoff for running chickens)
                 display_id = assign_display_id(raw_id, cx=cx, cy=cy, box=box)
                 if display_id is None:
                     continue
+
+                # 2. Debounce & Frozen Crop Check (filters out hands, furniture, and room artifacts)
+                if raw_id not in track_confirmed_raw_ids:
+                    if conf >= 0.38:
+                        if _crop_is_frozen(frame, box, raw_id):
+                            track_frozen_streaks[raw_id] += 1
+                            if track_frozen_streaks[raw_id] >= CHURN_MAX_FROZEN:
+                                continue
+                        else:
+                            track_frozen_streaks[raw_id] = 0
+                        track_hit_streaks[raw_id] += 1
+                        required_hits = 2 if conf >= 0.50 else 3
+                        if track_hit_streaks[raw_id] >= required_hits:
+                            track_confirmed_raw_ids.add(raw_id)
+                        else:
+                            continue
+                    else:
+                        continue
+
+                # 3. EMA Box Position Smoothing (stabilizes bounding boxes on fast-running chickens)
+                if display_id in display_coasting_boxes:
+                    prev_box = display_coasting_boxes[display_id]["box"]
+                    alpha = 0.70  # 70% current detection, 30% previous frame box
+                    box = alpha * box + (1.0 - alpha) * prev_box
+                    cx = (box[0] + box[2]) / 2.0
+                    cy = (box[1] + box[3]) / 2.0
 
                 seen_display_ids.add(display_id)
                 display_coasting_boxes[display_id] = {
@@ -1452,15 +1625,30 @@ def camera_loop():
                     "is_coasting": False
                 })
 
-            # Anti-blink coasting: hold confirmed tracks for up to 5 missed frames (~160ms) during pecks/occlusion
+            # Anti-blink motion coasting: hold confirmed tracks for up to 2 missed frames (~66ms)
             for disp_id in list(display_coasting_boxes.keys()):
                 if disp_id not in seen_display_ids:
                     c_info = display_coasting_boxes[disp_id]
                     c_info["missed"] += 1
-                    if c_info["missed"] <= 5:
+                    if c_info["missed"] <= 2:
+                        vx, vy = track_velocities.get(disp_id, (0.0, 0.0))
+                        # Extrapolate box position along running velocity vector
+                        shift_x = float(vx * dt)
+                        shift_y = float(vy * dt)
+                        old_box = c_info["box"]
+                        new_box = np.array([
+                            max(0.0, float(old_box[0] + shift_x)),
+                            max(0.0, float(old_box[1] + shift_y)),
+                            min(float(w_frame), float(old_box[2] + shift_x)),
+                            min(float(h_frame), float(old_box[3] + shift_y))
+                        ], dtype=np.float32)
+
+                        c_info["box"] = new_box
+                        c_info["cx"] += shift_x
+                        c_info["cy"] += shift_y
                         display_items.append({
                             "display_id": disp_id,
-                            "box": c_info["box"],
+                            "box": new_box,
                             "conf": c_info["conf"],
                             "raw_id": c_info["raw_id"],
                             "cx": c_info["cx"],
@@ -1808,6 +1996,48 @@ def udp_discovery_loop():
         print(f"[DISCOVERY] UDP notice: {e}")
 
 
+def serial_pc_shutdown_listener():
+    """Monitors connected ESP32 USB Serial port for PC shutdown triggers."""
+    try:
+        import serial
+        import serial.tools.list_ports
+    except ImportError:
+        print("[INFO] PySerial not installed — USB Serial monitor skipped.")
+        return
+
+    print("[INFO] ESP32 PC Shutdown Serial Listener active...")
+    while True:
+        try:
+            ports = list(serial.tools.list_ports.comports())
+            esp_port = None
+            for p in ports:
+                desc_full = f"{p.description} {getattr(p, 'manufacturer', '')} {getattr(p, 'product', '')}".lower()
+                if any(k in desc_full for k in ["ch340", "cp210", "usb", "uart", "esp32", "serial", "silicon labs", "qinheng", "ftdi"]):
+                    esp_port = p.device
+                    break
+
+            if esp_port:
+                ser = serial.Serial(esp_port, 115200, timeout=2)
+                print(f"[SERIAL] Connected to ESP32 on {esp_port} (115200 baud). Listening for shutdown signal...")
+                while ser.is_open:
+                    line = ser.readline().decode('utf-8', errors='ignore').strip()
+                    if line:
+                        if "SHUTDOWN_PC_NOW" in line or "SHUTDOWN_PC" in line:
+                            print("\n" + "=" * 60)
+                            print("[POWER] 🧨 SHUTDOWN SIGNAL RECEIVED FROM ESP32 HARDWARE VIA SERIAL!")
+                            print("[POWER] Windows PC shutdown sequence starting in 5 seconds...")
+                            print("=" * 60 + "\n")
+                            if sys.platform.startswith('win'):
+                                os.system('shutdown /s /t 5 /c "PoultrySense ESP32 Hardware Shutdown"')
+                            else:
+                                os.system('shutdown -h +1 "PoultrySense ESP32 Hardware Shutdown"')
+                            time.sleep(10)
+                ser.close()
+        except Exception:
+            pass
+        time.sleep(5)
+
+
 def main():
     print("=" * 65)
     print("   POULTRYSENSE AI - CHICKEN HEALTH & BEHAVIOR MONITORING SERVER   ")
@@ -1820,6 +2050,10 @@ def main():
     # 2. Start One-Tap Auto-Discovery broadcast responder
     disc_thread = threading.Thread(target=udp_discovery_loop, daemon=True)
     disc_thread.start()
+
+    # 3. Start ESP32 USB Serial Shutdown listener
+    serial_thread = threading.Thread(target=serial_pc_shutdown_listener, daemon=True)
+    serial_thread.start()
 
     print("[INFO] PoultrySense AI Server running at http://0.0.0.0:5000")
     flask_app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
