@@ -1,8 +1,8 @@
 # Ultralytics YOLO tracker config for ByteTrack (PoultrySense Chicken Tracking)
 tracker_type: bytetrack
-track_high_thresh: 0.25
-track_low_thresh: 0.10
-new_track_thresh: 0.28
-track_buffer: 120
-match_thresh: 0.5
-fuse_score: true
+track_high_thresh: 0.15
+track_low_thresh: 0.05
+new_track_thresh: 0.20
+track_buffer: 180
+match_thresh: 0.85
+fuse_score: true
