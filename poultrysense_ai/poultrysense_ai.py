@@ -420,6 +420,7 @@ class GeminiVerdictEngine:
         self.verdicts = {}              # track_id -> full verdict dict from Gemini
         self.active_alerts = {}         # track_id -> alert dict (for /alerts endpoint)
         self.chicken_summaries = {}     # track_id -> 1-sentence reason (backwards compat)
+        self.model_name = "gemini-3.6-flash"
         self.api_key = self._find_api_key()
         self.client = None
         self._init_client()
@@ -427,6 +428,9 @@ class GeminiVerdictEngine:
     def _find_api_key(self):
         # 1. Environment variable
         key = os.environ.get("GEMINI_API_KEY", "").strip()
+        model = os.environ.get("GEMINI_MODEL", "").strip()
+        if model:
+            self.model_name = model
         if key:
             return key
         # 2. Local config json
@@ -436,6 +440,9 @@ class GeminiVerdictEngine:
                 with open(cfg_path, "r") as f:
                     data = json.load(f)
                     k = data.get("gemini_api_key", "").strip()
+                    m = data.get("model", "").strip()
+                    if m:
+                        self.model_name = m
                     if k and k != "YOUR_GEMINI_API_KEY_HERE":
                         return k
             except Exception:
@@ -450,6 +457,10 @@ class GeminiVerdictEngine:
                             k = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
                             if k:
                                 return k
+                        elif line.strip().startswith("GEMINI_MODEL="):
+                            m = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+                            if m:
+                                self.model_name = m
             except Exception:
                 pass
         return ""
@@ -458,7 +469,7 @@ class GeminiVerdictEngine:
         if self.api_key and HAS_GEMINI:
             try:
                 self.client = genai.Client(api_key=self.api_key)
-                print("[Gemini] ✓ Initialized as PRIMARY VERDICT ENGINE (gemini-3.6-flash).")
+                print(f"[Gemini] ✓ Initialized as PRIMARY VERDICT ENGINE ({self.model_name}).")
             except Exception as e:
                 print(f"[Gemini] Client init notice: {e}")
         else:
@@ -546,7 +557,7 @@ class GeminiVerdictEngine:
                 )
 
                 response = self.client.models.generate_content(
-                    model='gemini-3.6-flash',
+                    model=self.model_name,
                     contents=[
                         types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
                         prompt
@@ -653,14 +664,14 @@ def classification_worker(beh_model, hlth_model):
 
         if beh_model is not None:
             try:
-                b_res = beh_model.predict(crop, imgsz=160, verbose=False)[0]
+                b_res = beh_model.predict(source=crop, imgsz=160, verbose=False)[0]
                 b_label = BEHAVIOR_NAMES.get(int(b_res.probs.top1), "stand")
             except Exception:
                 pass
 
         if hlth_model is not None:
             try:
-                h_res = hlth_model.predict(crop, imgsz=160, verbose=False)[0]
+                h_res = hlth_model.predict(source=crop, imgsz=160, verbose=False)[0]
                 # In PoultrySense_HealthClassifier: index 0 is Healthy, index 1 is Unhealthy
                 if h_res.probs is not None and len(h_res.probs.data) >= 2:
                     unhealthy_prob = float(h_res.probs.data[1])
@@ -1537,7 +1548,7 @@ def camera_loop():
         person_boxes = []
         if person_model is not None and (frame_count % 5 == 0):
             try:
-                p_res = person_model.predict(frame, classes=[0], conf=0.35, imgsz=480, verbose=False)[0]
+                p_res = person_model.predict(source=frame, classes=[0], conf=0.35, imgsz=480, verbose=False)[0]
                 if p_res.boxes is not None and len(p_res.boxes) > 0:
                     person_boxes = p_res.boxes.xyxy.cpu().numpy()
             except Exception:
@@ -1551,7 +1562,7 @@ def camera_loop():
             try:
                 tracker_cfg = TRACKER_YAML if os.path.exists(TRACKER_YAML) else "botsort.yaml"
                 results = det_model.track(
-                    frame,
+                    source=frame,
                     persist=True,
                     tracker=tracker_cfg,
                     classes=chicken_classes,
