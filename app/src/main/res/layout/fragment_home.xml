@@ -283,7 +283,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Flagged"
+                                android:text="Health Alerts"
                                 android:textColor="@color/text_primary"
                                 android:textSize="12sp" />
 
@@ -302,7 +302,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="Needs review"
+                                android:text="Needs Attention"
                                 android:textColor="@color/text_muted"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -318,7 +318,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Active Alerts"
+                                android:text="New Alerts"
                                 android:textColor="@color/text_primary"
                                 android:textSize="12sp" />
 
@@ -328,7 +328,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
                                 android:fontFamily="sans-serif-black"
-                                android:text="1 Alert"
+                                android:text="1 New"
                                 android:textColor="#D32F2F"
                                 android:textSize="13sp" />
 
@@ -337,7 +337,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="Zone 1 posture"
+                                android:text="Unread"
                                 android:textColor="@color/text_muted"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -372,7 +372,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="ByteTrack AI"
+                                android:text="AI Verified"
                                 android:textColor="@color/text_muted"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -578,7 +578,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:fontFamily="sans-serif-medium"
-                            android:text="62% Humidity\n23.8°C temp"
+                            android:text="62% Humidity\n23.8°C"
                             android:textColor="#EEFFFFFF"
                             android:textSize="9sp" />
 
@@ -704,7 +704,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="8dp"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="ByteTrack AI Anomaly Stream"
+                                android:text="Live Poultry Vision Stream"
                                 android:textColor="@color/white"
                                 android:textSize="13sp" />
 
@@ -777,7 +777,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="ByteTrack Multi-Object Tracker Active"
+                                android:text="Live AI Chicken Tracking Active"
                                 android:textColor="@color/text_muted"
                                 android:textSize="11sp" />
                         </LinearLayout>

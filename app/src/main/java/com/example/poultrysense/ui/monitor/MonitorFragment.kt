@@ -278,7 +278,7 @@ class MonitorFragment : Fragment() {
                 binding.tvMonitorSubtitle.text = "Camera 1 • Main Barn Flock"
                 binding.tvHudSource.text = "CAM 1 • MAIN COOP"
                 binding.tvActiveCameraLabel.text = "Camera 1 Active • 1080p Stream"
-                binding.tvTelemetrySub.text = "ByteTrack Multi-Object Intelligence • Cam 1"
+                binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 1"
                 binding.tvHudLatency.visibility = View.VISIBLE
                 binding.btnFlipCameraLens.alpha = 0.4f
                 startCameraStream()
@@ -291,7 +291,7 @@ class MonitorFragment : Fragment() {
                 binding.tvMonitorSubtitle.text = "Camera 2 • Brooder Zone"
                 binding.tvHudSource.text = "CAM 2 • BROODER"
                 binding.tvActiveCameraLabel.text = "Camera 2 Active • 1080p Stream"
-                binding.tvTelemetrySub.text = "ByteTrack Multi-Object Intelligence • Cam 2"
+                binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 2"
                 binding.tvHudLatency.visibility = View.VISIBLE
                 binding.btnFlipCameraLens.alpha = 0.4f
                 startCameraStream()
@@ -304,7 +304,7 @@ class MonitorFragment : Fragment() {
                 binding.tvMonitorSubtitle.text = "Camera 3 • Nesting Area"
                 binding.tvHudSource.text = "CAM 3 • NESTING"
                 binding.tvActiveCameraLabel.text = "Camera 3 Active • 1080p Stream"
-                binding.tvTelemetrySub.text = "ByteTrack Multi-Object Intelligence • Cam 3"
+                binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 3"
                 binding.tvHudLatency.visibility = View.VISIBLE
                 binding.btnFlipCameraLens.alpha = 0.4f
                 startCameraStream()
@@ -453,7 +453,7 @@ class MonitorFragment : Fragment() {
 
                                     updateStatusBadge(isConnected, if (isConnected) "AI Connected" else "AI Offline")
                                     binding.tvHudFps.text = String.format("%.1f FPS", fps)
-                                    binding.tvDetectionCount.text = "$count Subjects"
+                                    binding.tvDetectionCount.text = "$count in View"
                                     binding.tvTelemetryCountVal.text = count.toString()
                                     binding.tvTelemetryPostureVal.text = "$healthIndex%"
                                     binding.tvTelemetryLatencyVal.text = "0.03s"
@@ -721,18 +721,18 @@ class MonitorFragment : Fragment() {
         binding.tvScheduledRunInfo.text = "Next: " + CheckupSessionManager.getScheduleDescription(ctx)
 
         if (isActive) {
-            binding.tvSessionTitle.text = "AI Checkup Active"
+            binding.tvSessionTitle.text = "Diagnostic Scan Active"
             binding.tvSessionSubtitle.text = "Analyzing flock behavior & logging telemetry"
             binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.accent_green)
-            binding.btnToggleSession.text = "Stop Inspection"
+            binding.btnToggleSession.text = "Stop Scan"
             binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.critical)
             binding.layoutActiveSessionBanner.visibility = View.VISIBLE
             startSessionTicker()
         } else {
-            binding.tvSessionTitle.text = "AI Checkup Session"
-            binding.tvSessionSubtitle.text = "Idle • Tap Start to run flock inspection"
+            binding.tvSessionTitle.text = "AI Health Checkup"
+            binding.tvSessionSubtitle.text = "Continuous 24/7 AI Health Monitoring"
             binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.text_muted)
-            binding.btnToggleSession.text = "Start Inspection"
+            binding.btnToggleSession.text = "Run On-Demand Scan"
             binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.primary)
             binding.layoutActiveSessionBanner.visibility = View.GONE
             stopSessionTicker()

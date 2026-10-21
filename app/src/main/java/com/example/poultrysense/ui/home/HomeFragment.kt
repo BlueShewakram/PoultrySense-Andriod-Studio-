@@ -141,7 +141,7 @@ class HomeFragment : Fragment() {
         val ctx = context ?: return
         val mainActivity = activity as? MainActivity
         val activeAlertsCount = mainActivity?.farmAlerts?.count { !it.read } ?: 0
-        binding.tvActiveAlertsCount.text = if (activeAlertsCount == 1) "1 Alert" else "$activeAlertsCount Alerts"
+        binding.tvActiveAlertsCount.text = if (activeAlertsCount == 1) "1 New" else "$activeAlertsCount New"
 
         // Dynamic inspection metrics from CheckupSessionManager
         val latestSession = com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull()

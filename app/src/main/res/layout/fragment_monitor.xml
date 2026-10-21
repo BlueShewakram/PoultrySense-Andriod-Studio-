@@ -228,7 +228,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-black"
-                                android:text="48"
+                                android:text="--"
                                 android:textColor="@color/primary"
                                 android:textSize="19sp" />
 
@@ -237,7 +237,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Tracked Birds"
+                                android:text="Chickens in View"
                                 android:textColor="#64748B"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -628,7 +628,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="ByteTrack Multi-Object Intelligence • Cam 1"
+                                android:text="AI Flock Tracking • Cam 1"
                                 android:textColor="#64748B"
                                 android:textSize="11.5sp" />
                         </LinearLayout>
@@ -750,7 +750,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="16dp"
                         android:fontFamily="sans-serif-bold"
-                        android:text="Tracked Flock Subjects"
+                        android:text="Active Flock Members"
                         android:textColor="#0F172A"
                         android:textSize="13sp" />
 
@@ -798,7 +798,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="ByteTrack Confidence 96% • Stable"
+                                android:text="AI Tracking: Confirmed • Normal"
                                 android:textColor="#64748B"
                                 android:textSize="11sp" />
                         </LinearLayout>
@@ -860,7 +860,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="ByteTrack Confidence 92% • Active"
+                                android:text="AI Tracking: Active • Normal"
                                 android:textColor="#64748B"
                                 android:textSize="11sp" />
                         </LinearLayout>
@@ -925,7 +925,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-black"
-                                android:text="Flock Inspection Session"
+                                android:text="AI Health Checkup"
                                 android:textColor="#0F172A"
                                 android:textSize="15sp" />
 
@@ -935,7 +935,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif"
-                                android:text="Idle • Ready to begin automated inspection"
+                                android:text="Continuous 24/7 AI Health Monitoring"
                                 android:textColor="#64748B"
                                 android:textSize="11.5sp" />
                         </LinearLayout>
@@ -985,7 +985,7 @@
                             android:layout_marginStart="8dp"
                             android:layout_weight="1"
                             android:fontFamily="sans-serif-medium"
-                            android:text="Time remaining:"
+                            android:text="Checkup interval:"
                             android:textColor="#475569"
                             android:textSize="12sp" />
 
@@ -1018,7 +1018,7 @@
                         android:layout_marginTop="10dp"
                         android:backgroundTint="@color/primary"
                         android:fontFamily="sans-serif-bold"
-                        android:text="Start Inspection Session"
+                        android:text="Run On-Demand Scan"
                         android:textAllCaps="false"
                         android:textColor="@color/white"
                         android:textSize="14sp"

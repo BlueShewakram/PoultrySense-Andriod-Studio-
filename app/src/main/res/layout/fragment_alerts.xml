@@ -34,7 +34,7 @@
                     android:layout_height="wrap_content"
                     android:fontFamily="sans-serif-black"
                     android:letterSpacing="-0.03"
-                    android:text="Security Alerts"
+                    android:text="Flock Health Alerts"
                     android:textColor="#0F172A"
                     android:textSize="26sp" />
 
