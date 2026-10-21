@@ -39,10 +39,53 @@ class LoginActivity : AppCompatActivity() {
         // Edge-to-edge: let the scenic image draw under the status bar
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
 
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val imeHeight = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom
+            val navHeight = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()).bottom
+            val bottomPadding = maxOf(imeHeight, navHeight)
+            binding.scrollLogin.setPadding(0, 0, 0, bottomPadding)
+            if (imeHeight > 0) {
+                val focused = currentFocus
+                if (focused == binding.etPassword || focused == binding.tilPassword) {
+                    binding.scrollLogin.postDelayed({
+                        val targetY = binding.headerSectionLogin.height - 36 + binding.tilPassword.top
+                        binding.scrollLogin.smoothScrollTo(0, targetY)
+                    }, 100)
+                }
+            }
+            insets
+        }
+
         flyingChickenAnimator = FlyingChickenAnimator(binding.ivFlyingChicken)
         playEntranceAnimation()
         setupValidationListeners()
+        setupFocusAndScrollListeners()
         setupClickListeners()
+    }
+
+    private fun setupFocusAndScrollListeners() {
+        binding.etPassword.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                binding.scrollLogin.postDelayed({
+                    val targetY = binding.headerSectionLogin.height - 36 + binding.tilPassword.top
+                    binding.scrollLogin.smoothScrollTo(0, targetY)
+                }, 200)
+            }
+        }
+        binding.etPassword.setOnClickListener {
+            binding.scrollLogin.postDelayed({
+                val targetY = binding.headerSectionLogin.height - 36 + binding.tilPassword.top
+                binding.scrollLogin.smoothScrollTo(0, targetY)
+            }, 200)
+        }
+        binding.etEmail.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) {
+                binding.scrollLogin.postDelayed({
+                    val targetY = binding.headerSectionLogin.height - 36 + binding.tilEmail.top
+                    binding.scrollLogin.smoothScrollTo(0, targetY)
+                }, 200)
+            }
+        }
     }
 
     override fun onResume() {
@@ -143,21 +186,45 @@ class LoginActivity : AppCompatActivity() {
             setLoading(false)
 
             result.onSuccess { user ->
-                val displayName = user.displayName ?: ""
-                val parts = displayName.split(" ")
-                val fName = if (parts.isNotEmpty()) parts[0] else ""
-                val lName = if (parts.size > 1) parts.subList(1, parts.size).joinToString(" ") else ""
-                val initialUser = com.example.poultrysense.data.models.User(
-                    uid = user.uid,
-                    firstName = fName,
-                    lastName = lName,
-                    email = user.email ?: "",
-                    farmName = "Poultry Farm",
-                    role = "Lead Farm Specialist"
-                )
-                com.example.poultrysense.data.UserPreferences.saveUser(this@LoginActivity, initialUser)
+                // 1. Fetch user's existing profile from Realtime Database to restore avatar and details
+                val profileResult = authRepository.getUserProfile(user.uid)
+                val cloudUser = profileResult.getOrNull()
 
-                val greeting = user.displayName?.ifEmpty { null } ?: "Specialist"
+                val finalUser = cloudUser ?: run {
+                    val displayName = user.displayName ?: ""
+                    val parts = displayName.split(" ")
+                    val fName = if (parts.isNotEmpty()) parts[0] else ""
+                    val lName = if (parts.size > 1) parts.subList(1, parts.size).joinToString(" ") else ""
+                    com.example.poultrysense.data.models.User(
+                        uid = user.uid,
+                        firstName = fName,
+                        lastName = lName,
+                        email = user.email ?: "",
+                        farmName = "Poultry Farm",
+                        role = "Lead Farm Specialist"
+                    )
+                }
+                com.example.poultrysense.data.UserPreferences.saveUser(this@LoginActivity, finalUser)
+
+                // 2. Hydrate local profile_avatar.jpg immediately so it's ready upon app open
+                if (!finalUser.avatarUrl.isNullOrEmpty() && (finalUser.avatarUrl.startsWith("data:image") || finalUser.avatarUrl.length > 100)) {
+                    try {
+                        val b64 = if (finalUser.avatarUrl.contains("base64,")) {
+                            finalUser.avatarUrl.substringAfter("base64,")
+                        } else {
+                            finalUser.avatarUrl
+                        }
+                        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val localFile = java.io.File(filesDir, "profile_avatar.jpg")
+                            localFile.writeBytes(bytes)
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+
+                val greeting = finalUser.firstName.ifEmpty { user.displayName?.ifEmpty { null } ?: "Specialist" }
                 Toast.makeText(this@LoginActivity, "Welcome back, $greeting!", Toast.LENGTH_SHORT).show()
 
                 val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {

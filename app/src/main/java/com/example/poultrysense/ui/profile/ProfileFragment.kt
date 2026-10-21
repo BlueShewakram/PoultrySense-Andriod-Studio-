@@ -100,11 +100,27 @@ class ProfileFragment : Fragment() {
                     if (_binding == null) return@onSuccess
                     val localFile = File(context.filesDir, "profile_avatar.jpg")
 
-                    val isStaleOrEmpty = user.avatarUrl.isEmpty() ||
-                            user.avatarUrl.startsWith("content://") ||
-                            user.avatarUrl.contains("unsplash.com")
+                    val hasCloudAvatar = !user.avatarUrl.isNullOrEmpty() &&
+                            (user.avatarUrl.startsWith("data:image") || user.avatarUrl.startsWith("http") || user.avatarUrl.length > 100)
 
-                    val effectiveUser = if (isStaleOrEmpty && localFile.exists() && localFile.length() > 0) {
+                    val effectiveUser = if (hasCloudAvatar) {
+                        // Hydrate local storage file from cloud Base64 if needed
+                        if (user.avatarUrl.startsWith("data:image") || user.avatarUrl.length > 100) {
+                            try {
+                                val b64 = if (user.avatarUrl.contains("base64,")) {
+                                    user.avatarUrl.substringAfter("base64,")
+                                } else {
+                                    user.avatarUrl
+                                }
+                                val bytes = Base64.decode(b64, Base64.DEFAULT)
+                                if (bytes != null && bytes.isNotEmpty()) {
+                                    localFile.writeBytes(bytes)
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        user
+                    } else if (localFile.exists() && localFile.length() > 0) {
+                        // Cloud has no avatar but local file exists -> sync local avatar up to cloud
                         try {
                             val bytes = localFile.readBytes()
                             val base64 = "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -115,15 +131,6 @@ class ProfileFragment : Fragment() {
                         } catch (_: Exception) {
                             user.copy(avatarUrl = Uri.fromFile(localFile).toString())
                         }
-                    } else if (!user.avatarUrl.isNullOrEmpty() && user.avatarUrl.startsWith("data:image")) {
-                        try {
-                            val b64 = user.avatarUrl.substringAfter("base64,")
-                            val bytes = Base64.decode(b64, Base64.DEFAULT)
-                            if (bytes != null && bytes.isNotEmpty()) {
-                                localFile.writeBytes(bytes)
-                            }
-                        } catch (_: Exception) {}
-                        user
                     } else {
                         user
                     }
@@ -205,10 +212,10 @@ class ProfileFragment : Fragment() {
     private fun resolveAvatarSource(ctx: Context, rawAvatar: String?): Any {
         val localFile = File(ctx.filesDir, "profile_avatar.jpg")
 
-        // 1. Base64 data URI
-        if (!rawAvatar.isNullOrEmpty() && rawAvatar.startsWith("data:image")) {
+        // 1. Base64 data URI or long Base64 payload
+        if (!rawAvatar.isNullOrEmpty() && (rawAvatar.startsWith("data:image") || rawAvatar.length > 100)) {
             try {
-                val base64Data = rawAvatar.substringAfter("base64,")
+                val base64Data = if (rawAvatar.contains("base64,")) rawAvatar.substringAfter("base64,") else rawAvatar
                 val bytes = Base64.decode(base64Data, Base64.DEFAULT)
                 if (bytes != null && bytes.isNotEmpty()) {
                     if (!localFile.exists() || localFile.length() == 0L) {
@@ -266,29 +273,88 @@ class ProfileFragment : Fragment() {
     private var dialogAvatarImageView: com.google.android.material.imageview.ShapeableImageView? = null
 
     /**
-     * Process picked image: scales to 256x256, compresses to ~15KB JPEG,
-     * writes to internal storage, and returns Base64 data string for Firebase sync.
+     * Process picked image: safely subsamples large camera photos, respects EXIF orientation,
+     * center-crops to square, resizes to 200x200, compresses to lightweight ~12KB JPEG,
+     * caches to internal storage, and returns Base64 data string for Cloud Firebase Realtime Database.
      */
     private fun processAndSaveAvatar(sourceUri: Uri): String? {
         val ctx = context ?: return null
         return try {
-            val inputStream = ctx.contentResolver.openInputStream(sourceUri) ?: return null
-            val originalBitmap = BitmapFactory.decodeStream(inputStream)
-            inputStream.close()
-            if (originalBitmap == null) return null
+            // 1. Inspect image dimensions without loading full bitmap into RAM
+            val boundsOptions = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            ctx.contentResolver.openInputStream(sourceUri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, boundsOptions)
+            }
 
-            val size = 256
-            val scaledBitmap = Bitmap.createScaledBitmap(originalBitmap, size, size, true)
+            val maxDimension = 360
+            var sampleSize = 1
+            var w = boundsOptions.outWidth
+            var h = boundsOptions.outHeight
+            while (w / 2 >= maxDimension && h / 2 >= maxDimension) {
+                sampleSize *= 2
+                w /= 2
+                h /= 2
+            }
+
+            // 2. Decode sampled bitmap safely with RGB_565 (prevents OutOfMemory on high-res camera shots)
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
+            }
+            val sampledBitmap = ctx.contentResolver.openInputStream(sourceUri)?.use { input ->
+                BitmapFactory.decodeStream(input, null, decodeOptions)
+            } ?: return null
+
+            // 3. Handle EXIF orientation rotation (camera portrait/landscape)
+            val orientation = try {
+                ctx.contentResolver.openInputStream(sourceUri)?.use { input ->
+                    android.media.ExifInterface(input).getAttributeInt(
+                        android.media.ExifInterface.TAG_ORIENTATION,
+                        android.media.ExifInterface.ORIENTATION_NORMAL
+                    )
+                } ?: android.media.ExifInterface.ORIENTATION_NORMAL
+            } catch (_: Throwable) {
+                android.media.ExifInterface.ORIENTATION_NORMAL
+            }
+
+            val rotationDegrees = when (orientation) {
+                android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+
+            val orientedBitmap = if (rotationDegrees != 0f) {
+                val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees) }
+                Bitmap.createBitmap(sampledBitmap, 0, 0, sampledBitmap.width, sampledBitmap.height, matrix, true)
+            } else {
+                sampledBitmap
+            }
+
+            // 4. Center-crop to 1:1 square for perfect circular avatar framing
+            val minSide = minOf(orientedBitmap.width, orientedBitmap.height)
+            val xOffset = (orientedBitmap.width - minSide) / 2
+            val yOffset = (orientedBitmap.height - minSide) / 2
+            val squareBitmap = Bitmap.createBitmap(orientedBitmap, xOffset, yOffset, minSide, minSide)
+
+            // 5. Scale to standard 200x200 avatar size
+            val targetSize = 200
+            val finalBitmap = Bitmap.createScaledBitmap(squareBitmap, targetSize, targetSize, true)
+
             val baos = ByteArrayOutputStream()
-            scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos)
+            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
             val bytes = baos.toByteArray()
 
+            // 6. Write permanent local file
             val localFile = File(ctx.filesDir, "profile_avatar.jpg")
             localFile.writeBytes(bytes)
 
+            // 7. Base64 encoded payload for Firebase RTDB
             "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (t: Throwable) {
+            t.printStackTrace()
             null
         }
     }
@@ -326,8 +392,11 @@ class ProfileFragment : Fragment() {
                     UserPreferences.saveUser(ctx, updated)
                 }
                 authRepository.currentUser?.let { user ->
-                    lifecycleScope.launch {
-                        authRepository.updateAvatarUrl(user.uid, base64Data)
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        val uploadResult = authRepository.updateAvatarUrl(user.uid, base64Data)
+                        if (uploadResult.isSuccess) {
+                            Toast.makeText(ctx, "Profile photo saved to database", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             }
@@ -705,10 +774,10 @@ class ProfileFragment : Fragment() {
                     val bytes = localFile.readBytes()
                     "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
                 } catch (_: Exception) {
-                    Uri.fromFile(localFile).toString()
+                    ""
                 }
             } else {
-                ""
+                cachedUser?.avatarUrl.orEmpty()
             }
 
             val updatedUser = User(
@@ -734,7 +803,7 @@ class ProfileFragment : Fragment() {
             displayUser(updatedUser)
 
             // 2. Cloud update in background
-            lifecycleScope.launch {
+            viewLifecycleOwner.lifecycleScope.launch {
                 authRepository.updateUserProfile(currentUser.uid, updatedUser.toMap())
                 if (avatarString.isNotEmpty()) {
                     authRepository.updateAvatarUrl(currentUser.uid, avatarString)

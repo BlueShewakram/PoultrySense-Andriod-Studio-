@@ -138,7 +138,12 @@ class AuthRepository {
 
     suspend fun updateAvatarUrl(uid: String, avatarUrl: String): Result<Unit> {
         return try {
-            realtimeDb.getReference("users").child(uid).child("avatarUrl").setValue(avatarUrl).await()
+            val userRef = realtimeDb.getReference("users").child(uid)
+            userRef.keepSynced(true)
+            userRef.child("avatarUrl").setValue(avatarUrl).await()
+            try {
+                userRef.child("photoBase64").setValue(avatarUrl).await()
+            } catch (_: Exception) {}
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -147,7 +152,9 @@ class AuthRepository {
 
     suspend fun updateUserProfile(uid: String, updates: Map<String, Any?>): Result<Unit> {
         return try {
-            realtimeDb.getReference("users").child(uid).updateChildren(updates).await()
+            val userRef = realtimeDb.getReference("users").child(uid)
+            userRef.keepSynced(true)
+            userRef.updateChildren(updates).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -156,11 +163,16 @@ class AuthRepository {
 
     suspend fun getUserProfile(uid: String): Result<User> {
         return try {
-            val snapshot = withTimeoutOrNull(4000L) {
-                realtimeDb.getReference("users").child(uid).get().await()
+            val userRef = realtimeDb.getReference("users").child(uid)
+            userRef.keepSynced(true)
+            val snapshot = withTimeoutOrNull(15000L) {
+                userRef.get().await()
             }
             if (snapshot != null && snapshot.exists()) {
                 val map = snapshot.value as? Map<*, *>
+                val rawAvatar = map?.get("avatarUrl") as? String
+                    ?: (map?.get("photoBase64") as? String
+                    ?: (map?.get("photoUrl") as? String ?: ""))
                 val user = User(
                     uid = uid,
                     firstName = map?.get("firstName") as? String ?: "",
@@ -168,7 +180,7 @@ class AuthRepository {
                     email = map?.get("email") as? String ?: (auth.currentUser?.email ?: ""),
                     farmName = map?.get("farmName") as? String ?: "Poultry Farm",
                     role = map?.get("role") as? String ?: "Lead Farm Specialist",
-                    avatarUrl = map?.get("avatarUrl") as? String ?: "",
+                    avatarUrl = rawAvatar,
                     createdAt = (map?.get("createdAt") as? Long) ?: System.currentTimeMillis(),
                     createdDay = (map?.get("createdDay") as? Long)?.toInt() ?: (map?.get("day") as? Long)?.toInt() ?: 1,
                     createdMonth = (map?.get("createdMonth") as? Long)?.toInt() ?: (map?.get("month") as? Long)?.toInt() ?: 1,
@@ -180,40 +192,10 @@ class AuthRepository {
                 )
                 Result.success(user)
             } else {
-                // Fallback to Firebase Auth display name
-                val currentUser = auth.currentUser
-                val displayName = currentUser?.displayName ?: ""
-                val parts = displayName.split(" ")
-                val fName = if (parts.isNotEmpty()) parts[0] else ""
-                val lName = if (parts.size > 1) parts.subList(1, parts.size).joinToString(" ") else ""
-                Result.success(
-                    User(
-                        uid = uid,
-                        firstName = fName,
-                        lastName = lName,
-                        email = currentUser?.email ?: "",
-                        farmName = "Poultry Farm",
-                        role = "Lead Farm Specialist"
-                    )
-                )
+                Result.failure(Exception("User profile not found in database or connection timed out"))
             }
         } catch (e: Exception) {
-            // Offline graceful fallback
-            val currentUser = auth.currentUser
-            val displayName = currentUser?.displayName ?: ""
-            val parts = displayName.split(" ")
-            val fName = if (parts.isNotEmpty()) parts[0] else ""
-            val lName = if (parts.size > 1) parts.subList(1, parts.size).joinToString(" ") else ""
-            Result.success(
-                User(
-                    uid = uid,
-                    firstName = fName,
-                    lastName = lName,
-                    email = currentUser?.email ?: "",
-                    farmName = "Poultry Farm",
-                    role = "Lead Farm Specialist"
-                )
-            )
+            Result.failure(e)
         }
     }
 

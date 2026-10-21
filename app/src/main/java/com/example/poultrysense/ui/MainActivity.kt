@@ -17,10 +17,13 @@ import com.example.poultrysense.data.repository.EnvironmentRepository
 import com.example.poultrysense.databinding.ActivityMainBinding
 
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.example.poultrysense.data.repository.AuthRepository
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
@@ -106,6 +109,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         updateNotificationBadge()
+        preloadUserProfileAndAvatar()
+    }
+
+    private fun preloadUserProfileAndAvatar() {
+        val authRepo = AuthRepository()
+        val currentUser = authRepo.currentUser ?: return
+        lifecycleScope.launch {
+            val result = authRepo.getUserProfile(currentUser.uid)
+            result.onSuccess { cloudUser ->
+                com.example.poultrysense.data.UserPreferences.saveUser(this@MainActivity, cloudUser)
+                if (!cloudUser.avatarUrl.isNullOrEmpty() && (cloudUser.avatarUrl.startsWith("data:image") || cloudUser.avatarUrl.length > 100)) {
+                    try {
+                        val b64 = if (cloudUser.avatarUrl.contains("base64,")) cloudUser.avatarUrl.substringAfter("base64,") else cloudUser.avatarUrl
+                        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                        if (bytes != null && bytes.isNotEmpty()) {
+                            val localFile = java.io.File(filesDir, "profile_avatar.jpg")
+                            localFile.writeBytes(bytes)
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
     }
 
     private fun setupAnimatedBottomNavigation() {
