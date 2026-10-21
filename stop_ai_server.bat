@@ -12,7 +12,7 @@ set FOUND=0
 for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5000" ^| findstr "LISTENING"') do (
     taskkill /PID %%a /F >nul 2>&1
     set FOUND=1
-    echo [OK] Terminated AI server process (PID: %%a).
+    echo [OK] Terminated AI server process PID %%a
 )
 
 if "%FOUND%"=="0" (
@@ -22,4 +22,4 @@ if "%FOUND%"=="0" (
 )
 
 echo.
-timeout /t 3 /nobreak >nul
+ping 127.0.0.1 -n 3 >nul

@@ -206,6 +206,80 @@ The server starts listening on:
 
 ---
 
+## 🧠 PoultrySense AI - Gemini Verdict Engine Integration
+
+This branch handles the integration of the **Gemini 1.5 Flash Verdict Engine** within the PoultrySense backend (`poultrysense_ai.py`). It processes telemetry data from the local vision engine (OpenVINO-accelerated YOLO) and generates structured diagnostic verdicts for poultry health monitoring.
+
+### 📌 Current Status: System Instruction Enforcement (Temporary Fix)
+
+> **Status Notice**: Full fine-tuning via Vertex AI is currently **PAUSED / PENDING BILLING ACTIVATION**.  
+> The system is fully operational using **Gemini 1.5 Flash** with **System Instruction Schema Enforcement** as a functional alternative.
+
+### 🔍 Why Fine-Tuning is Pending
+
+* **No Fine-Tuning in Google AI Studio**: Fine-tuning features have been completely removed/deprecated inside Google AI Studio (`aistudio.google.com`). All model tuning capability has been permanently migrated to Google Cloud's **Vertex AI**.
+* **Access & Billing Gate**: Because Google AI Studio no longer supports fine-tuning, performing supervised fine-tuning inside Vertex AI requires linking an active Google Cloud Billing Account / activating $300 Free Trial credits.
+* **MFA Security Requirements**: Google Cloud Console requires mandatory Multi-Factor Authentication (MFA) on enterprise accounts to access fine-tuning training jobs.
+* **Important Note**: To re-emphasize, there is **NO fine-tuning feature in Google AI Studio anymore**. Managed model weight training can only be performed via Vertex AI.
+
+### 🛠️ Implemented Solution (Temporary Fix)
+
+To maintain full system functionality without triggering enterprise cloud billing, the backend relies on **System Instruction Schema Enforcement** using standard Google AI Studio Developer Keys.
+
+```
++------------------------+      +--------------------------+      +-------------------------------+
+|   Local Vision Engine  | ---> |   poultrysense_ai.py     | ---> |  Gemini 1.5 Flash Engine      |
+|  (YOLO Telemetry Data) |      | (System Prompt Enforcer) |      | (System Instruction Enforced) |
++------------------------+      +--------------------------+      +-------------------------------+
+                                                                                  |
+                                                                                  v
+                                                                   Structured JSON Verdict Output
+```
+
+#### Key Differences: System Instructions vs. Fine-Tuned Model
+
+| Feature | System Instructions (Current Setup) | Fine-Tuned Model (Vertex AI - Planned) |
+|---|---|---|
+| **Execution** | Prompt engineering rules sent per request | Weights modified through cloud GPU training |
+| **Output Control** | Schema enforced via API parameters | Native output formatting learned during training |
+| **Variability** | Evaluates telemetry conditions against rules | Contextually reasons on novel/unseen telemetry |
+| **Setup Cost** | Free / Instant (Google Developer API) | Requires GCP Billing / Credit Card link |
+
+### 📊 Dataset Work Completed (`gemini_lethargy_detection_tuning.csv`)
+
+Although fine-tuning in Vertex AI is on hold, all preparatory data pipeline steps have been completed:
+* **Dataset Path**: `poultrysense_ai/gemini_lethargy_detection_tuning.csv`
+* **Entry Count**: 30 prompt-completion pairs covering lethargy, isolation, heat stress, and normal behavioral states.
+* **Validation**: Verified programmatically via `upload_and_tune.py` using the official `google-genai` SDK.
+* **Files API Upload**: Ingested into Google's Developer API (Resource ID: `files/53itfkyj5qc6`).
+
+#### Diagnostic Output Schema
+All verdicts output valid JSON with three mandatory fields:
+```json
+{
+  "severity": "Low | Medium | High | Critical",
+  "reason": "Physiological explanation based on motion delta and environment vectors.",
+  "farmer_action": "Operational guidance for farm personnel."
+}
+```
+
+### ⚙️ How to Switch to Fine-Tuned Model in the Future
+
+The backend uses dynamic configuration via `gemini_config.json`. When fine-tuning is completed in Vertex AI:
+
+1. Copy the resulting model ID (e.g., `tunedModels/poultrysense-chicken-lethargy-xxxx`).
+2. Update `gemini_config.json`:
+   ```json
+   {
+     "gemini_api_key": "YOUR_API_KEY",
+     "model": "tunedModels/poultrysense-chicken-lethargy-xxxx",
+     "cooldown_seconds": 300
+   }
+   ```
+3. Restart the server (`.\start_ai_server.bat`). The server automatically pivots to the fine-tuned model without code changes.
+
+---
+
 ## 📄 License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
