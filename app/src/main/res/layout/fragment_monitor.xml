@@ -20,7 +20,7 @@
             android:orientation="vertical"
             android:paddingHorizontal="20dp"
             android:paddingTop="20dp"
-            android:paddingBottom="120dp">
+            android:paddingBottom="170dp">
 
             <!-- 1. Top App Bar (Clean, Minimal, No redundant badges) -->
             <LinearLayout
@@ -313,39 +313,26 @@
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/btnScrollToLiveFeed"
-                            android:layout_width="0dp"
-                            android:layout_height="46dp"
-                            android:layout_weight="1"
-                            android:layout_marginEnd="8dp"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:minHeight="46dp"
                             android:backgroundTint="@color/primary"
                             android:fontFamily="sans-serif-bold"
-                            android:text="View Live Feed ↓"
+                            android:text="Watch Stream ↓"
                             android:textAllCaps="false"
                             android:textColor="@color/white"
                             android:textSize="13sp"
+                            android:singleLine="true"
+                            android:ellipsize="end"
+                            android:insetTop="0dp"
+                            android:insetBottom="0dp"
+                            android:paddingHorizontal="14dp"
+                            android:visibility="gone"
                             app:cornerRadius="12dp"
                             app:elevation="1dp"
                             app:icon="@drawable/ic_videocam"
                             app:iconGravity="textStart"
                             app:iconSize="16dp" />
-
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/btnActionPhoneCam"
-                            style="?attr/materialButtonOutlinedStyle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="46dp"
-                            android:fontFamily="sans-serif-bold"
-                            android:paddingHorizontal="14dp"
-                            android:text="Phone Cam"
-                            android:textAllCaps="false"
-                            android:textColor="@color/primary"
-                            android:textSize="12sp"
-                            app:cornerRadius="12dp"
-                            app:icon="@drawable/ic_photo_camera"
-                            app:iconGravity="textStart"
-                            app:iconSize="15dp"
-                            app:iconTint="@color/primary"
-                            app:strokeColor="#CBD5E1" />
                     </LinearLayout>
 
                 </LinearLayout>
@@ -376,12 +363,7 @@
                         android:visibility="visible"
                         tools:ignore="ContentDescription" />
 
-                    <!-- Phone CameraX View -->
-                    <androidx.camera.view.PreviewView
-                        android:id="@+id/viewCameraX"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:visibility="gone" />
+
 
                     <!-- Stream Offline State -->
                     <LinearLayout
@@ -445,21 +427,6 @@
                                 app:iconSize="14dp"
                                 app:iconTint="@color/white"
                                 app:strokeColor="#475569" />
-
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/btnOfflineUsePhoneCam"
-                                android:layout_width="wrap_content"
-                                android:layout_height="36dp"
-                                android:backgroundTint="@color/primary"
-                                android:fontFamily="sans-serif-bold"
-                                android:text="Phone Camera"
-                                android:textAllCaps="false"
-                                android:textColor="@color/white"
-                                android:textSize="11.5sp"
-                                app:cornerRadius="10dp"
-                                app:icon="@drawable/ic_photo_camera"
-                                app:iconSize="14dp"
-                                app:iconTint="@color/white" />
                         </LinearLayout>
                     </LinearLayout>
 
@@ -545,19 +512,7 @@
                             android:textColor="@color/white"
                             android:textSize="11.5sp" />
 
-                        <!-- Lens Flip Action -->
-                        <ImageView
-                            android:id="@+id/btnFlipCameraLens"
-                            android:layout_width="32dp"
-                            android:layout_height="32dp"
-                            android:layout_marginEnd="6dp"
-                            android:background="@drawable/bg_dock_btn_circle"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:padding="6dp"
-                            android:src="@drawable/ic_camera_switch"
-                            app:tint="@color/primary"
-                            tools:ignore="ContentDescription" />
+
 
                         <!-- Frame Snapshot Shutter Action -->
                         <ImageView
@@ -1122,7 +1077,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
                         android:fontFamily="sans-serif"
-                        android:text="Check stream URL or use phone sensor."
+                        android:text="Check stream URL or reconnect to AI Hub."
                         android:textColor="#94A3B8"
                         android:textSize="11sp" />
                 </LinearLayout>
@@ -1150,19 +1105,6 @@
                     android:textSize="10.5sp"
                     app:cornerRadius="8dp"
                     app:strokeColor="#475569" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnMascotUsePhoneCam"
-                    android:layout_width="wrap_content"
-                    android:layout_height="32dp"
-                    android:backgroundTint="@color/primary"
-                    android:fontFamily="sans-serif-bold"
-                    android:paddingHorizontal="10dp"
-                    android:text="Phone Camera"
-                    android:textAllCaps="false"
-                    android:textColor="@color/white"
-                    android:textSize="10.5sp"
-                    app:cornerRadius="8dp" />
             </LinearLayout>
 
         </LinearLayout>

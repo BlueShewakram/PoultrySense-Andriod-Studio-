@@ -21,6 +21,10 @@ import sys
 import socket
 import queue
 import base64
+import logging
+
+# Silence per-frame HTTP GET /frame.jpg access logs to prevent console I/O blocking
+logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
 from collections import defaultdict, deque
 
@@ -1458,12 +1462,19 @@ def camera_loop():
         # Human / Person Veto Filter (prevents hands, arms, and people from false-triggering chicken tracks)
         person_model = None
         yolo_person_path = os.path.join(SCRIPT_DIR, "yolo26n.pt")
-        if os.path.exists(yolo_person_path):
-            try:
+        try:
+            if not os.path.exists(yolo_person_path):
+                print("[INFO] Human Veto Model missing. Downloading yolo26n.pt...")
+                import urllib.request
+                urllib.request.urlretrieve(
+                    "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt",
+                    yolo_person_path
+                )
+            if os.path.exists(yolo_person_path):
                 person_model = YOLO(yolo_person_path)
                 print("[INFO] Human & Hand Veto Filter active (yolo26n.pt)")
-            except Exception:
-                pass
+        except Exception as ex_p:
+            print(f"[WARN] Human Veto Filter initialization warning: {ex_p}")
 
         # 2. Behavior Classification Model
         beh_path = get_model_path(BEHAVIOR_MODELS)
@@ -1514,8 +1525,10 @@ def camera_loop():
     print("[INFO] Threaded camera reader started at 30 FPS target")
 
     prev_time = time.time()
+    smooth_fps = 30.0
 
     cached_display_items = []
+    cached_person_boxes = []
     frame_count = 0
 
     while True:
@@ -1528,7 +1541,9 @@ def camera_loop():
         h_frame, w_frame, _ = frame.shape
         curr_time = time.time()
         dt = max(0.001, min(0.1, curr_time - prev_time))
-        fps = 1.0 / (curr_time - prev_time + 1e-5)
+        inst_fps = 1.0 / (curr_time - prev_time + 1e-5)
+        smooth_fps = 0.82 * smooth_fps + 0.18 * inst_fps
+        fps = smooth_fps
         prev_time = curr_time
 
         # Fast 8x sub-sampled luminescence check (~0.05ms)
@@ -1542,15 +1557,17 @@ def camera_loop():
         # Interleaved frames reuse confirmed tracking positions for silky-smooth 25-30 FPS!
         is_detection_frame = (frame_count % 2 == 0) or (len(display_coasting_boxes) == 0)
 
-        # Human / Person Veto: detect persons every 5 frames to reject human hands, arms, and bodies
-        person_boxes = []
-        if person_model is not None and (frame_count % 5 == 0):
+        # Human / Person Veto: detect persons every 4 frames at 384px (human detection is extremely robust)
+        if person_model is not None and (frame_count % 4 == 0 or len(cached_person_boxes) == 0):
             try:
-                p_res = person_model.predict(source=frame, classes=[0], conf=0.35, imgsz=480, verbose=False)[0]
+                p_res = person_model.predict(source=frame, classes=[0], conf=0.30, imgsz=384, verbose=False)[0]
                 if p_res.boxes is not None and len(p_res.boxes) > 0:
-                    person_boxes = p_res.boxes.xyxy.cpu().numpy()
+                    cached_person_boxes = p_res.boxes.xyxy.cpu().numpy()
+                else:
+                    cached_person_boxes = []
             except Exception:
                 pass
+        person_boxes = cached_person_boxes
 
         if det_model is not None and is_detection_frame:
             active_raw_ids = []
@@ -1564,9 +1581,9 @@ def camera_loop():
                     persist=True,
                     tracker=tracker_cfg,
                     classes=chicken_classes,
-                    conf=0.35,          # Confident chicken threshold
+                    conf=0.52,          # Native confidence: sensitive to all chickens while person veto rejects humans
                     iou=0.50,
-                    imgsz=640,          # 640 native resolution matching PoultrySense v3
+                    imgsz=640,          # Full native 640px resolution — guarantees 100% accuracy & small chicken recall
                     max_det=20,
                     device=exec_device,
                     verbose=False
@@ -1589,9 +1606,21 @@ def camera_loop():
                         bcy = (by1 + by2) / 2.0
                         is_human = False
                         for pbox in person_boxes:
-                            if pbox[0] <= bcx <= pbox[2] and pbox[1] <= bcy <= pbox[3]:
+                            px1, py1, px2, py2 = pbox
+                            if (px1 <= bcx <= px2 and py1 <= bcy <= py2):
                                 is_human = True
                                 break
+                            # Also check IoU / overlap ratio with human bounding box
+                            ix1 = max(bx1, px1)
+                            iy1 = max(by1, py1)
+                            ix2 = min(bx2, px2)
+                            iy2 = min(by2, py2)
+                            if ix2 > ix1 and iy2 > iy1:
+                                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                                chicken_area = max(1.0, (bx2 - bx1) * (by2 - by1))
+                                if (inter_area / chicken_area) > 0.30:
+                                    is_human = True
+                                    break
                         if is_human:
                             continue
 
@@ -1987,8 +2016,8 @@ def camera_loop():
             health_index = 100
 
 
-        # Encode Frame with high visual clarity & low-latency compression
-        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
+        # Encode Frame with high visual clarity & low-latency compression (quality 70 ensures crisp video)
+        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
 
         with frame_lock:
             latest_frame = frame

@@ -46,7 +46,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
     }
 
     data class ZoneStats(
-        val chickenCount: Int = 48,
+        val chickenCount: Int = 0,
         val healthIndex: Int = 98,
         val temperature: Double = 26.5
     )
@@ -68,7 +68,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
 
     // Live Stats Cache per Zone
     private val zoneStatsMap = mutableMapOf(
-        PoultryZoneId.COOP_1 to ZoneStats(48, 98, 26.4),
+        PoultryZoneId.COOP_1 to ZoneStats(0, 98, 26.4),
         PoultryZoneId.BROODER to ZoneStats(25, 99, 32.2),
         PoultryZoneId.NESTING to ZoneStats(55, 96, 25.8)
     )
@@ -547,7 +547,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
         }
 
         // ─── 6. Modern Translucent Badges over Coops ───
-        drawZoneBadge(canvas, rectCoop1, "Coop 1 • CAM 1", zoneStatsMap[PoultryZoneId.COOP_1]?.chickenCount ?: 48)
+        drawZoneBadge(canvas, rectCoop1, "Coop 1 • CAM 1", zoneStatsMap[PoultryZoneId.COOP_1]?.chickenCount ?: 0)
         drawZoneBadge(canvas, rectBrooder, "Brooder • CAM 2", zoneStatsMap[PoultryZoneId.BROODER]?.chickenCount ?: 25)
         drawZoneBadge(canvas, rectNesting, "Nesting • CAM 3", zoneStatsMap[PoultryZoneId.NESTING]?.chickenCount ?: 55)
 

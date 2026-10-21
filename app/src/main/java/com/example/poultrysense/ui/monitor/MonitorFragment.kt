@@ -1,20 +1,16 @@
 package com.example.poultrysense.ui.monitor
 
-import android.Manifest
 import android.animation.ObjectAnimator
-import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -55,8 +51,8 @@ class MonitorFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(600, TimeUnit.MILLISECONDS)
-        .readTimeout(600, TimeUnit.MILLISECONDS)
+        .connectTimeout(3000, TimeUnit.MILLISECONDS)
+        .readTimeout(3000, TimeUnit.MILLISECONDS)
         .build()
 
     private val gson = Gson()
@@ -69,29 +65,15 @@ class MonitorFragment : Fragment() {
     enum class CameraChannel {
         CAM_1,
         CAM_2,
-        CAM_3,
-        PHONE_CAM
+        CAM_3
     }
 
     private var currentChannel = CameraChannel.CAM_1
     private var hasShownMascotOnEntry = false
     private var hasShownOfflineMascotAlert = false
     private var isStreamReceivingFrames = false
+    private var clientDisplayFps = 0.0
     private var chickenBobAnimator: ObjectAnimator? = null
-
-    // CameraX
-    private var cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-    private var cameraProvider: ProcessCameraProvider? = null
-
-    private val requestCameraPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            startPhoneCamera()
-        } else {
-            Toast.makeText(requireContext(), "Camera permission required for phone sensor", Toast.LENGTH_SHORT).show()
-        }
-    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -111,14 +93,13 @@ class MonitorFragment : Fragment() {
         showMascotScanOnce()
 
         setupPoultryFarmMapView()
-        setupLensFlipButton()
         setupSnapshotButton()
         setupOfflineRetry()
         setupCuteMascotAlert()
         setupCheckupSessionControls()
 
         binding.layoutConnectionBadge.setOnClickListener {
-            if (currentChannel != CameraChannel.PHONE_CAM && binding.layoutMonitorOffline.visibility == View.VISIBLE) {
+            if (binding.layoutMonitorOffline.visibility == View.VISIBLE) {
                 binding.mascotPopupScanner.showPopupAndScan(2600L)
             }
         }
@@ -156,13 +137,8 @@ class MonitorFragment : Fragment() {
             binding.nestedScrollView.smoothScrollTo(0, binding.cardVideoViewport.top - 24)
         }
 
-        binding.btnActionPhoneCam.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            switchChannel(CameraChannel.PHONE_CAM)
-            updateSelectedZoneCardForPhone()
-        }
-
         // Initialize with default Coop 1
+        binding.farmMapView.selectZone(PoultryFarmMapView.PoultryZoneId.COOP_1)
         updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.COOP_1)
     }
 
@@ -176,12 +152,13 @@ class MonitorFragment : Fragment() {
                 binding.tvSelectedZoneBadge.text = "FARM OVERVIEW"
                 binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
                 binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))
-                val liveBirds = latestAiStatus?.flockCount ?: 128
-                binding.tvZoneBirdsVal.text = liveBirds.toString()
+                val liveBirds = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
+                binding.tvZoneBirdsVal.text = if (latestAiStatus != null) liveBirds.toString() else "--"
                 binding.tvZoneHealthVal.text = "${latestAiStatus?.healthIndex ?: 98}%"
                 binding.tvZoneClimateVal.text = "26.5°C"
                 binding.tvZoneClimateLabel.text = "Farm Climate"
-                binding.btnScrollToLiveFeed.text = "View Camera Feeds ↓"
+                binding.btnScrollToLiveFeed.visibility = if (currentChannel == CameraChannel.CAM_1) View.GONE else View.VISIBLE
+                binding.btnScrollToLiveFeed.text = "Watch Stream ↓"
             }
             PoultryFarmMapView.PoultryZoneId.COOP_1 -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
@@ -190,12 +167,14 @@ class MonitorFragment : Fragment() {
                 binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
                 binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
                 binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
-                val count = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 48)
-                binding.tvZoneBirdsVal.text = count.toString()
+                val count = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
+                binding.tvZoneBirdsVal.text = if (latestAiStatus != null) count.toString() else "--"
                 binding.tvZoneHealthVal.text = "${latestAiStatus?.healthIndex ?: 98}%"
                 binding.tvZoneClimateVal.text = "26.4°C"
                 binding.tvZoneClimateLabel.text = "Temperature"
-                binding.btnScrollToLiveFeed.text = "View Live Cam 1 Feed ↓"
+                // Redundant button hidden: Cam 1 is already streaming live directly underneath this card
+                binding.btnScrollToLiveFeed.visibility = if (currentChannel == CameraChannel.CAM_1) View.GONE else View.VISIBLE
+                binding.btnScrollToLiveFeed.text = "Watch Cam 1 ↓"
             }
             PoultryFarmMapView.PoultryZoneId.BROODER -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_env)
@@ -207,8 +186,8 @@ class MonitorFragment : Fragment() {
                 binding.tvZoneBirdsVal.text = "25"
                 binding.tvZoneHealthVal.text = "99%"
                 binding.tvZoneClimateVal.text = "32.2°C"
-                binding.tvZoneClimateLabel.text = "Brooder Temp"
-                binding.btnScrollToLiveFeed.text = "View Live Cam 2 Feed ↓"
+                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
+                binding.btnScrollToLiveFeed.text = "Watch Cam 2 ↓"
             }
             PoultryFarmMapView.PoultryZoneId.NESTING -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
@@ -220,29 +199,14 @@ class MonitorFragment : Fragment() {
                 binding.tvZoneBirdsVal.text = "55"
                 binding.tvZoneHealthVal.text = "96%"
                 binding.tvZoneClimateVal.text = "25.8°C"
-                binding.tvZoneClimateLabel.text = "Run Temp"
-                binding.btnScrollToLiveFeed.text = "View Live Cam 3 Feed ↓"
+                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
+                binding.btnScrollToLiveFeed.text = "Watch Cam 3 ↓"
             }
         }
     }
 
-    private fun updateSelectedZoneCardForPhone() {
-        if (_binding == null) return
-        binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_photo_camera)
-        binding.tvSelectedZoneTitle.text = "Phone Camera Sensor"
-        binding.tvSelectedZoneSubtitle.text = "Handheld Portable Sensor Active"
-        binding.tvSelectedZoneBadge.text = "PHONE CAM"
-        binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_status_connected)
-        binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
-        binding.tvZoneBirdsVal.text = "Live"
-        binding.tvZoneHealthVal.text = "100%"
-        binding.tvZoneClimateVal.text = "Local"
-        binding.tvZoneClimateLabel.text = "Sensor Mode"
-        binding.btnScrollToLiveFeed.text = "View Phone Sensor Preview ↓"
-    }
-
     private fun showMascotScanOnce() {
-        if (!hasShownMascotOnEntry && currentChannel != CameraChannel.PHONE_CAM) {
+        if (!hasShownMascotOnEntry) {
             hasShownMascotOnEntry = true
             binding.mascotPopupScanner.showPopupAndScan(2600L)
         }
@@ -251,11 +215,7 @@ class MonitorFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         updateSessionUI()
-        if (currentChannel == CameraChannel.PHONE_CAM) {
-            startPhoneCamera()
-        } else {
-            startCameraStream()
-        }
+        startCameraStream()
     }
 
     override fun onPause() {
@@ -263,7 +223,6 @@ class MonitorFragment : Fragment() {
         binding.mascotPopupScanner.stopAllAnimations()
         stopSessionTicker()
         stopCameraStream()
-        stopPhoneCamera()
     }
 
     private fun switchChannel(channel: CameraChannel) {
@@ -272,93 +231,39 @@ class MonitorFragment : Fragment() {
         when (channel) {
             CameraChannel.CAM_1 -> {
                 isStreamReceivingFrames = false
-                stopPhoneCamera()
+                binding.btnScrollToLiveFeed.visibility = View.GONE
                 binding.ivMonitorStream.visibility = View.VISIBLE
-                binding.viewCameraX.visibility = View.GONE
                 binding.tvMonitorSubtitle.text = "Camera 1 • Main Barn Flock"
                 binding.tvHudSource.text = "CAM 1 • MAIN COOP"
                 binding.tvActiveCameraLabel.text = "Camera 1 Active • 1080p Stream"
                 binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 1"
                 binding.tvHudLatency.visibility = View.VISIBLE
-                binding.btnFlipCameraLens.alpha = 0.4f
                 startCameraStream()
             }
             CameraChannel.CAM_2 -> {
                 isStreamReceivingFrames = false
-                stopPhoneCamera()
+                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
+                binding.btnScrollToLiveFeed.text = "Watch Cam 2 ↓"
                 binding.ivMonitorStream.visibility = View.VISIBLE
-                binding.viewCameraX.visibility = View.GONE
                 binding.tvMonitorSubtitle.text = "Camera 2 • Brooder Zone"
                 binding.tvHudSource.text = "CAM 2 • BROODER"
                 binding.tvActiveCameraLabel.text = "Camera 2 Active • 1080p Stream"
                 binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 2"
                 binding.tvHudLatency.visibility = View.VISIBLE
-                binding.btnFlipCameraLens.alpha = 0.4f
                 startCameraStream()
             }
             CameraChannel.CAM_3 -> {
                 isStreamReceivingFrames = false
-                stopPhoneCamera()
+                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
+                binding.btnScrollToLiveFeed.text = "Watch Cam 3 ↓"
                 binding.ivMonitorStream.visibility = View.VISIBLE
-                binding.viewCameraX.visibility = View.GONE
                 binding.tvMonitorSubtitle.text = "Camera 3 • Nesting Area"
                 binding.tvHudSource.text = "CAM 3 • NESTING"
                 binding.tvActiveCameraLabel.text = "Camera 3 Active • 1080p Stream"
                 binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 3"
                 binding.tvHudLatency.visibility = View.VISIBLE
-                binding.btnFlipCameraLens.alpha = 0.4f
                 startCameraStream()
             }
-            CameraChannel.PHONE_CAM -> {
-                isStreamReceivingFrames = true
-                stopCameraStream()
-                binding.mascotPopupScanner.dismissPopup()
-                hideCuteMascotAlert()
-
-                binding.ivMonitorStream.visibility = View.GONE
-                binding.layoutMonitorOffline.visibility = View.GONE
-                binding.viewCameraX.visibility = View.VISIBLE
-                binding.tvMonitorSubtitle.text = "Phone Sensor • Local Camera"
-                binding.tvHudSource.text = "PHONE SENSOR"
-                binding.tvActiveCameraLabel.text = "Phone Camera Sensor Active"
-                binding.tvTelemetrySub.text = "On-Device Hardware Preview"
-                binding.tvHudFps.text = "60.0 FPS"
-                binding.tvHudLatency.visibility = View.GONE
-                binding.btnFlipCameraLens.alpha = 1.0f
-
-                updateStatusBadge(true, "Phone Cam Active")
-                checkPermissionAndStartCamera()
-            }
-        }
-    }
-
-    // ─── Lens Flip Action (Front/Rear for Phone Cam) ───
-
-    private fun setupLensFlipButton() {
-        binding.btnFlipCameraLens.setOnClickListener { v ->
-            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-
-            // Smooth 180-degree flip animation on the button icon
-            val rotateAnim = ObjectAnimator.ofFloat(v, "rotation", v.rotation, v.rotation + 180f)
-            rotateAnim.duration = 350
-            rotateAnim.interpolator = AccelerateDecelerateInterpolator()
-            rotateAnim.start()
-
-            if (currentChannel != CameraChannel.PHONE_CAM) {
-                Toast.makeText(context, "Switch to Phone Cam to flip lens", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            // Smooth camera transition fade
-            binding.viewCameraX.animate().alpha(0.2f).setDuration(120).withEndAction {
-                cameraSelector = if (cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA) {
-                    CameraSelector.DEFAULT_FRONT_CAMERA
-                } else {
-                    CameraSelector.DEFAULT_BACK_CAMERA
-                }
-                startPhoneCamera()
-                binding.viewCameraX.animate().alpha(1f).setDuration(180).start()
-            }.start()
         }
     }
 
@@ -384,10 +289,8 @@ class MonitorFragment : Fragment() {
 
     private fun setupOfflineRetry() {
         binding.btnOfflineRetry.setOnClickListener {
-            if (currentChannel != CameraChannel.PHONE_CAM) {
-                startCameraStream()
-                Toast.makeText(context, "Retrying camera stream…", Toast.LENGTH_SHORT).show()
-            }
+            startCameraStream()
+            Toast.makeText(context, "Retrying camera stream…", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -397,19 +300,30 @@ class MonitorFragment : Fragment() {
         stopCameraStream()
         val baseUrl = ServerPreferences.getBaseUrl(requireContext())
 
-        // 1. Frame Poller
+        // 1. High-Performance Frame Poller (Zero-lag real-time camera stream)
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val request = Request.Builder().url("$baseUrl/frame.jpg").build()
-            while (isActive && currentChannel != CameraChannel.PHONE_CAM) {
+            val request = Request.Builder()
+                .url("$baseUrl/frame.jpg")
+                .header("Cache-Control", "no-cache")
+                .build()
+            val decodeOptions = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.RGB_565 // 50% faster decode, half memory allocation
+            }
+            var lastFpsCalcTime = SystemClock.uptimeMillis()
+            var clientRenderedFrames = 0
+            var consecutiveErrors = 0
+
+            while (isActive) {
                 try {
                     val response = httpClient.newCall(request).execute()
                     if (response.isSuccessful) {
                         val bytes = response.body?.bytes()
                         if (bytes != null && bytes.isNotEmpty()) {
-                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
                             withContext(Dispatchers.Main) {
-                                if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
+                                if (_binding != null) {
                                     isStreamReceivingFrames = true
+                                    consecutiveErrors = 0
                                     binding.ivMonitorStream.setImageBitmap(bitmap)
                                     binding.layoutMonitorOffline.visibility = View.GONE
                                     binding.mascotPopupScanner.hideWhenSignalReceived()
@@ -418,24 +332,42 @@ class MonitorFragment : Fragment() {
                                     ) {
                                         hideCuteMascotAlert()
                                     }
+
+                                    // Real client display refresh rate calculation
+                                    clientRenderedFrames++
+                                    val now = SystemClock.uptimeMillis()
+                                    if (now - lastFpsCalcTime >= 1000L) {
+                                        clientDisplayFps = (clientRenderedFrames * 1000.0) / (now - lastFpsCalcTime)
+                                        clientRenderedFrames = 0
+                                        lastFpsCalcTime = now
+                                        val displayFps = maxOf(clientDisplayFps, latestAiStatus?.fps ?: 0.0)
+                                        binding.tvHudFps.text = String.format("%.1f FPS", displayFps)
+                                    }
                                 }
                             }
                         }
                     } else {
-                        showOfflineUi()
+                        consecutiveErrors++
+                        if (consecutiveErrors >= 6) {
+                            showOfflineUi()
+                        }
                     }
                     response.close()
                 } catch (e: Exception) {
-                    showOfflineUi()
+                    consecutiveErrors++
+                    if (consecutiveErrors >= 6) {
+                        showOfflineUi()
+                    }
                 }
-                delay(33) // ~30 FPS
+                // Fixed 30ms cadence matching 30 FPS camera hardware: prevents TCP socket backlog and eliminates lag!
+                delay(30)
             }
         }
 
         // 2. Status Poller
         statusJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val request = Request.Builder().url("$baseUrl/status").build()
-            while (isActive && currentChannel != CameraChannel.PHONE_CAM) {
+            while (isActive) {
                 try {
                     val response = httpClient.newCall(request).execute()
                     if (response.isSuccessful) {
@@ -444,15 +376,16 @@ class MonitorFragment : Fragment() {
                             val status = gson.fromJson(body, AiStatusResponse::class.java)
                             latestAiStatus = status
                             withContext(Dispatchers.Main) {
-                                if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
+                                if (_binding != null) {
                                     val isConnected = status.active == true
-                                    val fps = status.fps ?: 0.0
+                                    val serverFps = status.fps ?: 0.0
+                                    val displayFps = if (clientDisplayFps > 0.0) maxOf(clientDisplayFps, serverFps) else serverFps
                                     val count = status.flockCount ?: (status.handCount ?: (status.detections?.size ?: 0))
                                     val healthIndex = status.healthIndex ?: 100
 
 
                                     updateStatusBadge(isConnected, if (isConnected) "AI Connected" else "AI Offline")
-                                    binding.tvHudFps.text = String.format("%.1f FPS", fps)
+                                    binding.tvHudFps.text = String.format("%.1f FPS", displayFps)
                                     binding.tvDetectionCount.text = "$count in View"
                                     binding.tvTelemetryCountVal.text = count.toString()
                                     binding.tvTelemetryPostureVal.text = "$healthIndex%"
@@ -461,7 +394,8 @@ class MonitorFragment : Fragment() {
                                     // Synchronize live telemetry with farm map and coop card
                                     if (currentChannel == CameraChannel.CAM_1) {
                                         binding.farmMapView.updateZoneData(PoultryFarmMapView.PoultryZoneId.COOP_1, count, healthIndex, 26.4)
-                                        if (binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.COOP_1) {
+                                        if (binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.COOP_1 ||
+                                            binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.OVERVIEW) {
                                             binding.tvZoneBirdsVal.text = count.toString()
                                             binding.tvZoneHealthVal.text = "$healthIndex%"
                                         }
@@ -522,12 +456,12 @@ class MonitorFragment : Fragment() {
 
     private suspend fun showOfflineUi() {
         withContext(Dispatchers.Main) {
-            if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
+            if (_binding != null) {
                 isStreamReceivingFrames = false
                 binding.layoutMonitorOffline.visibility = View.VISIBLE
                 showCuteMascotAlert(
                     title = "Camera Offline",
-                    message = "Stream offline. Switch to Phone Cam or search hub.",
+                    message = "Stream offline. Check server connection or retry.",
                     isOfflinePrompt = true
                 )
             }
@@ -536,7 +470,7 @@ class MonitorFragment : Fragment() {
 
     private suspend fun showOfflineStatus() {
         withContext(Dispatchers.Main) {
-            if (_binding != null && currentChannel != CameraChannel.PHONE_CAM) {
+            if (_binding != null) {
                 isStreamReceivingFrames = false
                 updateStatusBadge(false, "AI Offline")
                 binding.tvHudFps.text = "0.0 FPS"
@@ -628,41 +562,6 @@ class MonitorFragment : Fragment() {
         statusJob = null
     }
 
-    // ─── Phone Camera (CameraX) ───
-
-    private fun checkPermissionAndStartCamera() {
-        val context = context ?: return
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
-            startPhoneCamera()
-        } else {
-            requestCameraPermission.launch(Manifest.permission.CAMERA)
-        }
-    }
-
-    private fun startPhoneCamera() {
-        val context = context ?: return
-        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-
-        cameraProviderFuture.addListener({
-            try {
-                cameraProvider = cameraProviderFuture.get()
-                val preview = Preview.Builder().build().also {
-                    it.setSurfaceProvider(binding.viewCameraX.surfaceProvider)
-                }
-                cameraProvider?.unbindAll()
-                cameraProvider?.bindToLifecycle(viewLifecycleOwner, cameraSelector, preview)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }, ContextCompat.getMainExecutor(context))
-    }
-
-    private fun stopPhoneCamera() {
-        cameraProvider?.unbindAll()
-    }
-
     // ─── AI Checkup Session & Scheduling ───
 
     private fun setupCheckupSessionControls() {
@@ -683,14 +582,14 @@ class MonitorFragment : Fragment() {
                 updateSessionUI()
             } else {
                 // Smart Camera Safety Guard: Block checkup if camera feed is not ready
-                val isCameraReady = (currentChannel == CameraChannel.PHONE_CAM) || isStreamReceivingFrames
+                val isCameraReady = isStreamReceivingFrames
                 if (!isCameraReady) {
                     shakeView(binding.cardCheckupSession)
                     binding.btnToggleSession.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
 
                     showCuteMascotAlert(
                         title = "Hold your feathers!",
-                        message = "Cannot start AI checkup session without a live camera feed! Please connect your camera stream or switch to Phone Cam first."
+                        message = "Cannot start AI checkup session without a live camera feed! Please connect your camera stream first."
                     )
                     Toast.makeText(ctx, "Connect camera stream to start checkup session", Toast.LENGTH_SHORT).show()
                     return@setOnClickListener
@@ -700,9 +599,7 @@ class MonitorFragment : Fragment() {
                 CheckupSessionManager.startSession(ctx, duration)
                 val durationText = if (duration == 0) "Continuous" else "$duration mins"
                 Toast.makeText(ctx, "AI Checkup Session started ($durationText)", Toast.LENGTH_SHORT).show()
-                if (currentChannel != CameraChannel.PHONE_CAM) {
-                    startCameraStream()
-                }
+                startCameraStream()
                 updateSessionUI()
             }
         }
@@ -885,28 +782,10 @@ class MonitorFragment : Fragment() {
             hideCuteMascotAlert()
         }
 
-        binding.btnMascotUsePhoneCam.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            switchToPhoneCamera()
-            hideCuteMascotAlert()
-        }
-
-        binding.btnOfflineUsePhoneCam.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-            switchToPhoneCamera()
-            hideCuteMascotAlert()
-        }
-
         binding.btnMascotAutoDetect.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
             triggerAutoDiscovery()
         }
-    }
-
-    private fun switchToPhoneCamera() {
-        switchChannel(CameraChannel.PHONE_CAM)
-        updateSelectedZoneCardForPhone()
-        Toast.makeText(context, "Switched to Phone Camera", Toast.LENGTH_SHORT).show()
     }
 
     private fun triggerAutoDiscovery() {
@@ -936,7 +815,7 @@ class MonitorFragment : Fragment() {
                     startCameraStream()
                 } else {
                     binding.tvMascotTitle.text = "Hub Not Found"
-                    binding.tvMascotMessage.text = "Couldn't reach AI Hub on Wi-Fi. Make sure your PC server is running or switch to Phone Cam!"
+                    binding.tvMascotMessage.text = "Couldn't reach AI Hub on Wi-Fi. Make sure your PC server is running and retry!"
                 }
             } catch (e: Exception) {
                 if (_binding != null) {
@@ -1021,7 +900,6 @@ class MonitorFragment : Fragment() {
         stopChickenBobbing()
         stopSessionTicker()
         stopCameraStream()
-        stopPhoneCamera()
         _binding = null
     }
 }

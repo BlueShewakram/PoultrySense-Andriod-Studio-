@@ -225,8 +225,8 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="match_parent"
                                 android:indeterminate="false"
-                                android:max="48"
-                                android:progress="42"
+                                android:max="100"
+                                android:progress="0"
                                 android:progressDrawable="@drawable/bg_ring_progress" />
 
                             <LinearLayout
@@ -242,7 +242,7 @@
                                     android:layout_height="wrap_content"
                                     android:fontFamily="sans-serif-black"
                                     android:letterSpacing="-0.03"
-                                    android:text="42"
+                                    android:text="--"
                                     android:textColor="@color/primary"
                                     android:textSize="22sp" />
 
@@ -514,7 +514,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:fontFamily="sans-serif-medium"
-                            android:text="42 active\nAll zones OK"
+                            android:text="-- active\nAll zones OK"
                             android:textColor="#EEFFFFFF"
                             android:textSize="9sp" />
 

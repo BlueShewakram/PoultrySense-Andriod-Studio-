@@ -58,8 +58,8 @@ object CheckupSessionManager {
 
     fun stopSession(
         context: Context,
-        totalFlock: Int = 42,
-        healthyCount: Int = 42,
+        totalFlock: Int = 0,
+        healthyCount: Int = 0,
         illCount: Int = 0
     ) {
         val prefs = getPrefs(context)
@@ -76,8 +76,8 @@ object CheckupSessionManager {
 
     fun recordCompletedSession(
         context: Context,
-        totalFlock: Int = 42,
-        healthyCount: Int = 42,
+        totalFlock: Int = 0,
+        healthyCount: Int = 0,
         illCount: Int = 0
     ) {
         val prefs = getPrefs(context)
@@ -88,8 +88,8 @@ object CheckupSessionManager {
         val dateStr = SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(cal.time)
         val timeStr = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(cal.time)
 
-        val flock = if (totalFlock > 0) totalFlock else 42
-        val healthy = if (healthyCount > 0) healthyCount else (flock - illCount)
+        val flock = if (totalFlock > 0) totalFlock else 0
+        val healthy = if (healthyCount > 0) healthyCount else (flock - illCount).coerceAtLeast(0)
         val ill = if (illCount >= 0) illCount else (flock - healthy).coerceAtLeast(0)
 
         val healthIndex = String.format(Locale.getDefault(), "%.1f%%", (healthy.toFloat() / flock.toFloat()) * 100f)

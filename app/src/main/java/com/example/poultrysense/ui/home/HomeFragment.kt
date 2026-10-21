@@ -1,6 +1,7 @@
 package com.example.poultrysense.ui.home
 
 import android.animation.ValueAnimator
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -38,9 +39,13 @@ class HomeFragment : Fragment() {
     private val binding get() = _binding!!
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(500, TimeUnit.MILLISECONDS)
-        .readTimeout(500, TimeUnit.MILLISECONDS)
+        .connectTimeout(3000, TimeUnit.MILLISECONDS)
+        .readTimeout(3000, TimeUnit.MILLISECONDS)
         .build()
+
+    private var liveFlockCount: Int? = null
+    private var liveHealthyCount: Int? = null
+    private var liveFlaggedCount: Int? = null
 
     private val gson = Gson()
     private var streamJob: Job? = null
@@ -137,28 +142,38 @@ class HomeFragment : Fragment() {
         animator.start()
     }
 
+    private fun updateFlockMetrics(flock: Int, healthy: Int, flagged: Int) {
+        if (_binding == null) return
+        binding.tvTotalFlockCount.text = "$flock"
+        binding.tvBarnCapacity.text = "${(flock * 1.25).toInt()}"
+        binding.tvFlaggedCount.text = "$flagged Flagged"
+        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\nBarn Alpha"
+        binding.tvActiveCapsuleDesc.text = if (healthy > 0) "$healthy active\nAll zones OK" else "0 active\nAll zones OK"
+        animateNormalRing(healthy, if (flock > 0) flock else 1)
+    }
+
     private fun updateAlertsAndMetrics() {
         val ctx = context ?: return
         val mainActivity = activity as? MainActivity
         val activeAlertsCount = mainActivity?.farmAlerts?.count { !it.read } ?: 0
         binding.tvActiveAlertsCount.text = if (activeAlertsCount == 1) "1 New" else "$activeAlertsCount New"
 
-        // Dynamic inspection metrics from CheckupSessionManager
+        // Dynamic inspection metrics from live AI status or CheckupSessionManager
         val latestSession = com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull()
-        val totalFlock = latestSession?.totalFlock ?: 48
-        val healthy = latestSession?.healthyCount ?: (totalFlock - (latestSession?.illCount ?: 2))
-        val flagged = latestSession?.illCount ?: 2
-        val lastTime = latestSession?.time ?: "10:42 AM"
+        val totalFlock = liveFlockCount ?: (latestSession?.totalFlock ?: 0)
+        val healthy = liveHealthyCount ?: (latestSession?.healthyCount ?: totalFlock)
+        val flagged = liveFlaggedCount ?: (latestSession?.illCount ?: 0)
+        val lastTime = if (liveFlockCount != null) "Live Stream" else (latestSession?.time ?: "--")
 
-        binding.tvTotalFlockCount.text = "$totalFlock"
-        binding.tvBarnCapacity.text = "${(totalFlock * 1.25).toInt()}"
+        binding.tvTotalFlockCount.text = if (totalFlock > 0) "$totalFlock" else "--"
+        binding.tvBarnCapacity.text = if (totalFlock > 0) "${(totalFlock * 1.25).toInt()}" else "--"
         binding.tvFlaggedCount.text = "$flagged Flagged"
         binding.tvLastScanTime.text = lastTime
 
         binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\nBarn Alpha"
-        binding.tvActiveCapsuleDesc.text = "$healthy active\nAll zones OK"
+        binding.tvActiveCapsuleDesc.text = if (healthy > 0) "$healthy active\nAll zones OK" else "0 active\nAll zones OK"
 
-        animateNormalRing(healthy, totalFlock)
+        animateNormalRing(healthy, if (totalFlock > 0) totalFlock else 1)
     }
 
     private fun setupCapsuleInteractions() {
@@ -252,7 +267,6 @@ class HomeFragment : Fragment() {
         binding.swipeRefreshLayout.setColorSchemeResources(R.color.primary, R.color.accent_green)
         binding.swipeRefreshLayout.setOnRefreshListener {
             updateAlertsAndMetrics()
-            animateNormalRing(42, 48)
             binding.swipeRefreshLayout.postDelayed({
                 binding.swipeRefreshLayout.isRefreshing = false
             }, 800)
@@ -262,15 +276,18 @@ class HomeFragment : Fragment() {
     private fun startStreamPolling() {
         stopStreamPolling()
         val serverUrl = ServerPreferences.getBaseUrl(requireContext()) + "/frame.jpg"
+        val decodeOptions = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val request = Request.Builder().url(serverUrl).build()
+            val request = Request.Builder().url(serverUrl).header("Cache-Control", "no-cache").build()
             while (isActive) {
                 try {
                     val response = httpClient.newCall(request).execute()
                     if (response.isSuccessful) {
                         val bytes = response.body?.bytes()
                         if (bytes != null && bytes.isNotEmpty()) {
-                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
                             withContext(Dispatchers.Main) {
                                 if (_binding != null) {
                                     binding.ivDashboardStream.setImageBitmap(bitmap)
@@ -366,6 +383,15 @@ class HomeFragment : Fragment() {
                                     val temp = status.temperature ?: 24.5
                                     val hum = status.humidity ?: 62.0
                                     updateClimateUI(temp, hum)
+
+                                    // Dynamic flock count from AI status
+                                    val count = status.flockCount ?: (status.handCount ?: (status.detections?.size ?: 0))
+                                    val healthy = status.healthyCount ?: count
+                                    val flagged = (status.warningCount ?: 0) + (status.unhealthyCount ?: 0)
+                                    liveFlockCount = count
+                                    liveHealthyCount = healthy
+                                    liveFlaggedCount = flagged
+                                    updateFlockMetrics(count, healthy, flagged)
 
                                     // Save to Firebase Realtime Database
                                     val activeZone = binding.tvActiveZoneName.text.toString()
