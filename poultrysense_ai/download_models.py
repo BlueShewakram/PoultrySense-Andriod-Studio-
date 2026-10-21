@@ -13,11 +13,11 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 # Required model definitions and public download sources
 MODEL_CONFIGS = [
     {
-        "name": "yolo11n.pt",
-        "target_path": os.path.join(SCRIPT_DIR, "yolo11n.pt"),
-        "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
-        "description": "YOLO11 Nano Base Detection & Tracking Model",
-        "required": True
+        "name": "yolo26n.pt",
+        "target_path": os.path.join(SCRIPT_DIR, "yolo26n.pt"),
+        "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt",
+        "description": "YOLO26 Nano Base Model",
+        "required": False
     },
     {
         "name": "PoultrySense_BehaviorModel.pt",
@@ -79,7 +79,7 @@ def setup_models():
                     print(f"    [ERROR] Could not fetch {name}: {ex}")
             else:
                 print(f"\n    [INFO] Custom model not found on remote release. Note: PoultrySense AI")
-                print(f"           automatically falls back to YOLO11n + real-time centroid motion heuristics,")
+                print(f"           automatically falls back to YOLO26n + real-time centroid motion heuristics,")
                 print(f"           so all chicken detection, persistent tracking, and 3-tier health work 100% out of the box!")
 
     print("\n" + "=" * 65)

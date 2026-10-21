@@ -64,8 +64,6 @@ if not os.path.exists(TRACKER_YAML):
 DET_MODELS = [
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v4_26n.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
-    os.path.join(SCRIPT_DIR, "yolo11n.pt"),
-    "yolo11n.pt",
 ]
 
 BEHAVIOR_MODELS = [
@@ -1443,7 +1441,7 @@ def camera_loop():
                         if any(k in name_str for k in ["chicken", "poultry", "hen", "rooster", "bird"]):
                             found_classes.append(int(cid))
 
-                    # If using standard COCO model (like yolo11n.pt), class 14 is bird.
+                    # If using standard COCO model (like yolo26n.pt), class 14 is bird.
                     if not found_classes and 14 in det_model.names:
                         found_classes = [14]
                     elif not found_classes and len(det_model.names) == 1:
@@ -1459,11 +1457,11 @@ def camera_loop():
 
         # Human / Person Veto Filter (prevents hands, arms, and people from false-triggering chicken tracks)
         person_model = None
-        yolo11_path = os.path.join(SCRIPT_DIR, "yolo11n.pt")
-        if os.path.exists(yolo11_path):
+        yolo_person_path = os.path.join(SCRIPT_DIR, "yolo26n.pt")
+        if os.path.exists(yolo_person_path):
             try:
-                person_model = YOLO(yolo11_path)
-                print("[INFO] Human & Hand Veto Filter active (yolo11n.pt)")
+                person_model = YOLO(yolo_person_path)
+                print("[INFO] Human & Hand Veto Filter active (yolo26n.pt)")
             except Exception:
                 pass
 
