@@ -35,6 +35,7 @@
 
     <color name="healthy">#2E7D32</color>
     <color name="healthy_container">#E8F5E9</color>
+    <color name="healthy_stroke">#332E7D32</color>
 
     <!-- Basic -->
     <color name="black">#FF000000</color>

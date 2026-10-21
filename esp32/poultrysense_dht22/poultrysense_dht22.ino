@@ -1,5 +1,5 @@
 #include <WiFi.h>
-#include <WiFiManager.h>        // Captive portal library (tzapu)
+#include <WiFiManager.h>        // Captive portal library (tzapu)ss
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <time.h>
@@ -29,6 +29,8 @@ void sendToFirebase(float temp, float hum);
 void checkFactoryReset();
 String getFormattedTime();
 void bindServerCallback();
+void checkFirebaseSystemControl();
+void triggerPcShutdown(const char* source);
 
 // =============================================================
 //  POULTRYSENSE MODERN CAPTIVE PORTAL GUI & REAL-TIME TESTER
@@ -718,6 +720,12 @@ void bindServerCallback() {
       wifiManager.server->send(200, "application/json", "{\"status\":\"failed\",\"reason\":\"Could not connect. Please check your password or signal range.\"}");
     }
   });
+
+  // 5. Remote PC Shutdown trigger endpoint
+  wifiManager.server->on("/api/shutdown", HTTP_GET, []() {
+    triggerPcShutdown("ESP32 Web Server API");
+    wifiManager.server->send(200, "application/json", "{\"status\":\"success\",\"message\":\"Windows PC Shutdown command dispatched via ESP32 Serial!\"}");
+  });
 }
 
 // =============================================================
@@ -787,7 +795,7 @@ void loop() {
   // Check factory reset button at ANY time while running
   checkFactoryReset();
 
-  // Allow typing "reset" in Serial Monitor to wipe Wi-Fi
+  // Allow typing "reset" or "shutdown" in Serial Monitor
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
@@ -797,14 +805,21 @@ void loop() {
       wm.resetSettings();
       delay(1000);
       ESP.restart();
+    } else if (cmd.equalsIgnoreCase("shutdown") || cmd.equalsIgnoreCase("off")) {
+      triggerPcShutdown("Serial Command");
     }
   }
 
   unsigned long now = millis();
 
-  // Transmit telemetry every SEND_INTERVAL ms
+  // Transmit telemetry & check cloud controls every SEND_INTERVAL ms
   if (now - lastSendTime >= SEND_INTERVAL) {
     lastSendTime = now;
+
+    if (WiFi.status() == WL_CONNECTED) {
+      // Check for remote PC shutdown command from Mobile App via Firebase Cloud
+      checkFirebaseSystemControl();
+    }
 
     // Read real sensor values from DHT22 on Pin 26
     float humidity    = dht.readHumidity();
@@ -833,6 +848,58 @@ void loop() {
       WiFi.reconnect();
     }
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Trigger Windows PC Shutdown via Serial Signal
+// ─────────────────────────────────────────────────────────────
+void triggerPcShutdown(const char* source) {
+  Serial.println("\n==========================================");
+  Serial.printf("🧨 [POWER] PC SHUTDOWN TRIGGERED (%s)!\n", source);
+  Serial.println("SHUTDOWN_PC_NOW");
+  Serial.println("==========================================\n");
+
+  // Fast LED flash alert
+  for (int i = 0; i < 6; i++) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(100);
+    digitalWrite(LED_PIN, LOW);
+    delay(100);
+  }
+  digitalWrite(LED_PIN, HIGH);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Check Firebase Cloud Database for Remote PC Shutdown Command
+// ─────────────────────────────────────────────────────────────
+void checkFirebaseSystemControl() {
+  HTTPClient https;
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  String url = String(FIREBASE_HOST) + "/system_control.json";
+  https.begin(client, url);
+  https.setTimeout(3000);
+
+  int httpCode = https.GET();
+  if (httpCode == 200) {
+    String payload = https.getString();
+    if (payload.indexOf("\"shutdown\":true") != -1 || payload.indexOf("\"shutdown\": true") != -1) {
+      triggerPcShutdown("Firebase Cloud App Command");
+      https.end();
+
+      // Reset shutdown flag in Firebase using fresh SSL client to prevent repeat triggers
+      WiFiClientSecure resetClient;
+      resetClient.setInsecure();
+      HTTPClient resetHttps;
+      resetHttps.begin(resetClient, url);
+      resetHttps.addHeader("Content-Type", "application/json");
+      resetHttps.sendRequest("PATCH", "{\"shutdown\":false}");
+      resetHttps.end();
+      return;
+    }
+  }
+  https.end();
 }
 
 // ─────────────────────────────────────────────────────────────
