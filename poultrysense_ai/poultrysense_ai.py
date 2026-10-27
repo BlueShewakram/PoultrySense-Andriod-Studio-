@@ -101,13 +101,14 @@ latest_status = {
     "isolated_count": 0,
     "health_index": 100,
     "track_count": 0,
-    "temperature": 24.5,
-    "humidity": 62.0,
+    "temperature": None,
+    "humidity": None,
+    "sensor_connected": False,
     "detections": []
 }
 latest_sensor_data = {
-    "temperature": 24.5,
-    "humidity": 62.0,
+    "temperature": None,
+    "humidity": None,
     "last_updated": 0
 }
 frame_lock = threading.Lock()
@@ -2035,8 +2036,9 @@ def camera_loop():
                 "isolated_count": isolated_count,
                 "health_index": health_index,
                 "track_count": flock_count,
-                "temperature": latest_sensor_data.get("temperature", 24.5),
-                "humidity": latest_sensor_data.get("humidity", 62.0),
+                "sensor_connected": (time.time() - latest_sensor_data.get("last_updated", 0) < 30.0) and (latest_sensor_data.get("temperature") is not None),
+                "temperature": latest_sensor_data.get("temperature") if (time.time() - latest_sensor_data.get("last_updated", 0) < 30.0) else None,
+                "humidity": latest_sensor_data.get("humidity") if (time.time() - latest_sensor_data.get("last_updated", 0) < 30.0) else None,
                 "detections": detection_list,
                 "alerts": gemini_escalator.get_active_alerts()
 

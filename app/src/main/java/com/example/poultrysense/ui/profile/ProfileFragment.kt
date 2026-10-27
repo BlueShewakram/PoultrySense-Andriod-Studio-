@@ -31,6 +31,10 @@ import com.example.poultrysense.databinding.FragmentProfileBinding
 import com.example.poultrysense.ui.auth.LoginActivity
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -149,25 +153,76 @@ class ProfileFragment : Fragment() {
         }
     }
 
+    private var isAiHubOnline = false
+    private var isEsp32Online = false
+
     private fun loadOperationalStats() {
         val ctx = context ?: return
-        val cachedUser = UserPreferences.getCachedUser(ctx)
 
-        // 1. Total Inspections from CheckupSessionManager
-        val inspectionsCount = CheckupSessionManager.getSessionCounter(ctx)
-        binding.tvTotalInspections.text = inspectionsCount.toString()
+        // 1. Hardware Readiness & Setup Progress
+        updateHardwareReadiness()
 
-        // 2. System Uptime / Days
-        val activeDays = cachedUser?.activeDays ?: 42
-        binding.tvSystemUptime.text = "$activeDays Days"
-
-        // 3. Flock Health Index
-        val healthIndex = CheckupSessionManager.getLatestHealthIndex(ctx)
-        binding.tvFlockHealthRate.text = healthIndex
-
-        // 4. Server IP Info Subtext
+        // 2. Server IP Info Subtext
         val ip = ServerPreferences.getIp(ctx)
         binding.tvAiServerSubtext.text = "$ip • Port 5000"
+
+        // 3. Listen to Firebase to determine live ESP32 status
+        val realtimeDb = FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
+        realtimeDb.getReference("sensor_data").child("live").addListenerForSingleValueEvent(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                if (_binding == null) return
+                val temp = snapshot.child("temperature").getValue(Double::class.java)
+                isEsp32Online = (temp != null)
+                updateHardwareReadiness()
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        })
+    }
+
+    private fun updateHardwareReadiness() {
+        if (_binding == null) return
+        val ctx = context ?: return
+
+        var score = 50 // Base: Account (25%) + Vision pipeline (25%)
+        val primaryColor = ContextCompat.getColor(ctx, R.color.primary)
+        val mutedColor = ContextCompat.getColor(ctx, R.color.text_muted)
+
+        // 1. AI Hub status
+        if (isAiHubOnline) {
+            score += 25
+            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(android.graphics.Color.parseColor("#00E5FF"))
+            binding.tvReadinessAiStatus.text = "Online"
+            binding.tvReadinessAiStatus.setTextColor(android.graphics.Color.parseColor("#00B8D4"))
+        } else {
+            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(mutedColor)
+            binding.tvReadinessAiStatus.text = "Standby"
+            binding.tvReadinessAiStatus.setTextColor(mutedColor)
+        }
+
+        // 2. ESP32 Sensor status
+        if (isEsp32Online) {
+            score += 25
+            binding.dotReadinessEsp32.backgroundTintList = ColorStateList.valueOf(primaryColor)
+            binding.tvReadinessEsp32Status.text = "Live"
+            binding.tvReadinessEsp32Status.setTextColor(primaryColor)
+        } else {
+            binding.dotReadinessEsp32.backgroundTintList = ColorStateList.valueOf(mutedColor)
+            binding.tvReadinessEsp32Status.text = "Standby"
+            binding.tvReadinessEsp32Status.setTextColor(mutedColor)
+        }
+
+        // Vision & Account are active
+        binding.dotReadinessCamera.backgroundTintList = ColorStateList.valueOf(primaryColor)
+        binding.dotReadinessProfile.backgroundTintList = ColorStateList.valueOf(primaryColor)
+
+        // Progress bar animation / update
+        binding.progressHardwareReadiness.progress = score
+        binding.tvReadinessPercent.text = "$score%"
+        binding.tvReadinessSubtitle.text = when {
+            score == 100 -> "All modules operational and synchronized"
+            score >= 75 -> "Core modules active • Ready for monitoring"
+            else -> "Awaiting AI Hub or ESP32 sensor connection"
+        }
     }
 
     private fun checkAiHubLiveStatus() {
@@ -188,6 +243,9 @@ class ProfileFragment : Fragment() {
 
             withContext(Dispatchers.Main) {
                 if (_binding == null) return@withContext
+                isAiHubOnline = isOnline
+                updateHardwareReadiness()
+
                 if (isOnline) {
                     binding.dotProfileAiHub.backgroundTintList =
                         ColorStateList.valueOf(android.graphics.Color.parseColor("#00E5FF"))

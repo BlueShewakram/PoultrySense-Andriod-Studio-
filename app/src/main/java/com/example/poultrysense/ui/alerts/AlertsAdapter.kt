@@ -13,8 +13,10 @@ import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.databinding.ItemAlertBinding
 
-class AlertsAdapter(private var alerts: List<FarmAlert>) :
-    RecyclerView.Adapter<AlertsAdapter.AlertViewHolder>() {
+class AlertsAdapter(
+    private var alerts: List<FarmAlert>,
+    private val onResolveClick: ((FarmAlert) -> Unit)? = null
+) : RecyclerView.Adapter<AlertsAdapter.AlertViewHolder>() {
 
     class AlertViewHolder(val binding: ItemAlertBinding) : RecyclerView.ViewHolder(binding.root)
 
@@ -82,6 +84,21 @@ class AlertsAdapter(private var alerts: List<FarmAlert>) :
 
             // Title stays neutral dark — no colored title text
             tvAlertTitle.setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+
+            // One-Tap Alert Resolution UI state
+            if (alert.isResolved) {
+                btnResolveAlert.visibility = View.GONE
+                tvResolvedStatus.visibility = View.VISIBLE
+                cardAlert.alpha = 0.60f
+            } else {
+                btnResolveAlert.visibility = View.VISIBLE
+                tvResolvedStatus.visibility = View.GONE
+                cardAlert.alpha = 1.0f
+
+                btnResolveAlert.setOnClickListener {
+                    onResolveClick?.invoke(alert)
+                }
+            }
 
             cardAlert.setOnClickListener { view ->
                 view.animate()

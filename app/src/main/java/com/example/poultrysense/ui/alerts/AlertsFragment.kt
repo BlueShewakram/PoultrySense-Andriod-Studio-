@@ -37,7 +37,11 @@ class AlertsFragment : Fragment() {
         val mainActivity = activity as? MainActivity
         val alerts = mainActivity?.farmAlerts ?: emptyList()
 
-        alertsAdapter = AlertsAdapter(alerts)
+        alertsAdapter = AlertsAdapter(alerts) { alertToResolve ->
+            mainActivity?.resolveAlert(alertToResolve.id)
+            alertsAdapter.notifyDataSetChanged()
+            Toast.makeText(context, "Alert resolved • Chicken verified", Toast.LENGTH_SHORT).show()
+        }
         binding.rvAlerts.apply {
             layoutManager = LinearLayoutManager(context)
             adapter = alertsAdapter

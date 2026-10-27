@@ -27,7 +27,7 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
             tvHistorySessionNum.text = session.sessionNumber
             tvHistoryStatus.text = session.status
             tvHistoryDateTime.text = "${session.date} • ${session.time}"
-            tvHistoryHealthIndex.text = "Normal Rate: ${session.healthIndex}"
+            tvHistoryHealthIndex.text = "Mobility Rate: ${session.healthIndex}"
             tvHistoryTotal.text = session.totalFlock.toString()
             tvHistoryHealthy.text = session.healthyCount.toString()
             tvHistoryFlagged.text = session.illCount.toString()

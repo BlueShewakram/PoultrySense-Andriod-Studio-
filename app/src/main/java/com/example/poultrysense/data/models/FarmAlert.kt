@@ -14,6 +14,7 @@ data class FarmAlert(
     val timeAgo: String,
     val timestamp: String,
     var read: Boolean = false,
+    var isResolved: Boolean = false,
     val chickenId: String? = null,
     val location: String? = null,
     val tagColorName: String? = null,

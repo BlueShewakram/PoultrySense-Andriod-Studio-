@@ -18,6 +18,7 @@ import com.example.poultrysense.databinding.ActivityMainBinding
 
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.example.poultrysense.data.NotificationHelper
 import com.example.poultrysense.data.repository.AuthRepository
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -25,6 +26,8 @@ import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.launch
 import java.util.Locale
+import android.os.Build
+import android.content.pm.PackageManager
 
 class MainActivity : AppCompatActivity() {
 
@@ -110,6 +113,19 @@ class MainActivity : AppCompatActivity() {
 
         updateNotificationBadge()
         preloadUserProfileAndAvatar()
+
+        // Initialize Android push notification channel and request permission
+        NotificationHelper.initNotificationChannel(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
+        // Navigate to Alerts tab if opened from push notification
+        if (intent?.getBooleanExtra("navigate_to_alerts", false) == true) {
+            navigateToTab(R.id.navigation_alerts)
+        }
     }
 
     private fun preloadUserProfileAndAvatar() {
@@ -411,8 +427,21 @@ class MainActivity : AppCompatActivity() {
             farmAlerts[existingIndex] = alert
         } else {
             farmAlerts.add(0, alert)
+            // Dispatch functional system push notification for critical alerts
+            if (alert.severity == AlertSeverity.CRITICAL && !alert.read && !alert.isResolved) {
+                NotificationHelper.sendFlockNotification(this, alert.title, alert.description)
+            }
         }
         updateNotificationBadge()
+    }
+
+    fun resolveAlert(alertId: String) {
+        val alert = farmAlerts.find { it.id == alertId }
+        if (alert != null) {
+            alert.isResolved = true
+            alert.read = true
+            updateNotificationBadge()
+        }
     }
 
     fun updateNotificationBadge() {

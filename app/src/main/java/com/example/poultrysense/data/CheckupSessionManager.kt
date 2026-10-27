@@ -243,8 +243,10 @@ object CheckupSessionManager {
         return getPrefs(context).getInt(KEY_SESSION_COUNTER, 108)
     }
 
-    fun getLatestHealthIndex(context: Context): String {
+    fun getLatestMobilityIndex(context: Context): String {
         val sessions = getCompletedSessions(context)
-        return sessions.firstOrNull()?.healthIndex ?: "99.2%"
+        return sessions.firstOrNull()?.healthIndex ?: "98.5%"
     }
+
+    fun getLatestHealthIndex(context: Context): String = getLatestMobilityIndex(context)
 }

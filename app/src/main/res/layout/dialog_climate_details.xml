@@ -126,7 +126,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-black"
-            android:text="23.8°C"
+            android:text="--.-°C"
             android:textColor="@color/primary"
             android:textSize="18sp" />
     </LinearLayout>
@@ -185,7 +185,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-black"
-            android:text="62%"
+            android:text="--%"
             android:textColor="#0288D1"
             android:textSize="18sp" />
     </LinearLayout>

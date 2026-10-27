@@ -34,7 +34,7 @@
                     android:layout_height="wrap_content"
                     android:fontFamily="sans-serif-black"
                     android:letterSpacing="-0.03"
-                    android:text="Flock Health Alerts"
+                    android:text="Flock Activity Alerts"
                     android:textColor="#0F172A"
                     android:textSize="26sp" />
 
@@ -43,7 +43,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:fontFamily="sans-serif-medium"
-                    android:text="Flock health and system notifications"
+                    android:text="Real-time movement and behavior notifications"
                     android:textColor="#64748B"
                     android:textSize="12.5sp" />
             </LinearLayout>

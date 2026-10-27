@@ -250,7 +250,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:fontFamily="sans-serif-bold"
-                                    android:text="Active &amp; Normal"
+                                    android:text="Normal Mobility"
                                     android:textColor="@color/text_muted"
                                     android:textSize="9sp" />
                             </LinearLayout>
@@ -283,7 +283,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Health Alerts"
+                                android:text="Behavior Flags"
                                 android:textColor="@color/text_primary"
                                 android:textSize="12sp" />
 
@@ -302,7 +302,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="Needs Attention"
+                                android:text="Needs Observation"
                                 android:textColor="@color/text_muted"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -395,7 +395,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:fontFamily="sans-serif-bold"
-                    android:text="Flock Status Stations"
+                    android:text="Flock Activity Overview"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp" />
 
@@ -440,7 +440,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="28dp"
                             android:fontFamily="sans-serif-black"
-                            android:text="Anomaly"
+                            android:text="Lethargy Flag"
                             android:textColor="@color/white"
                             android:textSize="13sp" />
 
@@ -504,7 +504,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="28dp"
                             android:fontFamily="sans-serif-black"
-                            android:text="Monitor"
+                            android:text="Mobility"
                             android:textColor="@color/white"
                             android:textSize="13sp" />
 
@@ -578,7 +578,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:fontFamily="sans-serif-medium"
-                            android:text="62% Humidity\n23.8°C"
+                            android:text="ESP32 Standby\nConnecting..."
                             android:textColor="#EEFFFFFF"
                             android:textSize="9sp" />
 
@@ -592,7 +592,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif-black"
-                            android:text="Active"
+                            android:text="STANDBY"
                             android:textColor="#FFE0B2"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -743,7 +743,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginStart="5dp"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Humidity: 62% (Good)"
+                                android:text="Sensor: Standby"
                                 android:textColor="@color/white"
                                 android:textSize="11sp" />
                         </LinearLayout>
@@ -888,22 +888,23 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="Current level: 62% (Good)"
+                                android:text="Waiting for ESP32 connection..."
                                 android:textColor="@color/text_muted"
                                 android:textSize="12sp" />
                         </LinearLayout>
 
-                        <!-- Status Label: Normal -->
+                        <!-- Status Label: Standby -->
                         <TextView
                             android:id="@+id/tvBarnHumidityStatus"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:background="@drawable/bg_healthy_badge"
+                            android:backgroundTint="#ECEFF1"
                             android:fontFamily="sans-serif-bold"
                             android:paddingHorizontal="10dp"
                             android:paddingVertical="4dp"
-                            android:text="NORMAL"
-                            android:textColor="@color/primary"
+                            android:text="STANDBY"
+                            android:textColor="#78909C"
                             android:textSize="11sp" />
                     </LinearLayout>
 
@@ -955,22 +956,23 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="Current temp: 23.8°C"
+                                android:text="Waiting for ESP32 connection..."
                                 android:textColor="@color/text_muted"
                                 android:textSize="12sp" />
                         </LinearLayout>
 
-                        <!-- Status Label: Normal -->
+                        <!-- Status Label: Standby -->
                         <TextView
                             android:id="@+id/tvBarnTempStatus"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:background="@drawable/bg_healthy_badge"
+                            android:backgroundTint="#ECEFF1"
                             android:fontFamily="sans-serif-bold"
                             android:paddingHorizontal="10dp"
                             android:paddingVertical="4dp"
-                            android:text="NORMAL"
-                            android:textColor="@color/primary"
+                            android:text="STANDBY"
+                            android:textColor="#78909C"
                             android:textSize="11sp" />
                     </LinearLayout>
 

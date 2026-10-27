@@ -46,9 +46,9 @@ data class AiStatusResponse(
     @SerializedName("isolated_count") val isolatedCount: Int? = 0,
     @SerializedName("health_index") val healthIndex: Int? = 100,
     @SerializedName("track_count") val trackCount: Int? = 0,
-    @SerializedName("temperature") val temperature: Double? = 24.5,
-    @SerializedName("humidity") val humidity: Double? = 62.0,
+    @SerializedName("temperature") val temperature: Double? = null,
+    @SerializedName("humidity") val humidity: Double? = null,
+    @SerializedName("sensor_connected") val sensorConnected: Boolean? = false,
     @SerializedName("detections") val detections: List<DetectionItem>? = emptyList(),
     @SerializedName("alerts") val alerts: List<ChickenAlertItem>? = emptyList()
-
 )

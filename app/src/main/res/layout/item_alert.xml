@@ -126,31 +126,74 @@
                 android:textColor="#64748B"
                 android:textSize="12.5sp" />
 
-            <!-- Row 4: Location (optional) -->
+            <!-- Row 4: Location & One-Tap Resolution Action Row -->
             <LinearLayout
-                android:id="@+id/layoutAlertLocation"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:src="@drawable/ic_location_on"
-                    app:tint="#94A3B8"
-                    tools:ignore="ContentDescription" />
+                <LinearLayout
+                    android:id="@+id/layoutAlertLocation"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:src="@drawable/ic_location_on"
+                        app:tint="#94A3B8"
+                        tools:ignore="ContentDescription" />
+
+                    <TextView
+                        android:id="@+id/tvAlertLocation"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:fontFamily="sans-serif-medium"
+                        android:text="Barn A - Zone 1"
+                        android:textColor="#94A3B8"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <!-- One-Tap Resolve Action Button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnResolveAlert"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:backgroundTint="#F1F5F9"
+                    android:fontFamily="sans-serif-bold"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:paddingHorizontal="10dp"
+                    android:text="Resolve"
+                    android:textAllCaps="false"
+                    android:textColor="@color/primary"
+                    android:textSize="11sp"
+                    app:cornerRadius="16dp"
+                    app:icon="@drawable/ic_check"
+                    app:iconSize="13dp"
+                    app:iconTint="@color/primary" />
+
+                <!-- Resolved Status Pill -->
                 <TextView
-                    android:id="@+id/tvAlertLocation"
+                    android:id="@+id/tvResolvedStatus"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
-                    android:fontFamily="sans-serif-medium"
-                    android:text="Barn A - Zone 1"
-                    android:textColor="#94A3B8"
-                    android:textSize="11sp" />
+                    android:background="@drawable/bg_healthy_badge"
+                    android:fontFamily="sans-serif-bold"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="4dp"
+                    android:text="RESOLVED"
+                    android:textColor="@color/primary"
+                    android:textSize="10sp"
+                    android:visibility="gone" />
+
             </LinearLayout>
 
         </LinearLayout>
