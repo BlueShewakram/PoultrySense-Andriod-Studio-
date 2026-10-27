@@ -37,14 +37,15 @@ Copy and paste the revised sections below directly into your Google Doc ([Poultr
 | Component | Specification |
 | :--- | :--- |
 | **Operating System** | Windows 10/11 (64-bit) for Edge Computing Station; Android 10.0+ (API Level 29–35) for Mobile App |
-| **Development Environments** | Android Studio (Koala/Ladybug), Visual Studio Code (Python Edge AI), Arduino IDE (ESP32 Firmware) |
-| **Programming Languages** | Kotlin (Native Android), Python 3.10+ (AI Server & Telemetry), C++ (ESP32 Firmware) |
-| **AI & Computer Vision Engine** | OpenCV, Ultralytics YOLO26n Fine-Tuned Detector, Intel OpenVINO™ 2024 Runtime, BoT-SORT Multi-Object Tracker with Appearance Re-Identification (`yolo26n-cls.pt`), Google Gemini Flash Reasoning Engine |
-| **Mobile Application Framework** | Native Android SDK (Kotlin), Android Jetpack (ViewBinding, ViewModel, Lifecycle), Material Design 3 Components, MPAndroidChart |
-| **Networking & API** | Retrofit 2, OkHttp3, RESTful JSON Communication, Firebase Realtime Database SDK |
-| **Database & Cloud Storage** | Google Firebase Realtime Database (Live Telemetry & Alerts Sync), Local JSON/SQLite Session Logging |
-| **Push Notification Service** | Android System NotificationManager (High-Priority Channel with Vibration & Sound) |
-| **Version Control & Testing** | Git / GitHub, Postman, Android Studio Logcat & Profiler |
+| **Development Environment** | Android Studio (Koala/Ladybug), Visual Studio Code (Python & AI), Arduino IDE (ESP32 Firmware) |
+| **Programming Language** | Kotlin (Native Android), Python 3.10+ (AI Server & Telemetry), C++ (ESP32 Firmware), PHP 8.x (Web Administration) |
+| **AI & Computer Vision** | OpenCV, Ultralytics YOLO26n Fine-Tuned Detector, Intel OpenVINO™ 2024 Runtime, BoT-SORT Multi-Object Tracker with Appearance Re-ID (`yolo26n-cls.pt`), Google Gemini Flash Reasoning Engine |
+| **Mobile Application Development** | Native Android SDK (Kotlin), Android Jetpack (ViewBinding, ViewModel, Lifecycle), Material Design 3 Components, MPAndroidChart |
+| **Backend Framework** | Flask (Python RESTful Micro-Framework & Edge Streaming Server) / Native PHP 8.x (Web Administration) |
+| **Database** | Google Firebase Realtime Database (Live Telemetry & Cloud Synchronization), MySQL 8.x / Local SQLite (Historical Session Logs) |
+| **Cloud Platform** | Google Firebase (Realtime Database & Cloud Messaging) |
+| **Version Control** | Git / GitHub |
+| **API Testing** | Postman |
 
 #### Narrative Description for Table 14:
 > "Table 14 outlines the core software technologies required for the development and operation of the PoultrySense system. The system utilizes Python, OpenCV, and a custom fine-tuned **Ultralytics YOLO26n** object detection model optimized via the **Intel OpenVINO™ runtime** to perform high-speed, real-time chicken detection (~32 ms/frame) with minimal edge processing latency. Continuous identity tracking across bird occlusions and deformations is maintained through the **BoT-SORT algorithm with appearance re-identification (Re-ID)**, augmented by a **Google Gemini Flash** multimodal reasoning engine that evaluates behavioral deviations. The mobile application is developed natively in **Kotlin using Android Studio**, providing poultry farmers with an intuitive, responsive interface built with Material Design 3 and Android Jetpack components. The Android app receives real-time telemetry, visual bounding boxes, and immediate push notifications synchronized seamlessly through the **Google Firebase Realtime Database**, while firmware running on the ESP32 microcontroller continuously transmits DHT22 ambient temperature and humidity data. This software architecture delivers high-throughput edge processing, dependable wireless synchronization, and an accessible mobile monitoring experience tailored to small- and medium-scale poultry farming operations."
