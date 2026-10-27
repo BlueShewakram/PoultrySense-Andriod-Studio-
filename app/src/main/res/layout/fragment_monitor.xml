@@ -267,7 +267,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Mobility Index"
+                                android:text="Health Index"
                                 android:textColor="#64748B"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -663,7 +663,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Mobility Index"
+                                android:text="Health Index"
                                 android:textColor="#64748B"
                                 android:textSize="10.5sp" />
                         </LinearLayout>
@@ -880,7 +880,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-black"
-                                android:text="AI Activity Scan"
+                                android:text="AI Health Checkup"
                                 android:textColor="#0F172A"
                                 android:textSize="15sp" />
 
@@ -890,7 +890,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif"
-                                android:text="Continuous 24/7 AI Vision &amp; Activity Monitoring"
+                                android:text="Continuous 24/7 AI Health Monitoring"
                                 android:textColor="#64748B"
                                 android:textSize="11.5sp" />
                         </LinearLayout>

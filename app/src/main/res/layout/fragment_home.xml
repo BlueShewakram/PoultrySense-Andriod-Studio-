@@ -250,7 +250,7 @@
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
                                     android:fontFamily="sans-serif-bold"
-                                    android:text="Normal Mobility"
+                                    android:text="Active &amp; Normal"
                                     android:textColor="@color/text_muted"
                                     android:textSize="9sp" />
                             </LinearLayout>
@@ -283,7 +283,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Behavior Flags"
+                                android:text="Health Alerts"
                                 android:textColor="@color/text_primary"
                                 android:textSize="12sp" />
 
@@ -302,7 +302,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="Needs Observation"
+                                android:text="Needs Attention"
                                 android:textColor="@color/text_muted"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -440,7 +440,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="28dp"
                             android:fontFamily="sans-serif-black"
-                            android:text="Lethargy Flag"
+                            android:text="Anomaly"
                             android:textColor="@color/white"
                             android:textSize="13sp" />
 
@@ -504,7 +504,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="28dp"
                             android:fontFamily="sans-serif-black"
-                            android:text="Mobility"
+                            android:text="Monitor"
                             android:textColor="@color/white"
                             android:textSize="13sp" />
 

@@ -18,8 +18,8 @@ import com.example.poultrysense.ui.MainActivity
 object NotificationHelper {
 
     const val CHANNEL_ID = "poultry_flock_alerts_channel"
-    private const val CHANNEL_NAME = "Flock Activity & Anomaly Alerts"
-    private const val CHANNEL_DESC = "Real-time alerts for chicken lethargy, prolonged stationary behavior, and climate warnings"
+    private const val CHANNEL_NAME = "Flock Health & Anomaly Alerts"
+    private const val CHANNEL_DESC = "Real-time alerts for chicken health anomalies, flagged conditions, and climate warnings"
 
     fun initNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
