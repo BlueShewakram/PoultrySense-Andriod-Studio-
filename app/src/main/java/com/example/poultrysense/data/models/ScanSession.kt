@@ -12,7 +12,7 @@ data class ChickenSessionDetail(
 )
 
 /**
- * A completed AI checkup scan session with per-chicken breakdown.
+ * A completed AI checkup scan session with per-chicken breakdown and barn location.
  */
 data class ScanSession(
     val id: String,
@@ -24,5 +24,11 @@ data class ScanSession(
     val healthyCount: Int,
     val illCount: Int,
     val healthIndex: String,
+    val barnId: String = "barn_alpha_zone_1",
+    val barnName: String = "Barn Alpha",
+    val zoneName: String = "Zone 1 (Main Pen)",
     val chickenDetails: List<ChickenSessionDetail> = emptyList()
-)
+) {
+    val barnDisplayName: String
+        get() = "$barnName • $zoneName"
+}

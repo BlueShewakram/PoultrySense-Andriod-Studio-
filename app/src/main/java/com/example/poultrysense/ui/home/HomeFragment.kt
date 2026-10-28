@@ -202,22 +202,25 @@ class HomeFragment : Fragment() {
         val activeAlertsCount = mainActivity?.farmAlerts?.count { !it.read } ?: 0
         binding.tvActiveAlertsCount.text = if (activeAlertsCount == 1) "1 New" else "$activeAlertsCount New"
 
-        // Dynamic inspection metrics from live AI status or CheckupSessionManager
-        val latestSession = com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull()
-        val totalFlock = liveFlockCount ?: (latestSession?.totalFlock ?: 0)
-        val healthy = liveHealthyCount ?: (latestSession?.healthyCount ?: totalFlock)
-        val flagged = liveFlaggedCount ?: (latestSession?.illCount ?: 0)
-        val lastTime = if (liveFlockCount != null) "Live Stream" else (latestSession?.time ?: "--")
+        // Dynamic inspection metrics from live AI status or CheckupSessionManager (Zero fake data on standby barns)
+        val hasCam = activeZone?.hasCamera == true
+        val latestSession = com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull { it.barnId == activeZone?.id }
+            ?: com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull()
 
-        binding.tvTotalFlockCount.text = if (totalFlock > 0) "$totalFlock" else "--"
-        binding.tvBarnCapacity.text = "${activeZone?.totalCapacity ?: (if (totalFlock > 0) "${(totalFlock * 1.25).toInt()}" else "--")}"
-        binding.tvFlaggedCount.text = "$flagged Flagged"
+        val totalFlock = if (hasCam) (liveFlockCount ?: (latestSession?.totalFlock ?: 0)) else 0
+        val healthy = if (hasCam) (liveHealthyCount ?: (latestSession?.healthyCount ?: totalFlock)) else 0
+        val flagged = if (hasCam) (liveFlaggedCount ?: (latestSession?.illCount ?: 0)) else 0
+        val lastTime = if (hasCam) (if (liveFlockCount != null) "Live Stream" else (latestSession?.time ?: "--")) else "Standby (No Cam)"
+
+        binding.tvTotalFlockCount.text = if (hasCam && totalFlock > 0) "$totalFlock" else "--"
+        binding.tvBarnCapacity.text = "${activeZone?.totalCapacity ?: "--"}"
+        binding.tvFlaggedCount.text = if (hasCam) "$flagged Flagged" else "--"
         binding.tvLastScanTime.text = lastTime
 
-        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\n${activeZone?.barnName ?: "Barn Alpha"}"
-        binding.tvActiveCapsuleDesc.text = if (healthy > 0) "$healthy active\nAll zones OK" else "0 active\nAll zones OK"
+        binding.tvAnomalyCapsuleDesc.text = if (hasCam) "$flagged flagged\n${activeZone?.barnName ?: "Barn Alpha"}" else "Standby\nNo camera"
+        binding.tvActiveCapsuleDesc.text = if (hasCam && healthy > 0) "$healthy active\nAll zones OK" else "Standby\nNo active stream"
 
-        animateNormalRing(healthy, if (totalFlock > 0) totalFlock else 1)
+        animateNormalRing(if (hasCam) healthy else 0, if (hasCam && totalFlock > 0) totalFlock else (activeZone?.totalCapacity ?: 1))
     }
 
     private fun setupCapsuleInteractions() {

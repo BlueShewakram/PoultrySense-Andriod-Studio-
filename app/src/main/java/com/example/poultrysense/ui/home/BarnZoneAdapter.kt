@@ -13,7 +13,8 @@ class BarnZoneAdapter(
     private var zones: List<BarnZone>,
     private var activeZoneId: String,
     private val onZoneSelected: (BarnZone) -> Unit,
-    private val onZoneDeleted: ((BarnZone) -> Unit)? = null
+    private val onZoneDeleted: ((BarnZone) -> Unit)? = null,
+    private val onAssignCamera: ((BarnZone) -> Unit)? = null
 ) : RecyclerView.Adapter<BarnZoneAdapter.BarnZoneViewHolder>() {
 
     fun updateData(newZones: List<BarnZone>, newActiveId: String) {
@@ -50,13 +51,19 @@ class BarnZoneAdapter(
 
             // Camera status pill
             if (zone.hasCamera) {
-                binding.tvCameraStatus.text = "📷 ${zone.cameraName}"
+                binding.tvCameraStatus.text = "📷 Cam 1 Active"
                 binding.tvCameraStatus.setTextColor(ContextCompat.getColor(context, R.color.primary))
                 binding.tvCameraStatus.setBackgroundResource(R.drawable.bg_capsule_ai)
             } else {
-                binding.tvCameraStatus.text = "📷 No Camera"
+                binding.tvCameraStatus.text = "📷 Tap to Pair Cam"
                 binding.tvCameraStatus.setTextColor(ContextCompat.getColor(context, R.color.text_muted))
                 binding.tvCameraStatus.setBackgroundResource(R.drawable.bg_date_chip)
+            }
+
+            binding.tvCameraStatus.setOnClickListener {
+                if (!zone.hasCamera) {
+                    onAssignCamera?.invoke(zone)
+                }
             }
 
             // Sensor status pill

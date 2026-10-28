@@ -40,6 +40,54 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
+        <!-- Horizontal Barn Filter Chips -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:scrollbars="none">
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/chipGroupBarnFilter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:selectionRequired="true"
+                app:singleLine="true"
+                app:singleSelection="true">
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipFilterAll"
+                    style="@style/Widget.Material3.Chip.Filter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="true"
+                    android:text="All Barns"
+                    android:textColor="@color/chip_state_text_color"
+                    app:chipBackgroundColor="@color/chip_state_background_color"
+                    app:chipStrokeColor="#CBD5E1" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipFilterBarnAlpha"
+                    style="@style/Widget.Material3.Chip.Filter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Barn Alpha"
+                    android:textColor="@color/chip_state_text_color"
+                    app:chipBackgroundColor="@color/chip_state_background_color"
+                    app:chipStrokeColor="#CBD5E1" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipFilterBarnBeta"
+                    style="@style/Widget.Material3.Chip.Filter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Barn Beta"
+                    android:textColor="@color/chip_state_text_color"
+                    app:chipBackgroundColor="@color/chip_state_background_color"
+                    app:chipStrokeColor="#CBD5E1" />
+            </com.google.android.material.chip.ChipGroup>
+        </HorizontalScrollView>
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/rvHistory"
             android:layout_width="match_parent"

@@ -186,7 +186,7 @@ class MonitorFragment : Fragment() {
             PoultryFarmMapView.PoultryZoneId.COOP_1 -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
                 binding.tvSelectedZoneTitle.text = "${activeBarnZone.barnName} • Coop 1"
-                binding.tvMapChipTitle.text = "Coop 1 • ${activeBarnZone.cameraName ?: "Live"}"
+                binding.tvMapChipTitle.text = "Coop 1 • ${activeBarnZone.cameraName}"
 
                 if (activeBarnZone.hasCamera) {
                     binding.tvSelectedZoneSubtitle.text = "Main Broiler Barn • ${activeBarnZone.cameraName} Active"
@@ -631,26 +631,16 @@ class MonitorFragment : Fragment() {
                 Toast.makeText(ctx, "Checkup session saved to History", Toast.LENGTH_SHORT).show()
                 updateSessionUI()
             } else {
-                // Smart Camera Safety Guard: Block checkup if camera feed is not ready
-                val isCameraReady = isStreamReceivingFrames
-                if (!isCameraReady) {
-                    shakeView(binding.cardCheckupSession)
-                    binding.btnToggleSession.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-
-                    showCuteMascotAlert(
-                        title = "Hold your feathers!",
-                        message = "Cannot start AI checkup session without a live camera feed! Please connect your camera stream first."
-                    )
-                    Toast.makeText(ctx, "Connect camera stream to start checkup session", Toast.LENGTH_SHORT).show()
-                    return@setOnClickListener
+                // Interactive Barn Selection: Ask the user which barn camera to scan
+                val dialog = SelectScanBarnDialog { chosenBarn ->
+                    val duration = CheckupSessionManager.getScheduledDuration(ctx)
+                    CheckupSessionManager.startSession(ctx, duration, chosenBarn)
+                    val durationText = if (duration == 0) "Continuous" else "$duration mins"
+                    Toast.makeText(ctx, "AI Scan started on ${chosenBarn.barnName} ($durationText)", Toast.LENGTH_SHORT).show()
+                    startCameraStream()
+                    updateSessionUI()
                 }
-
-                val duration = CheckupSessionManager.getScheduledDuration(ctx)
-                CheckupSessionManager.startSession(ctx, duration)
-                val durationText = if (duration == 0) "Continuous" else "$duration mins"
-                Toast.makeText(ctx, "AI Checkup Session started ($durationText)", Toast.LENGTH_SHORT).show()
-                startCameraStream()
-                updateSessionUI()
+                dialog.show(parentFragmentManager, "SELECT_SCAN_BARN_DIALOG")
             }
         }
 

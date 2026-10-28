@@ -36,6 +36,7 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
         with(holder.binding) {
             tvHistorySessionNum.text = session.sessionNumber
             tvHistoryStatus.text = session.status
+            tvHistoryBarnLocation.text = session.barnDisplayName
             tvHistoryDateTime.text = "${session.date} • ${session.time}"
             tvHistoryHealthIndex.text = "Health Index: ${session.healthIndex}"
             tvHistoryTotal.text = session.totalFlock.toString()

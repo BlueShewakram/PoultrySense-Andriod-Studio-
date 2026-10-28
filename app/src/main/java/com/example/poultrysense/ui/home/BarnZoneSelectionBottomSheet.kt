@@ -78,6 +78,20 @@ class BarnZoneSelectionBottomSheet : BottomSheetDialogFragment() {
             },
             onZoneDeleted = { zoneToDelete ->
                 confirmDeleteZone(zoneToDelete)
+            },
+            onAssignCamera = { zoneToPair ->
+                val ctx = requireContext()
+                AlertDialog.Builder(ctx)
+                    .setTitle("Pair Camera to ${zoneToPair.barnName}?")
+                    .setMessage("Move physical Camera 1 to ${zoneToPair.fullDisplayName}? The live video stream and AI vision analysis will be assigned to this area.")
+                    .setPositiveButton("Pair Camera") { _, _ ->
+                        FarmZoneManager.assignCameraToZone(ctx, zoneToPair.id)
+                        FarmZoneManager.setActiveZone(ctx, zoneToPair)
+                        refreshList()
+                        Toast.makeText(ctx, "Camera 1 paired to ${zoneToPair.fullDisplayName}", Toast.LENGTH_SHORT).show()
+                    }
+                    .setNegativeButton("Cancel", null)
+                    .show()
             }
         )
 

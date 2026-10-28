@@ -2,7 +2,9 @@ package com.example.poultrysense.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.poultrysense.data.models.BarnZone
 import com.example.poultrysense.data.models.ScanSession
+import com.google.firebase.database.FirebaseDatabase
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.text.SimpleDateFormat
@@ -15,6 +17,9 @@ object CheckupSessionManager {
     private const val KEY_IS_ACTIVE = "key_is_active"
     private const val KEY_START_TIME = "key_start_time"
     private const val KEY_DURATION_MINS = "key_duration_mins"
+    private const val KEY_ACTIVE_BARN_ID = "key_active_barn_id"
+    private const val KEY_ACTIVE_BARN_NAME = "key_active_barn_name"
+    private const val KEY_ACTIVE_ZONE_NAME = "key_active_zone_name"
     private const val KEY_SCHEDULE_ENABLED = "key_schedule_enabled"
     private const val KEY_SCHEDULE_HOUR = "key_schedule_hour"
     private const val KEY_SCHEDULE_MINUTE = "key_schedule_minute"
@@ -48,11 +53,19 @@ object CheckupSessionManager {
         return true
     }
 
-    fun startSession(context: Context, durationMinutes: Int = 30) {
+    fun startSession(
+        context: Context,
+        durationMinutes: Int = 30,
+        barnZone: BarnZone? = null
+    ) {
+        val targetZone = barnZone ?: FarmZoneManager.getActiveZone(context)
         getPrefs(context).edit()
             .putBoolean(KEY_IS_ACTIVE, true)
             .putLong(KEY_START_TIME, System.currentTimeMillis())
             .putInt(KEY_DURATION_MINS, durationMinutes)
+            .putString(KEY_ACTIVE_BARN_ID, targetZone.id)
+            .putString(KEY_ACTIVE_BARN_NAME, targetZone.barnName)
+            .putString(KEY_ACTIVE_ZONE_NAME, targetZone.zoneName)
             .apply()
     }
 
@@ -60,17 +73,32 @@ object CheckupSessionManager {
         context: Context,
         totalFlock: Int = 0,
         healthyCount: Int = 0,
-        illCount: Int = 0
+        illCount: Int = 0,
+        barnZone: BarnZone? = null
     ) {
         val prefs = getPrefs(context)
         val wasActive = prefs.getBoolean(KEY_IS_ACTIVE, false)
+
+        val fallbackActive = FarmZoneManager.getActiveZone(context)
+        val barnId = barnZone?.id ?: prefs.getString(KEY_ACTIVE_BARN_ID, fallbackActive.id) ?: fallbackActive.id
+        val barnName = barnZone?.barnName ?: prefs.getString(KEY_ACTIVE_BARN_NAME, fallbackActive.barnName) ?: fallbackActive.barnName
+        val zoneName = barnZone?.zoneName ?: prefs.getString(KEY_ACTIVE_ZONE_NAME, fallbackActive.zoneName) ?: fallbackActive.zoneName
+
         prefs.edit()
             .putBoolean(KEY_IS_ACTIVE, false)
             .putLong(KEY_START_TIME, 0L)
             .apply()
 
         if (wasActive) {
-            recordCompletedSession(context, totalFlock, healthyCount, illCount)
+            recordCompletedSession(
+                context = context,
+                totalFlock = totalFlock,
+                healthyCount = healthyCount,
+                illCount = illCount,
+                barnId = barnId,
+                barnName = barnName,
+                zoneName = zoneName
+            )
         }
     }
 
@@ -78,7 +106,10 @@ object CheckupSessionManager {
         context: Context,
         totalFlock: Int = 0,
         healthyCount: Int = 0,
-        illCount: Int = 0
+        illCount: Int = 0,
+        barnId: String = "barn_alpha_zone_1",
+        barnName: String = "Barn Alpha",
+        zoneName: String = "Zone 1 (Main Pen)"
     ) {
         val prefs = getPrefs(context)
         val counter = prefs.getInt(KEY_SESSION_COUNTER, 108) + 1
@@ -92,7 +123,7 @@ object CheckupSessionManager {
         val healthy = if (healthyCount > 0) healthyCount else (flock - illCount).coerceAtLeast(0)
         val ill = if (illCount >= 0) illCount else (flock - healthy).coerceAtLeast(0)
 
-        val healthIndex = String.format(Locale.getDefault(), "%.1f%%", (healthy.toFloat() / flock.toFloat()) * 100f)
+        val healthIndex = String.format(Locale.getDefault(), "%.1f%%", if (flock > 0) (healthy.toFloat() / flock.toFloat()) * 100f else 100f)
 
         val newSession = ScanSession(
             id = "session-$counter",
@@ -103,7 +134,10 @@ object CheckupSessionManager {
             totalFlock = flock,
             healthyCount = healthy,
             illCount = ill,
-            healthIndex = healthIndex
+            healthIndex = healthIndex,
+            barnId = barnId,
+            barnName = barnName,
+            zoneName = zoneName
         )
 
         val currentList = getCompletedSessions(context).toMutableList()
@@ -112,6 +146,12 @@ object CheckupSessionManager {
         val trimmed = if (currentList.size > 30) currentList.subList(0, 30) else currentList
         val json = Gson().toJson(trimmed)
         prefs.edit().putString(KEY_SESSION_HISTORY, json).apply()
+
+        // Sync to Firebase Cloud Realtime Database: /farms/scan_history/session-X
+        try {
+            val db = FirebaseDatabase.getInstance().getReference("farms").child("scan_history")
+            db.child("session-$counter").setValue(newSession)
+        } catch (_: Exception) {}
     }
 
     fun getCompletedSessions(context: Context): List<ScanSession> {
@@ -137,7 +177,10 @@ object CheckupSessionManager {
                 totalFlock = 350,
                 healthyCount = 346,
                 illCount = 4,
-                healthIndex = "98.8%"
+                healthIndex = "98.8%",
+                barnId = "barn_alpha_zone_1",
+                barnName = "Barn Alpha",
+                zoneName = "Zone 1 (Main Pen)"
             ),
             ScanSession(
                 id = "session-107",
@@ -148,7 +191,10 @@ object CheckupSessionManager {
                 totalFlock = 350,
                 healthyCount = 345,
                 illCount = 5,
-                healthIndex = "98.5%"
+                healthIndex = "98.5%",
+                barnId = "barn_alpha_zone_1",
+                barnName = "Barn Alpha",
+                zoneName = "Zone 1 (Main Pen)"
             ),
             ScanSession(
                 id = "session-106",
@@ -159,7 +205,10 @@ object CheckupSessionManager {
                 totalFlock = 350,
                 healthyCount = 348,
                 illCount = 2,
-                healthIndex = "99.4%"
+                healthIndex = "99.4%",
+                barnId = "barn_beta_zone_1",
+                barnName = "Barn Beta",
+                zoneName = "Zone 1 (Layer Paddock)"
             )
         )
     }
@@ -182,8 +231,8 @@ object CheckupSessionManager {
 
     fun getElapsedSeconds(context: Context): Long {
         val prefs = getPrefs(context)
+        if (!prefs.getBoolean(KEY_IS_ACTIVE, false)) return 0L
         val startTime = prefs.getLong(KEY_START_TIME, 0L)
-        if (startTime == 0L) return 0L
         return (System.currentTimeMillis() - startTime) / 1000L
     }
 
@@ -237,17 +286,6 @@ object CheckupSessionManager {
         val timeStr = String.format(Locale.getDefault(), "%d:%02d %s", displayHour, minute, amPm)
         val durStr = if (duration == 0) "Continuous" else "$duration mins"
 
-        return "$repeat at $timeStr • $durStr"
+        return "$repeat at $timeStr ($durStr)"
     }
-
-    fun getSessionCounter(context: Context): Int {
-        return getPrefs(context).getInt(KEY_SESSION_COUNTER, 108)
-    }
-
-    fun getLatestHealthIndex(context: Context): String {
-        val sessions = getCompletedSessions(context)
-        return sessions.firstOrNull()?.healthIndex ?: "98.5%"
-    }
-
-    fun getLatestMobilityIndex(context: Context): String = getLatestHealthIndex(context)
 }

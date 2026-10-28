@@ -45,6 +45,35 @@
                 android:textSize="10sp" />
         </LinearLayout>
 
+        <!-- Scanned Barn Location Badge -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/bg_date_chip"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_home_black_24dp"
+                app:tint="@color/primary"
+                tools:ignore="ContentDescription" />
+
+            <TextView
+                android:id="@+id/tvHistoryBarnLocation"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:fontFamily="sans-serif-bold"
+                android:textColor="#334155"
+                android:textSize="11.5sp"
+                tools:text="Barn Alpha • Zone 1 (Main Pen)" />
+        </LinearLayout>
+
         <!-- Date / Time & Normal Rate -->
         <LinearLayout
             android:layout_width="match_parent"

@@ -3,23 +3,26 @@ package com.example.poultrysense.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.poultrysense.data.models.BarnZone
+import com.google.firebase.database.FirebaseDatabase
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Singleton repository managing registered poultry barns, pen zones,
- * camera/sensor hardware assignments, active selection persistence,
- * and reactive zone change broadcasts.
+ * dynamic camera/sensor hardware assignments, active selection persistence,
+ * and Firebase Realtime Database cloud synchronization.
  */
 object FarmZoneManager {
 
     private const val PREFS_NAME = "poultrysense_farm_zone_prefs"
     private const val KEY_SELECTED_ZONE_ID = "key_selected_zone_id"
     private const val KEY_CUSTOM_ZONES_JSON = "key_custom_zones_json"
+    private const val KEY_ASSIGNED_CAMERA_ZONE_ID = "key_assigned_camera_zone_id"
+    private const val KEY_ASSIGNED_SENSOR_ZONE_ID = "key_assigned_sensor_zone_id"
 
-    // Default registered barns & pens
-    val DEFAULT_ZONES = listOf(
+    // Default registered barns & pens baseline
+    private val BASE_DEFAULT_ZONES = listOf(
         BarnZone(
             id = "barn_alpha_zone_1",
             barnName = "Barn Alpha",
@@ -32,7 +35,7 @@ object FarmZoneManager {
             sensorName = "ESP32 #1 (DHT22 Live)",
             cameraChannelId = 1,
             firebaseTelemetryPath = "sensor_data/live",
-            description = "Active physical IoT station (ESP32 DHT22 + OpenVINO AI Cam)"
+            description = "Main Broiler Enclosure • Physical IoT Station"
         ),
         BarnZone(
             id = "barn_alpha_zone_2",
@@ -42,11 +45,11 @@ object FarmZoneManager {
             hasLiveHardware = false,
             hasCamera = false,
             hasSensor = false,
-            cameraName = "Unassigned",
-            sensorName = "Unassigned",
+            cameraName = "No Camera Assigned",
+            sensorName = "No Sensor Assigned",
             cameraChannelId = 0,
             firebaseTelemetryPath = "sensor_data/zones/barn_alpha_2",
-            description = "Warming lamp pen • Standby station (No hardware paired)"
+            description = "Chicks warming pen • Standby station (No hardware paired)"
         ),
         BarnZone(
             id = "barn_beta_zone_1",
@@ -56,11 +59,11 @@ object FarmZoneManager {
             hasLiveHardware = false,
             hasCamera = false,
             hasSensor = false,
-            cameraName = "Unassigned",
-            sensorName = "Unassigned",
+            cameraName = "No Camera Assigned",
+            sensorName = "No Sensor Assigned",
             cameraChannelId = 0,
             firebaseTelemetryPath = "sensor_data/zones/barn_beta_1",
-            description = "Layer pen • Standby station (No hardware paired)"
+            description = "Layer free-range pen • Standby station (No hardware paired)"
         )
     )
 
@@ -72,23 +75,62 @@ object FarmZoneManager {
     }
 
     /**
-     * Retrieves all available barns and zones (defaults + user-created).
+     * Returns the zone ID where Camera 1 is physically assigned (defaults to Barn Alpha Zone 1).
+     */
+    fun getAssignedCameraZoneId(context: Context): String {
+        return getPrefs(context).getString(KEY_ASSIGNED_CAMERA_ZONE_ID, "barn_alpha_zone_1") ?: "barn_alpha_zone_1"
+    }
+
+    /**
+     * Returns the zone ID where ESP32 #1 Sensor is physically assigned (defaults to Barn Alpha Zone 1).
+     */
+    fun getAssignedSensorZoneId(context: Context): String {
+        return getPrefs(context).getString(KEY_ASSIGNED_SENSOR_ZONE_ID, "barn_alpha_zone_1") ?: "barn_alpha_zone_1"
+    }
+
+    /**
+     * Reassigns Camera 1 to the specified barn zone.
+     * Guaranteed: only this zone will stream; all other zones will be in standby.
+     */
+    fun assignCameraToZone(context: Context, zoneId: String) {
+        getPrefs(context).edit().putString(KEY_ASSIGNED_CAMERA_ZONE_ID, zoneId).apply()
+        val active = getActiveZone(context)
+        notifyListeners(active)
+        syncZonesToFirebase(context)
+    }
+
+    /**
+     * Reassigns ESP32 #1 Sensor to the specified barn zone.
+     */
+    fun assignSensorToZone(context: Context, zoneId: String) {
+        getPrefs(context).edit().putString(KEY_ASSIGNED_SENSOR_ZONE_ID, zoneId).apply()
+        val active = getActiveZone(context)
+        notifyListeners(active)
+        syncZonesToFirebase(context)
+    }
+
+    /**
+     * Retrieves all available barns and zones with dynamic camera and sensor hardware states.
      */
     fun getAllZones(context: Context): List<BarnZone> {
-        val prefs = getPrefs(context)
-        val customJson = prefs.getString(KEY_CUSTOM_ZONES_JSON, null)
-        val customZones: List<BarnZone> = if (!customJson.isNullOrBlank()) {
-            try {
-                val type = object : TypeToken<List<BarnZone>>() {}.type
-                gson.fromJson(customJson, type) ?: emptyList()
-            } catch (e: Exception) {
-                emptyList()
-            }
-        } else {
-            emptyList()
-        }
+        val assignedCamId = getAssignedCameraZoneId(context)
+        val assignedSensId = getAssignedSensorZoneId(context)
 
-        return DEFAULT_ZONES + customZones
+        val customZones = getCustomZones(context)
+        val allRaw = BASE_DEFAULT_ZONES + customZones
+
+        return allRaw.map { raw ->
+            val hasCam = raw.id == assignedCamId
+            val hasSens = raw.id == assignedSensId
+            raw.copy(
+                hasLiveHardware = hasCam || hasSens,
+                hasCamera = hasCam,
+                hasSensor = hasSens,
+                cameraName = if (hasCam) "Cam 1 (Live AI Vision)" else "No Camera Assigned",
+                sensorName = if (hasSens) "ESP32 #1 (DHT22 Live)" else "No Sensor Assigned",
+                cameraChannelId = if (hasCam) 1 else 0
+            )
+        }
     }
 
     /**
@@ -96,9 +138,9 @@ object FarmZoneManager {
      */
     fun getActiveZone(context: Context): BarnZone {
         val prefs = getPrefs(context)
-        val selectedId = prefs.getString(KEY_SELECTED_ZONE_ID, DEFAULT_ZONES.first().id)
+        val selectedId = prefs.getString(KEY_SELECTED_ZONE_ID, BASE_DEFAULT_ZONES.first().id)
         val all = getAllZones(context)
-        return all.find { it.id == selectedId } ?: DEFAULT_ZONES.first()
+        return all.find { it.id == selectedId } ?: all.firstOrNull() ?: BASE_DEFAULT_ZONES.first()
     }
 
     /**
@@ -110,6 +152,7 @@ object FarmZoneManager {
             .apply()
 
         notifyListeners(zone)
+        syncZonesToFirebase(context)
     }
 
     /**
@@ -152,6 +195,14 @@ object FarmZoneManager {
             .putString(KEY_CUSTOM_ZONES_JSON, gson.toJson(currentCustom))
             .apply()
 
+        if (hasCamera) {
+            assignCameraToZone(context, id)
+        }
+        if (hasSensor) {
+            assignSensorToZone(context, id)
+        }
+
+        syncZonesToFirebase(context)
         return newZone
     }
 
@@ -167,10 +218,20 @@ object FarmZoneManager {
             .putString(KEY_CUSTOM_ZONES_JSON, gson.toJson(currentCustom))
             .apply()
 
+        // If the deleted zone had the camera assigned, revert camera to default Barn Alpha
+        if (getAssignedCameraZoneId(context) == zoneId) {
+            assignCameraToZone(context, BASE_DEFAULT_ZONES.first().id)
+        }
+        if (getAssignedSensorZoneId(context) == zoneId) {
+            assignSensorToZone(context, BASE_DEFAULT_ZONES.first().id)
+        }
+
         // If active zone was deleted, reset to default
         if (getActiveZone(context).id == zoneId) {
-            setActiveZone(context, DEFAULT_ZONES.first())
+            setActiveZone(context, BASE_DEFAULT_ZONES.first())
         }
+
+        syncZonesToFirebase(context)
     }
 
     private fun getCustomZones(context: Context): List<BarnZone> {
@@ -179,7 +240,7 @@ object FarmZoneManager {
         return try {
             val type = object : TypeToken<List<BarnZone>>() {}.type
             gson.fromJson(customJson, type) ?: emptyList()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emptyList()
         }
     }
@@ -201,6 +262,19 @@ object FarmZoneManager {
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+        }
+    }
+
+    /**
+     * Clean Cloud Sync to Firebase Realtime Database: /farms/zones
+     */
+    fun syncZonesToFirebase(context: Context) {
+        try {
+            val zones = getAllZones(context)
+            val dbRef = FirebaseDatabase.getInstance().getReference("farms").child("zones")
+            dbRef.setValue(zones)
+        } catch (_: Exception) {
+            // Safe fallback when offline or Firebase credentials not active
         }
     }
 }
