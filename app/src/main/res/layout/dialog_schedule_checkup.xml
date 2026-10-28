@@ -77,11 +77,11 @@
         android:layout_marginTop="8dp"
         android:clickable="true"
         android:focusable="true"
-        app:cardBackgroundColor="@color/background"
+        app:cardBackgroundColor="#F8FAFC"
         app:cardCornerRadius="14dp"
         app:cardElevation="0dp"
-        app:strokeColor="@color/border_color"
-        app:strokeWidth="1dp">
+        app:strokeColor="#CBD5E1"
+        app:strokeWidth="1.5dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -106,7 +106,7 @@
                 android:layout_weight="1"
                 android:fontFamily="sans-serif-black"
                 android:text="08:00 AM"
-                android:textColor="@color/text_primary"
+                android:textColor="#0F172A"
                 android:textSize="18sp" />
 
             <TextView
@@ -143,7 +143,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="15 Mins"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipDur30"
@@ -152,7 +154,9 @@
             android:layout_height="wrap_content"
             android:checked="true"
             android:text="30 Mins"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipDur60"
@@ -160,7 +164,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="1 Hour"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipDur120"
@@ -168,7 +174,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="2 Hours"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipDurContinuous"
@@ -176,7 +184,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Continuous"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
     </com.google.android.material.chip.ChipGroup>
 
     <!-- 4. Frequency / Recurrence -->
@@ -204,7 +214,9 @@
             android:layout_height="wrap_content"
             android:checked="true"
             android:text="Daily"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipRepeatWeekdays"
@@ -212,7 +224,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Weekdays"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipRepeatOnce"
@@ -220,7 +234,9 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Once"
-            android:textColor="@color/text_primary" />
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
     </com.google.android.material.chip.ChipGroup>
 
     <!-- 5. Action Buttons -->

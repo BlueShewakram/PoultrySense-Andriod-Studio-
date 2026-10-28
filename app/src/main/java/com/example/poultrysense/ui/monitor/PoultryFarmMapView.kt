@@ -66,11 +66,11 @@ class PoultryFarmMapView @JvmOverloads constructor(
     var selectedZone: PoultryZoneId = PoultryZoneId.OVERVIEW
         private set
 
-    // Live Stats Cache per Zone
+    // Live Stats Cache per Zone (Brooder & Nesting in Standby until hardware paired)
     private val zoneStatsMap = mutableMapOf(
         PoultryZoneId.COOP_1 to ZoneStats(0, 98, 26.4),
-        PoultryZoneId.BROODER to ZoneStats(25, 99, 32.2),
-        PoultryZoneId.NESTING to ZoneStats(55, 96, 25.8)
+        PoultryZoneId.BROODER to ZoneStats(0, 0, 0.0),
+        PoultryZoneId.NESTING to ZoneStats(0, 0, 0.0)
     )
 
     // Virtual Farm Canvas dimensions (world coords: 1200 x 900)
@@ -137,6 +137,32 @@ class PoultryFarmMapView @JvmOverloads constructor(
     private val liveDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#00E676")
         style = Paint.Style.FILL
+    }
+    private val standbyDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#94A3B8")
+        style = Paint.Style.FILL
+    }
+    private val badgeStandbyBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#E2E8F0")
+        style = Paint.Style.FILL
+    }
+    private val badgeStandbyTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#64748B")
+        textSize = 14f
+        isFakeBoldText = true
+        style = Paint.Style.FILL
+    }
+
+    // Hardware status: Coop 1 is live, Brooder & Nesting are in Standby
+    private var coop1Online: Boolean = true
+    private var brooderOnline: Boolean = false
+    private var nestingOnline: Boolean = false
+
+    fun setZoneHardwareStatus(coop1: Boolean, brooder: Boolean, nesting: Boolean) {
+        coop1Online = coop1
+        brooderOnline = brooder
+        nestingOnline = nesting
+        postInvalidateOnAnimation()
     }
 
     private val bgClearPaint = Paint().apply {
@@ -547,9 +573,9 @@ class PoultryFarmMapView @JvmOverloads constructor(
         }
 
         // ─── 6. Modern Translucent Badges over Coops ───
-        drawZoneBadge(canvas, rectCoop1, "Coop 1 • CAM 1", zoneStatsMap[PoultryZoneId.COOP_1]?.chickenCount ?: 0)
-        drawZoneBadge(canvas, rectBrooder, "Brooder • CAM 2", zoneStatsMap[PoultryZoneId.BROODER]?.chickenCount ?: 25)
-        drawZoneBadge(canvas, rectNesting, "Nesting • CAM 3", zoneStatsMap[PoultryZoneId.NESTING]?.chickenCount ?: 55)
+        drawZoneBadge(canvas, rectCoop1, "Coop 1 • CAM 1", zoneStatsMap[PoultryZoneId.COOP_1]?.chickenCount ?: 0, coop1Online)
+        drawZoneBadge(canvas, rectBrooder, "Brooder • CAM 2", zoneStatsMap[PoultryZoneId.BROODER]?.chickenCount ?: 0, brooderOnline)
+        drawZoneBadge(canvas, rectNesting, "Nesting • CAM 3", zoneStatsMap[PoultryZoneId.NESTING]?.chickenCount ?: 0, nestingOnline)
 
         canvas.restore()
 
@@ -669,22 +695,34 @@ class PoultryFarmMapView @JvmOverloads constructor(
         }
     }
 
-    private fun drawZoneBadge(canvas: Canvas, rect: RectF, label: String, count: Int) {
-        val badgeW = 150f
+    private fun drawZoneBadge(canvas: Canvas, rect: RectF, label: String, count: Int, isOnline: Boolean) {
+        val badgeW = if (isOnline) 150f else 165f
         val badgeH = 26f
         val bx = rect.centerX() - badgeW / 2f
         val by = rect.top + 8f
 
         val bgRect = RectF(bx, by, bx + badgeW, by + badgeH)
-        canvas.drawRoundRect(bgRect, 13f, 13f, badgeBgPaint)
-        canvas.drawRoundRect(bgRect, 13f, 13f, badgeStrokePaint)
+        if (isOnline) {
+            canvas.drawRoundRect(bgRect, 13f, 13f, badgeBgPaint)
+            canvas.drawRoundRect(bgRect, 13f, 13f, badgeStrokePaint)
 
-        // Live Green Dot (pulsing)
-        val pulse = (sin(SystemClock.uptimeMillis() / 250.0) * 0.8f).toFloat()
-        canvas.drawCircle(bx + 14f, by + badgeH / 2f, 4f + pulse, liveDotPaint)
+            // Live Green Dot (pulsing)
+            val pulse = (sin(SystemClock.uptimeMillis() / 250.0) * 0.8f).toFloat()
+            canvas.drawCircle(bx + 14f, by + badgeH / 2f, 4f + pulse, liveDotPaint)
 
-        // Text
-        val fullText = "$label • $count"
-        canvas.drawText(fullText, bx + 24f, by + 18f, badgeTextPaint)
+            // Text
+            val fullText = "$label • $count"
+            canvas.drawText(fullText, bx + 24f, by + 18f, badgeTextPaint)
+        } else {
+            canvas.drawRoundRect(bgRect, 13f, 13f, badgeStandbyBgPaint)
+            canvas.drawRoundRect(bgRect, 13f, 13f, badgeStrokePaint)
+
+            // Muted Gray Standby Dot
+            canvas.drawCircle(bx + 14f, by + badgeH / 2f, 4f, standbyDotPaint)
+
+            // Standby Text
+            val fullText = "$label • Standby"
+            canvas.drawText(fullText, bx + 24f, by + 18f, badgeStandbyTextPaint)
+        }
     }
 }

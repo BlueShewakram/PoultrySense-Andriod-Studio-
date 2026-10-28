@@ -39,6 +39,7 @@ import android.graphics.drawable.GradientDrawable
 import com.example.poultrysense.data.ChickenTagHelper
 import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
+import com.example.poultrysense.data.FarmZoneManager
 import com.example.poultrysense.ui.MainActivity
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -106,6 +107,9 @@ class MonitorFragment : Fragment() {
     }
 
     private fun setupPoultryFarmMapView() {
+        val activeBarn = FarmZoneManager.getActiveZone(requireContext())
+        binding.farmMapView.setZoneHardwareStatus(activeBarn.hasCamera, false, false)
+
         binding.farmMapView.onZoneSelectedListener = { zoneId ->
             when (zoneId) {
                 PoultryFarmMapView.PoultryZoneId.OVERVIEW -> {
@@ -132,6 +136,12 @@ class MonitorFragment : Fragment() {
             updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
         }
 
+        binding.layoutMapOverviewChip.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            binding.farmMapView.selectZone(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
+            updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
+        }
+
         binding.btnScrollToLiveFeed.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             binding.nestedScrollView.smoothScrollTo(0, binding.cardVideoViewport.top - 24)
@@ -140,67 +150,107 @@ class MonitorFragment : Fragment() {
         // Initialize with default Coop 1
         binding.farmMapView.selectZone(PoultryFarmMapView.PoultryZoneId.COOP_1)
         updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.COOP_1)
+
+        // React dynamically if the user modifies or switches zones elsewhere in the app
+        FarmZoneManager.addListener {
+            activity?.runOnUiThread {
+                if (_binding != null && isAdded) {
+                    val currentZone = FarmZoneManager.getActiveZone(requireContext())
+                    binding.farmMapView.setZoneHardwareStatus(currentZone.hasCamera, false, false)
+                    updateSelectedZoneCard(binding.farmMapView.selectedZone)
+                }
+            }
+        }
     }
 
     private fun updateSelectedZoneCard(zoneId: PoultryFarmMapView.PoultryZoneId) {
         if (_binding == null) return
+        val activeBarnZone = FarmZoneManager.getActiveZone(requireContext())
         when (zoneId) {
             PoultryFarmMapView.PoultryZoneId.OVERVIEW -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_fullscreen_overview)
                 binding.tvSelectedZoneTitle.text = "All Coops • Entire Poultry Farm"
-                binding.tvSelectedZoneSubtitle.text = "Overview • 3 Active Pens • Tap a coop to zoom"
+                binding.tvSelectedZoneSubtitle.text = "Farm Overview • Tap any coop to focus camera"
                 binding.tvSelectedZoneBadge.text = "FARM OVERVIEW"
                 binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
                 binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))
+                binding.tvMapChipTitle.text = "All Coops • Farm Overview"
+                binding.tvMonitorSubtitle.text = "All Coops • Farm Overview"
+
                 val liveBirds = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
                 binding.tvZoneBirdsVal.text = if (latestAiStatus != null) liveBirds.toString() else "--"
-                binding.tvZoneHealthVal.text = "${latestAiStatus?.healthIndex ?: 98}%"
-                binding.tvZoneClimateVal.text = "26.5°C"
+                binding.tvZoneClimateVal.text = if (activeBarnZone.hasSensor) "26.4°C" else "Standby"
                 binding.tvZoneClimateLabel.text = "Farm Climate"
-                binding.btnScrollToLiveFeed.visibility = if (currentChannel == CameraChannel.CAM_1) View.GONE else View.VISIBLE
-                binding.btnScrollToLiveFeed.text = "Watch Stream ↓"
+                binding.btnScrollToLiveFeed.visibility = View.GONE
             }
             PoultryFarmMapView.PoultryZoneId.COOP_1 -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
-                binding.tvSelectedZoneTitle.text = "Coop 1 • Main Barn Flock"
-                binding.tvSelectedZoneSubtitle.text = "Broiler Barn • Cam 1 Active"
-                binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
-                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
-                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
-                val count = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
-                binding.tvZoneBirdsVal.text = if (latestAiStatus != null) count.toString() else "--"
-                binding.tvZoneHealthVal.text = "${latestAiStatus?.healthIndex ?: 98}%"
-                binding.tvZoneClimateVal.text = "26.4°C"
-                binding.tvZoneClimateLabel.text = "Temperature"
-                // Redundant button hidden: Cam 1 is already streaming live directly underneath this card
-                binding.btnScrollToLiveFeed.visibility = if (currentChannel == CameraChannel.CAM_1) View.GONE else View.VISIBLE
-                binding.btnScrollToLiveFeed.text = "Watch Cam 1 ↓"
+                binding.tvSelectedZoneTitle.text = "${activeBarnZone.barnName} • Coop 1"
+                binding.tvMapChipTitle.text = "Coop 1 • ${activeBarnZone.cameraName ?: "Live"}"
+
+                if (activeBarnZone.hasCamera) {
+                    binding.tvSelectedZoneSubtitle.text = "Main Broiler Barn • ${activeBarnZone.cameraName} Active"
+                    binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
+                    binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
+                    binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
+                    binding.tvMonitorSubtitle.text = "${activeBarnZone.cameraName} • Coop 1"
+                    val count = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
+                    binding.tvZoneBirdsVal.text = if (latestAiStatus != null) count.toString() else "--"
+                    binding.tvZoneClimateVal.text = if (activeBarnZone.hasSensor) "26.4°C" else "Standby"
+                    binding.tvZoneClimateLabel.text = "Temperature"
+                    binding.layoutMonitorOffline.visibility = View.GONE
+                } else {
+                    binding.tvSelectedZoneSubtitle.text = "Standby • No Camera Assigned"
+                    binding.tvSelectedZoneBadge.text = "STANDBY"
+                    binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
+                    binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_muted))
+                    binding.tvMonitorSubtitle.text = "Coop 1 • Standby"
+                    binding.tvZoneBirdsVal.text = "--"
+                    binding.tvZoneClimateVal.text = "Standby"
+                    binding.tvZoneClimateLabel.text = "Sensor Status"
+                    binding.layoutMonitorOffline.visibility = View.VISIBLE
+                    binding.tvOfflineTitle.text = "No Camera Assigned"
+                    binding.tvMonitorStatusSub.text = "Assign a camera to ${activeBarnZone.fullDisplayName} to stream this coop"
+                }
+                binding.btnScrollToLiveFeed.visibility = View.GONE
             }
             PoultryFarmMapView.PoultryZoneId.BROODER -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_env)
                 binding.tvSelectedZoneTitle.text = "Brooder • Nursery Shed"
-                binding.tvSelectedZoneSubtitle.text = "Chicks Warming Lamp • Cam 2 Active"
-                binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
-                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
-                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
-                binding.tvZoneBirdsVal.text = "25"
-                binding.tvZoneHealthVal.text = "99%"
-                binding.tvZoneClimateVal.text = "32.2°C"
-                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
-                binding.btnScrollToLiveFeed.text = "Watch Cam 2 ↓"
+                binding.tvSelectedZoneSubtitle.text = "Standby • No Camera Assigned"
+                binding.tvSelectedZoneBadge.text = "STANDBY"
+                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
+                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_muted))
+                binding.tvMapChipTitle.text = "Brooder • Standby"
+                binding.tvMonitorSubtitle.text = "Brooder • No Camera"
+                binding.tvZoneBirdsVal.text = "--"
+                binding.tvZoneClimateVal.text = "Standby"
+                binding.tvZoneClimateLabel.text = "Sensor Status"
+                binding.btnScrollToLiveFeed.visibility = View.GONE
+
+                // Show honest offline placeholder: No camera assigned
+                binding.layoutMonitorOffline.visibility = View.VISIBLE
+                binding.tvOfflineTitle.text = "No Camera Assigned to Brooder"
+                binding.tvMonitorStatusSub.text = "Only 1 camera is connected (assigned to Coop 1). Pair another camera to monitor the brooder."
             }
             PoultryFarmMapView.PoultryZoneId.NESTING -> {
                 binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
                 binding.tvSelectedZoneTitle.text = "Nesting • Layer Paddock"
-                binding.tvSelectedZoneSubtitle.text = "Free-Range Run • Cam 3 Active"
-                binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
-                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
-                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
-                binding.tvZoneBirdsVal.text = "55"
-                binding.tvZoneHealthVal.text = "96%"
-                binding.tvZoneClimateVal.text = "25.8°C"
-                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
-                binding.btnScrollToLiveFeed.text = "Watch Cam 3 ↓"
+                binding.tvSelectedZoneSubtitle.text = "Standby • No Camera Assigned"
+                binding.tvSelectedZoneBadge.text = "STANDBY"
+                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
+                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_muted))
+                binding.tvMapChipTitle.text = "Nesting • Standby"
+                binding.tvMonitorSubtitle.text = "Nesting • No Camera"
+                binding.tvZoneBirdsVal.text = "--"
+                binding.tvZoneClimateVal.text = "Standby"
+                binding.tvZoneClimateLabel.text = "Sensor Status"
+                binding.btnScrollToLiveFeed.visibility = View.GONE
+
+                // Show honest offline placeholder: No camera assigned
+                binding.layoutMonitorOffline.visibility = View.VISIBLE
+                binding.tvOfflineTitle.text = "No Camera Assigned to Nesting"
+                binding.tvMonitorStatusSub.text = "Only 1 camera is connected (assigned to Coop 1). Pair another camera to monitor the nesting area."
             }
         }
     }
@@ -397,7 +447,7 @@ class MonitorFragment : Fragment() {
                                         if (binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.COOP_1 ||
                                             binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.OVERVIEW) {
                                             binding.tvZoneBirdsVal.text = count.toString()
-                                            binding.tvZoneHealthVal.text = "$healthIndex%"
+                                            // Health Index card removed
                                         }
                                     }
 
@@ -699,6 +749,7 @@ class MonitorFragment : Fragment() {
                 .setHour(selectedHour)
                 .setMinute(selectedMinute)
                 .setTitleText("Select Checkup Time")
+                .setTheme(R.style.ThemeOverlay_PoultrySense_TimePicker)
                 .build()
 
             picker.addOnPositiveButtonClickListener {
@@ -764,6 +815,7 @@ class MonitorFragment : Fragment() {
                 minute = selectedMinute,
                 durationMinutes = selectedDuration,
                 repeatMode = selectedRepeat,
+                enabled = enabled,
                 dateMillis = System.currentTimeMillis()
             )
             updateSessionUI()

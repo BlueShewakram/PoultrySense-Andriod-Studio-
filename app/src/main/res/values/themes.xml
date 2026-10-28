@@ -49,4 +49,19 @@
         <item name="android:windowBackground">@color/white</item>
     </style>
 
+    <!-- High-Contrast Material 3 TimePicker Dialog Theme -->
+    <style name="ThemeOverlay.PoultrySense.TimePicker" parent="ThemeOverlay.Material3.MaterialTimePicker">
+        <item name="colorPrimary">#0E5924</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#DCFCE7</item>
+        <item name="colorOnPrimaryContainer">#14532D</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#0F172A</item>
+        <item name="colorSurfaceVariant">#F1F5F9</item>
+        <item name="colorOnSurfaceVariant">#0F172A</item>
+        <item name="colorOutline">#CBD5E1</item>
+        <item name="android:textColorPrimary">#0F172A</item>
+        <item name="android:textColorSecondary">#475569</item>
+    </style>
+
 </resources>

@@ -203,10 +203,11 @@ object CheckupSessionManager {
         minute: Int,
         durationMinutes: Int,
         repeatMode: String,
-        dateMillis: Long
+        enabled: Boolean = true,
+        dateMillis: Long = System.currentTimeMillis()
     ) {
         getPrefs(context).edit()
-            .putBoolean(KEY_SCHEDULE_ENABLED, true)
+            .putBoolean(KEY_SCHEDULE_ENABLED, enabled)
             .putInt(KEY_SCHEDULE_HOUR, hour)
             .putInt(KEY_SCHEDULE_MINUTE, minute)
             .putInt(KEY_SCHEDULE_DURATION, durationMinutes)

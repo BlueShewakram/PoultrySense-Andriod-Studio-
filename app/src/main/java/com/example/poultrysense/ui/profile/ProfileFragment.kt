@@ -246,15 +246,7 @@ class ProfileFragment : Fragment() {
                 isAiHubOnline = isOnline
                 updateHardwareReadiness()
 
-                if (isOnline) {
-                    binding.dotProfileAiHub.backgroundTintList =
-                        ColorStateList.valueOf(android.graphics.Color.parseColor("#00E5FF"))
-                    binding.tvProfileAiHubStatus.text = "AI Hub Online"
-                } else {
-                    binding.dotProfileAiHub.backgroundTintList =
-                        ColorStateList.valueOf(ContextCompat.getColor(ctx, R.color.text_muted))
-                    binding.tvProfileAiHubStatus.text = "AI Hub Standby"
-                }
+                // Status badge removed per user request
             }
         }
     }
@@ -468,9 +460,7 @@ class ProfileFragment : Fragment() {
         }
 
         // Edit Profile Pill
-        binding.btnEditProfilePill.setOnClickListener {
-            showSystemSettingsDialog()
-        }
+        // Edit pill removed per user request
 
         // AI Server Settings
         binding.btnAiServerSettings.setOnClickListener {

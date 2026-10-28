@@ -1,13 +1,21 @@
 package com.example.poultrysense.ui.history
 
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
+import com.example.poultrysense.data.ChickenTagHelper
+import com.example.poultrysense.data.models.ChickenSessionDetail
 import com.example.poultrysense.data.models.ScanSession
 import com.example.poultrysense.databinding.ItemHistoryBinding
+import com.google.android.material.chip.Chip
 
 class HistoryAdapter(private var sessions: List<ScanSession>) :
     RecyclerView.Adapter<HistoryAdapter.HistoryViewHolder>() {
+
+    private val expandedSessionIds = mutableSetOf<String>()
 
     class HistoryViewHolder(val binding: ItemHistoryBinding) : RecyclerView.ViewHolder(binding.root)
 
@@ -23,6 +31,8 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
 
     override fun onBindViewHolder(holder: HistoryViewHolder, position: Int) {
         val session = sessions[position]
+        val isExpanded = expandedSessionIds.contains(session.id)
+
         with(holder.binding) {
             tvHistorySessionNum.text = session.sessionNumber
             tvHistoryStatus.text = session.status
@@ -31,6 +41,98 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
             tvHistoryTotal.text = session.totalFlock.toString()
             tvHistoryHealthy.text = session.healthyCount.toString()
             tvHistoryFlagged.text = session.illCount.toString()
+
+            // Expandable Tag Dropdown State
+            layoutChickenDropdown.visibility = if (isExpanded) View.VISIBLE else View.GONE
+            ivDropdownChevron.rotation = if (isExpanded) 180f else 0f
+
+            tvDropdownSummary.text = if (isExpanded) {
+                "Hide Chicken Tag Breakdown"
+            } else {
+                if (session.illCount > 0) {
+                    "View Chicken Tags (${session.illCount} Flagged)"
+                } else {
+                    "View Chicken Tags (All Healthy)"
+                }
+            }
+
+            // Populate Chicken Tag Chips
+            chipGroupFlagged.removeAllViews()
+            chipGroupNormal.removeAllViews()
+
+            val details = if (session.chickenDetails.isNotEmpty()) {
+                session.chickenDetails
+            } else {
+                val total = if (session.totalFlock > 0) session.totalFlock else (session.healthyCount + session.illCount)
+                (1..total).map { idx ->
+                    val isIll = idx <= session.illCount
+                    ChickenSessionDetail(
+                        chickenId = idx,
+                        anomalyScore = if (isIll) 85 else 5,
+                        anomalyTier = if (isIll) "High Concern" else "Normal",
+                        behavior = if (isIll) "Low Locomotion" else "Active Pecking"
+                    )
+                }
+            }
+
+            val flaggedBirds = details.filter { it.anomalyTier != "Normal" || it.anomalyScore >= 40 }
+            val normalBirds = details.filter { it.anomalyTier == "Normal" && it.anomalyScore < 40 }
+
+            if (flaggedBirds.isNotEmpty()) {
+                tvFlaggedSectionHeader.visibility = View.VISIBLE
+                chipGroupFlagged.visibility = View.VISIBLE
+                for (bird in flaggedBirds) {
+                    val tag = ChickenTagHelper.getTagInfo(bird.chickenId)
+                    val chip = Chip(holder.binding.root.context).apply {
+                        text = "${tag.emoji} ${tag.shortLabel} • FLAGGED"
+                        chipBackgroundColor = ColorStateList.valueOf(Color.parseColor(tag.chipBgHex))
+                        chipStrokeColor = ColorStateList.valueOf(Color.parseColor("#E65100"))
+                        chipStrokeWidth = 2.5f
+                        setTextColor(Color.parseColor(tag.chipTextHex))
+                        textSize = 11.5f
+                        isCheckable = false
+                        isClickable = false
+                    }
+                    chipGroupFlagged.addView(chip)
+                }
+            } else {
+                tvFlaggedSectionHeader.visibility = View.GONE
+                chipGroupFlagged.visibility = View.GONE
+            }
+
+            if (normalBirds.isNotEmpty()) {
+                tvNormalSectionHeader.visibility = View.VISIBLE
+                chipGroupNormal.visibility = View.VISIBLE
+                for (bird in normalBirds) {
+                    val tag = ChickenTagHelper.getTagInfo(bird.chickenId)
+                    val chip = Chip(holder.binding.root.context).apply {
+                        text = "${tag.emoji} ${tag.shortLabel} • Normal"
+                        chipBackgroundColor = ColorStateList.valueOf(Color.parseColor(tag.chipBgHex))
+                        chipStrokeColor = ColorStateList.valueOf(Color.parseColor(tag.chipBorderHex))
+                        chipStrokeWidth = 1.5f
+                        setTextColor(Color.parseColor(tag.chipTextHex))
+                        textSize = 11.5f
+                        isCheckable = false
+                        isClickable = false
+                    }
+                    chipGroupNormal.addView(chip)
+                }
+            } else {
+                tvNormalSectionHeader.visibility = View.GONE
+                chipGroupNormal.visibility = View.GONE
+            }
+
+            btnToggleChickenDropdown.setOnClickListener {
+                if (expandedSessionIds.contains(session.id)) {
+                    expandedSessionIds.remove(session.id)
+                } else {
+                    expandedSessionIds.add(session.id)
+                }
+                val pos = holder.adapterPosition
+                if (pos != RecyclerView.NO_POSITION) {
+                    notifyItemChanged(pos)
+                }
+            }
         }
 
         holder.itemView.alpha = 0f
@@ -42,17 +144,6 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
             .setStartDelay((position * 35).toLong())
             .setInterpolator(android.view.animation.DecelerateInterpolator())
             .start()
-
-        holder.itemView.setOnClickListener { view ->
-            view.animate()
-                .scaleX(0.96f)
-                .scaleY(0.96f)
-                .setDuration(80)
-                .withEndAction {
-                    view.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
-                }
-                .start()
-        }
     }
 
     override fun getItemCount(): Int = sessions.size

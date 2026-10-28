@@ -45,6 +45,7 @@
                         android:textSize="28sp" />
 
                     <TextView
+                        android:id="@+id/tvHomeZoneSubtitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="1dp"
@@ -700,6 +701,7 @@
                                 tools:ignore="ContentDescription" />
 
                             <TextView
+                                android:id="@+id/tvStreamPlaceholderTitle"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="8dp"
@@ -709,6 +711,7 @@
                                 android:textSize="13sp" />
 
                             <TextView
+                                android:id="@+id/tvStreamPlaceholderSubtitle"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"

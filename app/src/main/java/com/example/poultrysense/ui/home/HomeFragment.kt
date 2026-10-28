@@ -13,6 +13,8 @@ import androidx.lifecycle.lifecycleScope
 import com.example.poultrysense.R
 import com.example.poultrysense.databinding.FragmentHomeBinding
 import com.example.poultrysense.data.ServerPreferences
+import com.example.poultrysense.data.FarmZoneManager
+import com.example.poultrysense.data.models.BarnZone
 import com.example.poultrysense.ui.MainActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -67,6 +69,7 @@ class HomeFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        FarmZoneManager.addListener(zoneListener)
         setupBarnZoneSelector()
         setupNavigationActions()
         setupCapsuleInteractions()
@@ -109,20 +112,61 @@ class HomeFragment : Fragment() {
         }
     }
 
-    private var currentZoneIndex = 0
-    private val barnZones = listOf("Barn Alpha • Zone 1", "Barn Alpha • Zone 2", "Barn Beta • Zone 1")
+    private var activeZone: BarnZone? = null
+    private val zoneListener: (BarnZone) -> Unit = { zone ->
+        activeZone = zone
+        applyActiveZone(zone)
+    }
 
     private fun setupBarnZoneSelector() {
-        binding.tvActiveZoneName.text = "Barn Alpha"
+        val ctx = context ?: return
+        val current = FarmZoneManager.getActiveZone(ctx)
+        activeZone = current
+        applyActiveZone(current)
 
         binding.btnSwitchBarnZone.setOnClickListener { view ->
             playBounceAnimation(view) {
-                currentZoneIndex = (currentZoneIndex + 1) % barnZones.size
-                val selectedZone = barnZones[currentZoneIndex]
-                val shortName = if (currentZoneIndex == 2) "Barn Beta" else "Barn Alpha"
-                binding.tvActiveZoneName.text = shortName
-                android.widget.Toast.makeText(context, "Switched to $selectedZone", android.widget.Toast.LENGTH_SHORT).show()
+                BarnZoneSelectionBottomSheet.newInstance()
+                    .show(parentFragmentManager, BarnZoneSelectionBottomSheet.TAG)
             }
+        }
+    }
+
+    private fun applyActiveZone(zone: BarnZone) {
+        if (_binding == null) return
+        binding.tvActiveZoneName.text = zone.barnName
+        binding.tvHomeZoneSubtitle.text = "${zone.barnName} • ${zone.zoneName} Monitoring"
+        binding.tvBarnCapacity.text = "${zone.totalCapacity}"
+
+        val flagged = liveFlaggedCount ?: 0
+        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\n${zone.barnName}"
+
+        // Camera hardware routing
+        if (!zone.hasCamera) {
+            stopStreamPolling()
+            binding.ivDashboardStream.visibility = View.GONE
+            binding.layoutOfflinePlaceholder.visibility = View.VISIBLE
+            binding.tvStreamPlaceholderTitle.text = "No Camera Assigned to ${zone.barnName}"
+            binding.tvStreamPlaceholderSubtitle.text = "Standby • Switch active zone or pair camera in Settings"
+        } else {
+            binding.tvStreamPlaceholderTitle.text = "Live Poultry Vision Stream"
+            binding.tvStreamPlaceholderSubtitle.text = "1080p AI Vision • Continuous tracking"
+            startStreamPolling()
+        }
+
+        // Sensor hardware routing
+        if (!zone.hasSensor) {
+            stopSensorPolling()
+            updateClimateUI(null, null, "STANDBY • NO SENSOR PAIRED")
+            binding.tvThumbnailHumidity.text = "Sensor: Standby"
+            binding.tvBarnHumidity.text = "No sensor assigned to ${zone.barnName}"
+            binding.tvBarnTemperature.text = "No sensor assigned to ${zone.barnName}"
+            binding.tvClimateCapsuleDesc.text = "${zone.barnName} Standby\nNo sensor paired"
+            binding.tvClimateCapsuleStatus.text = "STANDBY"
+            binding.tvBarnTempStatus.text = "STANDBY"
+            binding.tvBarnHumidityStatus.text = "STANDBY"
+        } else {
+            startSensorPolling()
         }
     }
 
@@ -145,9 +189,9 @@ class HomeFragment : Fragment() {
     private fun updateFlockMetrics(flock: Int, healthy: Int, flagged: Int) {
         if (_binding == null) return
         binding.tvTotalFlockCount.text = "$flock"
-        binding.tvBarnCapacity.text = "${(flock * 1.25).toInt()}"
+        binding.tvBarnCapacity.text = "${activeZone?.totalCapacity ?: (flock * 1.25).toInt()}"
         binding.tvFlaggedCount.text = "$flagged Flagged"
-        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\nBarn Alpha"
+        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\n${activeZone?.barnName ?: "Barn Alpha"}"
         binding.tvActiveCapsuleDesc.text = if (healthy > 0) "$healthy active\nAll zones OK" else "0 active\nAll zones OK"
         animateNormalRing(healthy, if (flock > 0) flock else 1)
     }
@@ -166,11 +210,11 @@ class HomeFragment : Fragment() {
         val lastTime = if (liveFlockCount != null) "Live Stream" else (latestSession?.time ?: "--")
 
         binding.tvTotalFlockCount.text = if (totalFlock > 0) "$totalFlock" else "--"
-        binding.tvBarnCapacity.text = if (totalFlock > 0) "${(totalFlock * 1.25).toInt()}" else "--"
+        binding.tvBarnCapacity.text = "${activeZone?.totalCapacity ?: (if (totalFlock > 0) "${(totalFlock * 1.25).toInt()}" else "--")}"
         binding.tvFlaggedCount.text = "$flagged Flagged"
         binding.tvLastScanTime.text = lastTime
 
-        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\nBarn Alpha"
+        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\n${activeZone?.barnName ?: "Barn Alpha"}"
         binding.tvActiveCapsuleDesc.text = if (healthy > 0) "$healthy active\nAll zones OK" else "0 active\nAll zones OK"
 
         animateNormalRing(healthy, if (totalFlock > 0) totalFlock else 1)
@@ -229,6 +273,7 @@ class HomeFragment : Fragment() {
         val sheetBinding = com.example.poultrysense.databinding.DialogClimateDetailsBinding.inflate(layoutInflater)
         activeClimateSheetBinding = sheetBinding
         dialog.setContentView(sheetBinding.root)
+        sheetBinding.tvClimateDialogSubtitle.text = "${activeZone?.fullDisplayName ?: "Barn Alpha • Zone 1"} Real-time Telemetry"
         updateClimateSheetValues(sheetBinding, liveTemp, liveHumidity)
         sheetBinding.btnDismissClimateSheet.setOnClickListener {
             dialog.dismiss()
@@ -444,6 +489,7 @@ class HomeFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        FarmZoneManager.removeListener(zoneListener)
         stopStreamPolling()
         stopSensorPolling()
         _binding = null
