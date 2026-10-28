@@ -13,7 +13,7 @@ data class User(
     val lastName: String = "",
     val email: String = "",
     val farmName: String = "",
-    val role: String = "Lead Farm Specialist",
+    val role: String = "",
     val avatarUrl: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val createdDay: Int = Calendar.getInstance().get(Calendar.DAY_OF_MONTH),
@@ -22,7 +22,9 @@ data class User(
     val createdYear: Int = Calendar.getInstance().get(Calendar.YEAR),
     val formattedDate: String = SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()).format(Date()),
     val scansCount: Int = 0,
-    val activeDays: Int = 1
+    val activeDays: Int = 1,
+    /** Last time this profile was saved. 0 for profiles created before this field existed. */
+    val updatedAt: Long = 0L
 ) {
     val fullName: String
         get() = when {
@@ -53,7 +55,8 @@ data class User(
             "year" to createdYear,
             "date" to formattedDate,
             "scansCount" to scansCount,
-            "activeDays" to activeDays
+            "activeDays" to activeDays,
+            "updatedAt" to updatedAt
         )
     }
 }

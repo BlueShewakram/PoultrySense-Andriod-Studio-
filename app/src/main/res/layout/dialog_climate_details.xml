@@ -50,20 +50,21 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:fontFamily="sans-serif-medium"
-                android:text="Barn Alpha • Zone 1 Real-time Telemetry"
+                android:text="Live telemetry"
                 android:textColor="@color/text_muted"
                 android:textSize="12sp" />
         </LinearLayout>
 
         <!-- Status Pill -->
         <TextView
+            android:id="@+id/tvClimateStatusPill"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_healthy_badge"
             android:fontFamily="sans-serif-bold"
             android:paddingHorizontal="10dp"
             android:paddingVertical="4dp"
-            android:text="ALL SENSORS NORMAL"
+            android:text="NO SENSOR DATA"
             android:textColor="@color/primary"
             android:textSize="10sp" />
     </LinearLayout>

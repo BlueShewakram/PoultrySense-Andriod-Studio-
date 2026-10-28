@@ -133,6 +133,13 @@ The server starts listening on:
 1. Open **Android Studio** (Hedgehog or newer).
 2. Click **File → Open** and select the repository root folder.
 3. Replace `app/google-services.json` with your Firebase configuration (or keep the demo configuration for local monitoring).
+   * Farmer profiles are persisted in **Firebase Realtime Database → `/users/{uid}`** (name, farm, role, Base64 avatar).
+   * **Database rules matter:** the original demo rule `now < 1790438400000` expired on **2026-09-27**, after which Firebase rejects every read/write. Deploy the permanent rules in [`database.rules.json`](database.rules.json) from **Firebase Console → Realtime Database → Rules**, or run:
+     ```bash
+     firebase login
+     firebase deploy --only database
+     ```
+   * Those rules keep `sensor_data/live` and `system_control` writable by the ESP32, while restricting `/users/{uid}` to the signed-in farmer.
 4. Connect your Android phone via USB (or Wi-Fi pairing) and press **Run 'app'**.
 5. Connect your phone to the **same Wi-Fi network** as your PC.
 6. Open the app:

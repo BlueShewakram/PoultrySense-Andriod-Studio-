@@ -15,10 +15,16 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.example.poultrysense.R
+import com.example.poultrysense.data.FirebaseConfig
+import com.example.poultrysense.data.SensorTelemetry
 import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.models.AiStatusResponse
+import com.example.poultrysense.data.models.BarnZone
 import com.example.poultrysense.data.models.DetectionItem
 import com.example.poultrysense.databinding.FragmentMonitorBinding
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.ValueEventListener
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +44,7 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import com.example.poultrysense.data.ChickenTagHelper
 import com.example.poultrysense.data.models.AlertSeverity
+import com.example.poultrysense.data.models.ChickenSessionDetail
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.data.FarmZoneManager
 import com.example.poultrysense.ui.MainActivity
@@ -61,20 +68,24 @@ class MonitorFragment : Fragment() {
     private var statusJob: Job? = null
     private var sessionTickerJob: Job? = null
     private var latestAiStatus: AiStatusResponse? = null
+    private var liveTemp: Double? = null
+    private var liveHumidity: Double? = null
+    private var sensorListener: ValueEventListener? = null
 
-    // Multi-Camera State
-    enum class CameraChannel {
-        CAM_1,
-        CAM_2,
-        CAM_3
-    }
-
-    private var currentChannel = CameraChannel.CAM_1
     private var hasShownMascotOnEntry = false
     private var hasShownOfflineMascotAlert = false
     private var isStreamReceivingFrames = false
     private var clientDisplayFps = 0.0
     private var chickenBobAnimator: ObjectAnimator? = null
+
+    private val zoneListener: (BarnZone) -> Unit = { zone ->
+        activity?.runOnUiThread {
+            if (_binding != null && isAdded) {
+                                updateActiveZoneCard()
+                syncStreamToActiveZone(zone)
+            }
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -88,7 +99,6 @@ class MonitorFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Show cute 3D scanning mascot only once every time Monitor is clicked / opened
         hasShownMascotOnEntry = false
         hasShownOfflineMascotAlert = false
         showMascotScanOnce()
@@ -107,153 +117,115 @@ class MonitorFragment : Fragment() {
     }
 
     private fun setupPoultryFarmMapView() {
-        val activeBarn = FarmZoneManager.getActiveZone(requireContext())
-        binding.farmMapView.setZoneHardwareStatus(activeBarn.hasCamera, false, false)
-
-        binding.farmMapView.onZoneSelectedListener = { zoneId ->
-            when (zoneId) {
-                PoultryFarmMapView.PoultryZoneId.OVERVIEW -> {
-                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
-                }
-                PoultryFarmMapView.PoultryZoneId.COOP_1 -> {
-                    switchChannel(CameraChannel.CAM_1)
-                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.COOP_1)
-                }
-                PoultryFarmMapView.PoultryZoneId.BROODER -> {
-                    switchChannel(CameraChannel.CAM_2)
-                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.BROODER)
-                }
-                PoultryFarmMapView.PoultryZoneId.NESTING -> {
-                    switchChannel(CameraChannel.CAM_3)
-                    updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.NESTING)
-                }
-            }
-        }
-
-        binding.btnResetOverview.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            binding.farmMapView.selectZone(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
-            updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
-        }
-
-        binding.layoutMapOverviewChip.setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            binding.farmMapView.selectZone(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
-            updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.OVERVIEW)
-        }
-
+        // The artwork is a camera view: pinch to zoom, drag to pan, double-tap to
+        // toggle zoom. Barn switching still happens through the barn selector.
         binding.btnScrollToLiveFeed.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
             binding.nestedScrollView.smoothScrollTo(0, binding.cardVideoViewport.top - 24)
         }
 
-        // Initialize with default Coop 1
-        binding.farmMapView.selectZone(PoultryFarmMapView.PoultryZoneId.COOP_1)
-        updateSelectedZoneCard(PoultryFarmMapView.PoultryZoneId.COOP_1)
+        FarmZoneManager.addListener(zoneListener)
+        updateActiveZoneCard()
+        syncStreamToActiveZone(FarmZoneManager.getActiveZone(requireContext()))
+    }
 
-        // React dynamically if the user modifies or switches zones elsewhere in the app
-        FarmZoneManager.addListener {
-            activity?.runOnUiThread {
-                if (_binding != null && isAdded) {
-                    val currentZone = FarmZoneManager.getActiveZone(requireContext())
-                    binding.farmMapView.setZoneHardwareStatus(currentZone.hasCamera, false, false)
-                    updateSelectedZoneCard(binding.farmMapView.selectedZone)
-                }
-            }
+    private fun syncStreamToActiveZone(zone: BarnZone) {
+        if (zone.hasCamera) {
+            startCameraStream()
+        } else {
+            stopCameraStream()
+            isStreamReceivingFrames = false
+            binding.ivMonitorStream.visibility = View.GONE
+            updateActiveZoneCard()
         }
     }
 
-    private fun updateSelectedZoneCard(zoneId: PoultryFarmMapView.PoultryZoneId) {
+    /**
+     * One card for the real active barn zone. There are no fake camera channels:
+     * if the selected barn has no assigned camera, no feed is shown.
+     */
+    private fun updateActiveZoneCard() {
         if (_binding == null) return
-        val activeBarnZone = FarmZoneManager.getActiveZone(requireContext())
-        when (zoneId) {
-            PoultryFarmMapView.PoultryZoneId.OVERVIEW -> {
-                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_fullscreen_overview)
-                binding.tvSelectedZoneTitle.text = "All Coops • Entire Poultry Farm"
-                binding.tvSelectedZoneSubtitle.text = "Farm Overview • Tap any coop to focus camera"
-                binding.tvSelectedZoneBadge.text = "FARM OVERVIEW"
-                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
-                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_primary))
-                binding.tvMapChipTitle.text = "All Coops • Farm Overview"
-                binding.tvMonitorSubtitle.text = "All Coops • Farm Overview"
+        val zone = FarmZoneManager.getActiveZone(requireContext())
+        val cameraAssigned = zone.hasCamera
+        val cameraLive = cameraAssigned && isStreamReceivingFrames
 
-                val liveBirds = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
-                binding.tvZoneBirdsVal.text = if (latestAiStatus != null) liveBirds.toString() else "--"
-                binding.tvZoneClimateVal.text = if (activeBarnZone.hasSensor) "26.4°C" else "Standby"
-                binding.tvZoneClimateLabel.text = "Farm Climate"
-                binding.btnScrollToLiveFeed.visibility = View.GONE
-            }
-            PoultryFarmMapView.PoultryZoneId.COOP_1 -> {
-                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
-                binding.tvSelectedZoneTitle.text = "${activeBarnZone.barnName} • Coop 1"
-                binding.tvMapChipTitle.text = "Coop 1 • ${activeBarnZone.cameraName}"
+        // Bind the three map pens to the three real barns.
+        val zones = FarmZoneManager.getAllZones(requireContext()).take(FarmZoneManager.MAX_BARNS)
+        val activeIndex = zones.indexOfFirst { it.id == zone.id }.coerceAtLeast(0)
+        binding.farmMapView.setBarns(
+            zones.map { barn ->
+                PoultryFarmMapView.MapBarn(
+                    name = barn.barnName,
+                    online = barn.hasCamera && isStreamReceivingFrames,
+                    hasCamera = barn.hasCamera
+                )
+            },
+            activeIndex
+        )
 
-                if (activeBarnZone.hasCamera) {
-                    binding.tvSelectedZoneSubtitle.text = "Main Broiler Barn • ${activeBarnZone.cameraName} Active"
-                    binding.tvSelectedZoneBadge.text = "ACTIVE CAM"
-                    binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_healthy_badge)
-                    binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary))
-                    binding.tvMonitorSubtitle.text = "${activeBarnZone.cameraName} • Coop 1"
-                    val count = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
-                    binding.tvZoneBirdsVal.text = if (latestAiStatus != null) count.toString() else "--"
-                    binding.tvZoneClimateVal.text = if (activeBarnZone.hasSensor) "26.4°C" else "Standby"
-                    binding.tvZoneClimateLabel.text = "Temperature"
-                    binding.layoutMonitorOffline.visibility = View.GONE
-                } else {
-                    binding.tvSelectedZoneSubtitle.text = "Standby • No Camera Assigned"
-                    binding.tvSelectedZoneBadge.text = "STANDBY"
-                    binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
-                    binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_muted))
-                    binding.tvMonitorSubtitle.text = "Coop 1 • Standby"
-                    binding.tvZoneBirdsVal.text = "--"
-                    binding.tvZoneClimateVal.text = "Standby"
-                    binding.tvZoneClimateLabel.text = "Sensor Status"
-                    binding.layoutMonitorOffline.visibility = View.VISIBLE
-                    binding.tvOfflineTitle.text = "No Camera Assigned"
-                    binding.tvMonitorStatusSub.text = "Assign a camera to ${activeBarnZone.fullDisplayName} to stream this coop"
-                }
-                binding.btnScrollToLiveFeed.visibility = View.GONE
-            }
-            PoultryFarmMapView.PoultryZoneId.BROODER -> {
-                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_env)
-                binding.tvSelectedZoneTitle.text = "Brooder • Nursery Shed"
-                binding.tvSelectedZoneSubtitle.text = "Standby • No Camera Assigned"
-                binding.tvSelectedZoneBadge.text = "STANDBY"
-                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
-                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_muted))
-                binding.tvMapChipTitle.text = "Brooder • Standby"
-                binding.tvMonitorSubtitle.text = "Brooder • No Camera"
-                binding.tvZoneBirdsVal.text = "--"
-                binding.tvZoneClimateVal.text = "Standby"
-                binding.tvZoneClimateLabel.text = "Sensor Status"
-                binding.btnScrollToLiveFeed.visibility = View.GONE
+        binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
+        binding.tvSelectedZoneTitle.text = zone.fullDisplayName
+        binding.tvMapChipTitle.text = zone.fullDisplayName
+        binding.tvMonitorSubtitle.text = when {
+            !cameraAssigned -> "${zone.fullDisplayName} • No camera"
+            cameraLive -> "${zone.fullDisplayName} • Live"
+            else -> "${zone.fullDisplayName} • Connecting"
+        }
+        binding.tvSelectedZoneSubtitle.text = when {
+            !cameraAssigned -> "No camera assigned to this barn"
+            cameraLive -> "${zone.cameraName} • Live feed"
+            else -> "Camera assigned • Waiting for live signal"
+        }
 
-                // Show honest offline placeholder: No camera assigned
-                binding.layoutMonitorOffline.visibility = View.VISIBLE
-                binding.tvOfflineTitle.text = "No Camera Assigned to Brooder"
-                binding.tvMonitorStatusSub.text = "Only 1 camera is connected (assigned to Coop 1). Pair another camera to monitor the brooder."
-            }
-            PoultryFarmMapView.PoultryZoneId.NESTING -> {
-                binding.ivSelectedZoneIcon.setImageResource(R.drawable.ic_chicken_normal)
-                binding.tvSelectedZoneTitle.text = "Nesting • Layer Paddock"
-                binding.tvSelectedZoneSubtitle.text = "Standby • No Camera Assigned"
-                binding.tvSelectedZoneBadge.text = "STANDBY"
-                binding.tvSelectedZoneBadge.setBackgroundResource(R.drawable.bg_date_chip)
-                binding.tvSelectedZoneBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_muted))
-                binding.tvMapChipTitle.text = "Nesting • Standby"
-                binding.tvMonitorSubtitle.text = "Nesting • No Camera"
-                binding.tvZoneBirdsVal.text = "--"
-                binding.tvZoneClimateVal.text = "Standby"
-                binding.tvZoneClimateLabel.text = "Sensor Status"
-                binding.btnScrollToLiveFeed.visibility = View.GONE
+        binding.tvSelectedZoneBadge.text = when {
+            !cameraAssigned -> "NO CAMERA"
+            cameraLive -> "ACTIVE CAM"
+            else -> "CONNECTING"
+        }
+        binding.tvSelectedZoneBadge.setBackgroundResource(
+            if (cameraLive) R.drawable.bg_healthy_badge else R.drawable.bg_date_chip
+        )
+        binding.tvSelectedZoneBadge.setTextColor(
+            ContextCompat.getColor(
+                requireContext(),
+                if (cameraLive) R.color.primary else R.color.text_muted
+            )
+        )
 
-                // Show honest offline placeholder: No camera assigned
-                binding.layoutMonitorOffline.visibility = View.VISIBLE
-                binding.tvOfflineTitle.text = "No Camera Assigned to Nesting"
-                binding.tvMonitorStatusSub.text = "Only 1 camera is connected (assigned to Coop 1). Pair another camera to monitor the nesting area."
+        binding.tvHudSource.text = if (cameraAssigned) zone.cameraName.uppercase() else "NO CAMERA"
+        binding.tvTelemetrySub.text = if (cameraAssigned) {
+            "AI Flock Tracking • ${zone.cameraName}"
+        } else {
+            "No active camera"
+        }
+        setActiveCameraLabel(cameraLive)
+        if (!cameraAssigned) {
+            updateStatusBadge(false, "No Camera")
+        }
+
+        val count = latestAiStatus?.flockCount ?: (latestAiStatus?.detections?.size ?: 0)
+        binding.tvZoneBirdsVal.text = if (cameraLive && latestAiStatus != null) count.toString() else "--"
+        binding.tvZoneClimateVal.text = if (zone.hasSensor) climateText() else "No data"
+        binding.tvZoneClimateLabel.text = "Temperature"
+        binding.btnScrollToLiveFeed.visibility = View.GONE
+
+        if (cameraLive) {
+            binding.layoutMonitorOffline.visibility = View.GONE
+            binding.ivMonitorStream.visibility = View.VISIBLE
+        } else {
+            binding.layoutMonitorOffline.visibility = View.VISIBLE
+            binding.ivMonitorStream.visibility = View.GONE
+            binding.tvOfflineTitle.text = if (cameraAssigned) "Waiting for Camera Signal" else "No Camera Assigned"
+            binding.tvMonitorStatusSub.text = if (cameraAssigned) {
+                "Start the AI server and connect the camera to begin streaming."
+            } else {
+                "Assign a camera to ${zone.fullDisplayName} in the barn selector to stream this zone."
             }
         }
     }
+
+
 
     private fun showMascotScanOnce() {
         if (!hasShownMascotOnEntry) {
@@ -265,6 +237,7 @@ class MonitorFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         updateSessionUI()
+        startSensorListener()
         startCameraStream()
     }
 
@@ -272,50 +245,11 @@ class MonitorFragment : Fragment() {
         super.onPause()
         binding.mascotPopupScanner.stopAllAnimations()
         stopSessionTicker()
+        stopSensorListener()
         stopCameraStream()
     }
 
-    private fun switchChannel(channel: CameraChannel) {
-        currentChannel = channel
 
-        when (channel) {
-            CameraChannel.CAM_1 -> {
-                isStreamReceivingFrames = false
-                binding.btnScrollToLiveFeed.visibility = View.GONE
-                binding.ivMonitorStream.visibility = View.VISIBLE
-                binding.tvMonitorSubtitle.text = "Camera 1 • Main Barn Flock"
-                binding.tvHudSource.text = "CAM 1 • MAIN COOP"
-                binding.tvActiveCameraLabel.text = "Camera 1 Active • 1080p Stream"
-                binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 1"
-                binding.tvHudLatency.visibility = View.VISIBLE
-                startCameraStream()
-            }
-            CameraChannel.CAM_2 -> {
-                isStreamReceivingFrames = false
-                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
-                binding.btnScrollToLiveFeed.text = "Watch Cam 2 ↓"
-                binding.ivMonitorStream.visibility = View.VISIBLE
-                binding.tvMonitorSubtitle.text = "Camera 2 • Brooder Zone"
-                binding.tvHudSource.text = "CAM 2 • BROODER"
-                binding.tvActiveCameraLabel.text = "Camera 2 Active • 1080p Stream"
-                binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 2"
-                binding.tvHudLatency.visibility = View.VISIBLE
-                startCameraStream()
-            }
-            CameraChannel.CAM_3 -> {
-                isStreamReceivingFrames = false
-                binding.btnScrollToLiveFeed.visibility = View.VISIBLE
-                binding.btnScrollToLiveFeed.text = "Watch Cam 3 ↓"
-                binding.ivMonitorStream.visibility = View.VISIBLE
-                binding.tvMonitorSubtitle.text = "Camera 3 • Nesting Area"
-                binding.tvHudSource.text = "CAM 3 • NESTING"
-                binding.tvActiveCameraLabel.text = "Camera 3 Active • 1080p Stream"
-                binding.tvTelemetrySub.text = "AI Flock Tracking • Cam 3"
-                binding.tvHudLatency.visibility = View.VISIBLE
-                startCameraStream()
-            }
-        }
-    }
 
     // ─── Shutter Snapshot Capture ───
 
@@ -348,6 +282,21 @@ class MonitorFragment : Fragment() {
 
     private fun startCameraStream() {
         stopCameraStream()
+        // Only the active barn's assigned camera can stream.
+        val activeZone = FarmZoneManager.getActiveZone(requireContext())
+        if (!activeZone.hasCamera) {
+            isStreamReceivingFrames = false
+            binding.ivMonitorStream.visibility = View.GONE
+                        setActiveCameraLabel(false)
+            updateActiveZoneCard()
+            return
+        }
+        // Until a real JPEG frame arrives, the camera is not live.
+        isStreamReceivingFrames = false
+        if (_binding != null) {
+                        setActiveCameraLabel(false)
+            updateActiveZoneCard()
+        }
         val baseUrl = ServerPreferences.getBaseUrl(requireContext())
 
         // 1. High-Performance Frame Poller (Zero-lag real-time camera stream)
@@ -372,10 +321,15 @@ class MonitorFragment : Fragment() {
                             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
                             withContext(Dispatchers.Main) {
                                 if (_binding != null) {
+                                    val wasLive = isStreamReceivingFrames
                                     isStreamReceivingFrames = true
                                     consecutiveErrors = 0
                                     binding.ivMonitorStream.setImageBitmap(bitmap)
                                     binding.layoutMonitorOffline.visibility = View.GONE
+                                    if (!wasLive) {
+                                                                                setActiveCameraLabel(true)
+                                        updateActiveZoneCard()
+                                    }
                                     binding.mascotPopupScanner.hideWhenSignalReceived()
                                     if (binding.cardCuteMascotAlert.visibility == View.VISIBLE &&
                                         binding.tvMascotTitle.text.contains("Offline", ignoreCase = true)
@@ -431,24 +385,28 @@ class MonitorFragment : Fragment() {
                                     val serverFps = status.fps ?: 0.0
                                     val displayFps = if (clientDisplayFps > 0.0) maxOf(clientDisplayFps, serverFps) else serverFps
                                     val count = status.flockCount ?: (status.handCount ?: (status.detections?.size ?: 0))
-                                    val healthIndex = status.healthIndex ?: 100
+                                    val healthIndex = status.healthIndex
 
 
-                                    updateStatusBadge(isConnected, if (isConnected) "AI Connected" else "AI Offline")
+                                    val activeZoneHasCamera =
+                                        FarmZoneManager.getActiveZone(requireContext()).hasCamera
+                                    updateStatusBadge(
+                                        activeZoneHasCamera && isConnected,
+                                        when {
+                                            !activeZoneHasCamera -> "No Camera"
+                                            isConnected -> "AI Connected"
+                                            else -> "AI Offline"
+                                        }
+                                    )
                                     binding.tvHudFps.text = String.format("%.1f FPS", displayFps)
                                     binding.tvDetectionCount.text = "$count in View"
                                     binding.tvTelemetryCountVal.text = count.toString()
-                                    binding.tvTelemetryPostureVal.text = "$healthIndex%"
-                                    binding.tvTelemetryLatencyVal.text = "0.03s"
+                                    binding.tvTelemetryPostureVal.text = healthIndex?.let { "$it%" } ?: "--"
+                                    binding.tvTelemetryLatencyVal.text = "--"
 
-                                    // Synchronize live telemetry with farm map and coop card
-                                    if (currentChannel == CameraChannel.CAM_1) {
-                                        binding.farmMapView.updateZoneData(PoultryFarmMapView.PoultryZoneId.COOP_1, count, healthIndex, 26.4)
-                                        if (binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.COOP_1 ||
-                                            binding.farmMapView.selectedZone == PoultryFarmMapView.PoultryZoneId.OVERVIEW) {
-                                            binding.tvZoneBirdsVal.text = count.toString()
-                                            // Health Index card removed
-                                        }
+                                    // Synchronize the single active-zone card.
+                                    if (isStreamReceivingFrames) {
+                                        binding.tvZoneBirdsVal.text = count.toString()
                                     }
 
                                     // Dynamic Flock Subject List - bound to actual detections
@@ -481,7 +439,7 @@ class MonitorFragment : Fragment() {
                                                 timeAgo = "Live Feed",
                                                 timestamp = alertItem.timestamp?.takeIf { it.isNotEmpty() } ?: "Live Stream",
                                                 chickenId = cId.toString(),
-                                                location = "Coop 1 (Main Barn)",
+                                                location = FarmZoneManager.getActiveZone(requireContext()).fullDisplayName,
                                                 tagColorName = tag.colorName,
                                                 tagColorHex = tag.colorHex,
                                                 tagNumber = tag.tagNumber
@@ -504,11 +462,25 @@ class MonitorFragment : Fragment() {
         }
     }
 
+    private fun setActiveCameraLabel(live: Boolean) {
+        if (_binding == null) return
+        val zone = FarmZoneManager.getActiveZone(requireContext())
+        binding.tvActiveCameraLabel.text = when {
+            !zone.hasCamera -> "No camera assigned"
+            live -> "${zone.cameraName} • Live"
+            else -> "${zone.cameraName} • Connecting…"
+        }
+    }
+
     private suspend fun showOfflineUi() {
         withContext(Dispatchers.Main) {
             if (_binding != null) {
                 isStreamReceivingFrames = false
+                                setActiveCameraLabel(false)
+                updateActiveZoneCard()
                 binding.layoutMonitorOffline.visibility = View.VISIBLE
+                binding.rowTrackSubject1.visibility = View.GONE
+                binding.rowTrackSubject2.visibility = View.GONE
                 showCuteMascotAlert(
                     title = "Camera Offline",
                     message = "Stream offline. Check server connection or retry.",
@@ -524,6 +496,14 @@ class MonitorFragment : Fragment() {
                 isStreamReceivingFrames = false
                 updateStatusBadge(false, "AI Offline")
                 binding.tvHudFps.text = "0.0 FPS"
+                // Clear the last telemetry so stale numbers are not shown as live.
+                binding.tvDetectionCount.text = "0 in View"
+                binding.tvTelemetryCountVal.text = "--"
+                binding.tvTelemetryPostureVal.text = "--"
+                binding.tvTelemetryLatencyVal.text = "--"
+                binding.tvZoneBirdsVal.text = "--"
+                binding.rowTrackSubject1.visibility = View.GONE
+                binding.rowTrackSubject2.visibility = View.GONE
             }
         }
     }
@@ -554,7 +534,7 @@ class MonitorFragment : Fragment() {
     ) {
         val trackId = detection.trackId ?: index
         val tagInfo = ChickenTagHelper.getTagInfo(trackId)
-        val conf = ((detection.confidence ?: 0.9) * 100).toInt()
+        val conf = ((detection.confidence ?: 0.0) * 100).toInt()
         val behavior = detection.behavior?.replaceFirstChar { it.uppercase() } ?: "Active"
         val health = detection.health ?: "Healthy"
         val detail = detection.healthDetail?.takeIf { it.isNotEmpty() } ?: "Normal Locomotion"
@@ -605,6 +585,46 @@ class MonitorFragment : Fragment() {
         }
     }
 
+    private fun climateText(): String {
+        val temp = liveTemp ?: latestAiStatus?.temperature
+        return if (temp != null) String.format(Locale.getDefault(), "%.1f°C", temp) else "No data"
+    }
+
+    private fun startSensorListener() {
+        stopSensorListener()
+        val ref = FirebaseConfig.database().getReference("sensor_data").child("live")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val temp = snapshot.child("temperature").getValue(Double::class.java)
+                    ?: snapshot.child("temperature").getValue(Long::class.java)?.toDouble()
+                val hum = snapshot.child("humidity").getValue(Double::class.java)
+                    ?: snapshot.child("humidity").getValue(Long::class.java)?.toDouble()
+                // Ignore cached values from a powered-off ESP32.
+                val fresh = SensorTelemetry.isFresh(snapshot)
+                liveTemp = if (fresh) temp else null
+                liveHumidity = if (fresh) hum else null
+                activity?.runOnUiThread {
+                    if (_binding == null || !isAdded) return@runOnUiThread
+                    val zone = FarmZoneManager.getActiveZone(requireContext())
+                    if (zone.hasSensor) {
+                        binding.tvZoneClimateVal.text = climateText()
+                    }
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        sensorListener = listener
+        ref.addValueEventListener(listener)
+    }
+
+    private fun stopSensorListener() {
+        sensorListener?.let {
+            FirebaseConfig.database().getReference("sensor_data").child("live").removeEventListener(it)
+        }
+        sensorListener = null
+    }
+
     private fun stopCameraStream() {
         streamJob?.cancel()
         streamJob = null
@@ -627,7 +647,25 @@ class MonitorFragment : Fragment() {
                 val detectedCount = status?.flockCount ?: (binding.tvTelemetryCountVal.text.toString().toIntOrNull() ?: 0)
                 val healthyCount = status?.healthyCount ?: detectedCount
                 val illCount = (status?.unhealthyCount ?: 0) + (status?.warningCount ?: 0)
-                CheckupSessionManager.stopSession(ctx, totalFlock = detectedCount, healthyCount = healthyCount, illCount = illCount)
+                val chickenDetails = (status?.detections ?: emptyList())
+                    .mapNotNull { detection ->
+                        val trackId = detection.trackId ?: return@mapNotNull null
+                        if (trackId <= 0) return@mapNotNull null
+                        ChickenSessionDetail(
+                            chickenId = trackId,
+                            anomalyScore = detection.anomalyScore ?: 0,
+                            anomalyTier = detection.anomalyTier ?: "Normal",
+                            behavior = detection.behavior.orEmpty(),
+                            geminiSummary = detection.geminiSummary.orEmpty()
+                        )
+                    }
+                CheckupSessionManager.stopSession(
+                    ctx,
+                    totalFlock = detectedCount,
+                    healthyCount = healthyCount,
+                    illCount = illCount,
+                    chickenDetails = chickenDetails
+                )
                 Toast.makeText(ctx, "Checkup session saved to History", Toast.LENGTH_SHORT).show()
                 updateSessionUI()
             } else {
@@ -655,7 +693,12 @@ class MonitorFragment : Fragment() {
         if (_binding == null) return
         val isActive = CheckupSessionManager.isSessionActive(ctx)
 
-        binding.tvScheduledRunInfo.text = "Next: " + CheckupSessionManager.getScheduleDescription(ctx)
+        val scheduleDescription = CheckupSessionManager.getScheduleDescription(ctx)
+        binding.tvScheduledRunInfo.text = if (CheckupSessionManager.isScheduleEnabled(ctx)) {
+            "Next: $scheduleDescription"
+        } else {
+            scheduleDescription
+        }
 
         if (isActive) {
             binding.tvSessionTitle.text = "Diagnostic Scan Active"
@@ -752,6 +795,8 @@ class MonitorFragment : Fragment() {
 
         // Duration Chips Pre-selection
         when (selectedDuration) {
+            5 -> dialogBinding.chipDur5.isChecked = true
+            10 -> dialogBinding.chipDur10.isChecked = true
             15 -> dialogBinding.chipDur15.isChecked = true
             30 -> dialogBinding.chipDur30.isChecked = true
             60 -> dialogBinding.chipDur60.isChecked = true
@@ -771,6 +816,8 @@ class MonitorFragment : Fragment() {
         // Duration change listener
         dialogBinding.chipGroupDuration.setOnCheckedStateChangeListener { _, checkedIds ->
             selectedDuration = when {
+                checkedIds.contains(R.id.chipDur5) -> 5
+                checkedIds.contains(R.id.chipDur10) -> 10
                 checkedIds.contains(R.id.chipDur15) -> 15
                 checkedIds.contains(R.id.chipDur30) -> 30
                 checkedIds.contains(R.id.chipDur60) -> 60
@@ -938,9 +985,11 @@ class MonitorFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        FarmZoneManager.removeListener(zoneListener)
         super.onDestroyView()
         stopChickenBobbing()
         stopSessionTicker()
+        stopSensorListener()
         stopCameraStream()
         _binding = null
     }

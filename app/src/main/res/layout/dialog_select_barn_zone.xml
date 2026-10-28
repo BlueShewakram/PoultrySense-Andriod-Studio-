@@ -38,7 +38,7 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="sans-serif-black"
                 android:letterSpacing="-0.02"
-                android:text="Select Active Farm Zone"
+                android:text="Select Active Barn"
                 android:textColor="@color/text_primary"
                 android:textSize="20sp" />
 
@@ -47,7 +47,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:fontFamily="sans-serif-medium"
-                android:text="Switch viewpoint, sensor telemetry, and capacity"
+                android:text="Choose which barn to monitor • maximum 3 barns"
                 android:textColor="@color/text_muted"
                 android:textSize="12sp" />
         </LinearLayout>

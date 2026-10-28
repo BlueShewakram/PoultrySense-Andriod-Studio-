@@ -48,26 +48,17 @@
                     android:textSize="12.5sp" />
             </LinearLayout>
 
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnMarkAllRead"
-                style="@style/Widget.Material3.Button.TonalButton"
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:backgroundTint="@color/white"
-                android:fontFamily="sans-serif-bold"
-                android:insetTop="0dp"
-                android:insetBottom="0dp"
-                android:text="@string/mark_all_read"
-                android:textAllCaps="false"
-                android:textColor="@color/primary"
-                android:textSize="11sp"
-                app:cornerRadius="18dp"
-                app:icon="@drawable/ic_done_all"
-                app:iconSize="14dp"
-                app:iconTint="@color/primary"
-                app:strokeColor="#E2E8F0"
-                app:strokeWidth="1dp" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvAlertSummary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="sans-serif-medium"
+            android:text="No active alerts"
+            android:textColor="#64748B"
+            android:textSize="11.5sp" />
 
         <!-- Physical Tag Band Guide (Quick Reference for Farmer) -->
         <com.google.android.material.card.MaterialCardView
@@ -348,6 +339,7 @@
                 tools:ignore="ContentDescription" />
 
             <TextView
+                android:id="@+id/tvEmptyAlertsTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
@@ -357,6 +349,7 @@
                 android:textSize="16sp" />
 
             <TextView
+                android:id="@+id/tvEmptyAlertsSubtitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"

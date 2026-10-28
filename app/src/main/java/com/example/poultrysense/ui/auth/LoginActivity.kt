@@ -186,46 +186,25 @@ class LoginActivity : AppCompatActivity() {
             setLoading(false)
 
             result.onSuccess { user ->
-                // 1. Fetch user's existing profile from Realtime Database to restore avatar and details
-                val profileResult = authRepository.getUserProfile(user.uid)
-                val cloudUser = profileResult.getOrNull()
+                // Restore the profile from Firebase Realtime Database. The repository
+                // re-creates the cloud document if it is missing and hydrates the
+                // local avatar file, so signing in after a reinstall restores everything.
+                val profileRepository = com.example.poultrysense.data.repository.ProfileRepository(this@LoginActivity)
+                val finalUser = profileRepository.loadProfile(user)
 
-                val finalUser = cloudUser ?: run {
-                    val displayName = user.displayName ?: ""
-                    val parts = displayName.split(" ")
-                    val fName = if (parts.isNotEmpty()) parts[0] else ""
-                    val lName = if (parts.size > 1) parts.subList(1, parts.size).joinToString(" ") else ""
-                    com.example.poultrysense.data.models.User(
-                        uid = user.uid,
-                        firstName = fName,
-                        lastName = lName,
-                        email = user.email ?: "",
-                        farmName = "Poultry Farm",
-                        role = "Lead Farm Specialist"
-                    )
+                val cloudError = profileRepository.lastSyncError
+                val permissionDenied = cloudError?.message
+                    ?.contains("permission", ignoreCase = true) == true
+
+                val greeting = finalUser.firstName
+                    .ifBlank { user.displayName.orEmpty().substringBefore(" ") }
+                    .ifBlank { "farmer" }
+                val message = if (permissionDenied) {
+                    "Signed in, but Firebase denied database access. Update the Realtime Database rules (database.rules.json)."
+                } else {
+                    "Welcome back, $greeting!"
                 }
-                com.example.poultrysense.data.UserPreferences.saveUser(this@LoginActivity, finalUser)
-
-                // 2. Hydrate local profile_avatar.jpg immediately so it's ready upon app open
-                if (!finalUser.avatarUrl.isNullOrEmpty() && (finalUser.avatarUrl.startsWith("data:image") || finalUser.avatarUrl.length > 100)) {
-                    try {
-                        val b64 = if (finalUser.avatarUrl.contains("base64,")) {
-                            finalUser.avatarUrl.substringAfter("base64,")
-                        } else {
-                            finalUser.avatarUrl
-                        }
-                        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-                        if (bytes != null && bytes.isNotEmpty()) {
-                            val localFile = java.io.File(filesDir, "profile_avatar.jpg")
-                            localFile.writeBytes(bytes)
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }
-
-                val greeting = finalUser.firstName.ifEmpty { user.displayName?.ifEmpty { null } ?: "Specialist" }
-                Toast.makeText(this@LoginActivity, "Welcome back, $greeting!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@LoginActivity, message, Toast.LENGTH_LONG).show()
 
                 val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

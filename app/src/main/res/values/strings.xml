@@ -9,8 +9,8 @@
     <string name="mark_all_read">Mark All Read</string>
     <string name="history_title">Scan History Log</string>
 
-    <string name="profile_name">Farm Specialist</string>
-    <string name="profile_role">Lead Farm Specialist • Poultry Farm</string>
+    <string name="profile_name">Your Profile</string>
+    <string name="profile_role">Farm profile</string>
     <string name="test_connection">Test Connection</string>
     <string name="ai_server_ip_hint">e.g. 192.168.1.100 or poultryhub.local</string>
     <string name="connection_ok">Connected — server is reachable</string>

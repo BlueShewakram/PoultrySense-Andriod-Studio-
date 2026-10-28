@@ -284,7 +284,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif-bold"
-                            android:text="Active (3s Poll)"
+                            android:text="Awaiting sensor data"
                             android:textColor="@color/healthy"
                             android:textSize="11sp" />
                     </LinearLayout>

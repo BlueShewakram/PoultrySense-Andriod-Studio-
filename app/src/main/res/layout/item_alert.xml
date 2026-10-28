@@ -81,7 +81,7 @@
                         android:layout_marginStart="5dp"
                         android:fontFamily="sans-serif-black"
                         android:letterSpacing="0.02"
-                        android:text="RED TAG #1"
+                        android:text="TAG"
                         android:textAllCaps="true"
                         android:textColor="#BE123C"
                         android:textSize="9.5sp" />
@@ -97,7 +97,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:fontFamily="sans-serif"
-                    android:text="2 mins ago"
+                    android:text="—"
                     android:textColor="#94A3B8"
                     android:textSize="11sp" />
             </LinearLayout>
@@ -110,7 +110,7 @@
                 android:layout_marginTop="8dp"
                 android:fontFamily="sans-serif-bold"
                 android:letterSpacing="-0.01"
-                android:text="Abnormal Posture Detected"
+                android:text="—"
                 android:textColor="#0F172A"
                 android:textSize="14.5sp" />
 
@@ -122,9 +122,19 @@
                 android:layout_marginTop="4dp"
                 android:fontFamily="sans-serif"
                 android:lineSpacingExtra="2dp"
-                android:text="Extended period of inactivity detected in Zone 1."
+                android:text="—"
                 android:textColor="#64748B"
                 android:textSize="12.5sp" />
+
+            <TextView
+                android:id="@+id/tvAlertTimestamp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="3dp"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="#94A3B8"
+                android:textSize="10.5sp"
+                tools:text="Oct 28, 2026 • 09:45 PM" />
 
             <!-- Row 4: Location & One-Tap Resolution Action Row -->
             <LinearLayout
@@ -155,7 +165,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginStart="4dp"
                         android:fontFamily="sans-serif-medium"
-                        android:text="Barn A - Zone 1"
+                        android:text="—"
                         android:textColor="#94A3B8"
                         android:textSize="11sp" />
                 </LinearLayout>

@@ -1,6 +1,6 @@
 package com.example.poultrysense.data.repository
 
-import com.google.firebase.database.FirebaseDatabase
+import com.example.poultrysense.data.FirebaseConfig
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -8,9 +8,7 @@ import java.util.Locale
 
 object EnvironmentRepository {
 
-    private val realtimeDb: FirebaseDatabase by lazy {
-        FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
-    }
+    private val realtimeDb by lazy { FirebaseConfig.database() }
 
     private val dateFormat = SimpleDateFormat("dd MMM yyyy, hh:mm:ss a", Locale.getDefault())
 
@@ -24,7 +22,7 @@ object EnvironmentRepository {
     suspend fun syncEnvironmentData(
         temperature: Double,
         humidity: Double,
-        zone: String = "Barn Alpha • Zone 1"
+        zone: String = "Active Zone"
     ) {
         try {
             val status = getClimateStatus(temperature, humidity)

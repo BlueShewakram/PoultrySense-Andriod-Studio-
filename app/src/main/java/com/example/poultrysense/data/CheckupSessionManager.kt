@@ -3,10 +3,12 @@ package com.example.poultrysense.data
 import android.content.Context
 import android.content.SharedPreferences
 import com.example.poultrysense.data.models.BarnZone
+import com.example.poultrysense.data.models.ChickenSessionDetail
 import com.example.poultrysense.data.models.ScanSession
-import com.google.firebase.database.FirebaseDatabase
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -74,7 +76,8 @@ object CheckupSessionManager {
         totalFlock: Int = 0,
         healthyCount: Int = 0,
         illCount: Int = 0,
-        barnZone: BarnZone? = null
+        barnZone: BarnZone? = null,
+        chickenDetails: List<ChickenSessionDetail> = emptyList()
     ) {
         val prefs = getPrefs(context)
         val wasActive = prefs.getBoolean(KEY_IS_ACTIVE, false)
@@ -97,7 +100,8 @@ object CheckupSessionManager {
                 illCount = illCount,
                 barnId = barnId,
                 barnName = barnName,
-                zoneName = zoneName
+                zoneName = zoneName,
+                chickenDetails = chickenDetails
             )
         }
     }
@@ -107,12 +111,18 @@ object CheckupSessionManager {
         totalFlock: Int = 0,
         healthyCount: Int = 0,
         illCount: Int = 0,
-        barnId: String = "barn_alpha_zone_1",
-        barnName: String = "Barn Alpha",
-        zoneName: String = "Zone 1 (Main Pen)"
+        barnId: String = "",
+        barnName: String = "",
+        zoneName: String = "",
+        chickenDetails: List<ChickenSessionDetail> = emptyList()
     ) {
+        val activeZone = FarmZoneManager.getActiveZone(context)
+        val effectiveBarnId = barnId.ifBlank { activeZone.id }
+        val effectiveBarnName = barnName.ifBlank { activeZone.barnName }
+        val effectiveZoneName = zoneName.ifBlank { activeZone.zoneName }
+
         val prefs = getPrefs(context)
-        val counter = prefs.getInt(KEY_SESSION_COUNTER, 108) + 1
+        val counter = prefs.getInt(KEY_SESSION_COUNTER, 0) + 1
         prefs.edit().putInt(KEY_SESSION_COUNTER, counter).apply()
 
         val cal = Calendar.getInstance()
@@ -123,7 +133,11 @@ object CheckupSessionManager {
         val healthy = if (healthyCount > 0) healthyCount else (flock - illCount).coerceAtLeast(0)
         val ill = if (illCount >= 0) illCount else (flock - healthy).coerceAtLeast(0)
 
-        val healthIndex = String.format(Locale.getDefault(), "%.1f%%", if (flock > 0) (healthy.toFloat() / flock.toFloat()) * 100f else 100f)
+        val healthIndex = if (flock > 0) {
+            String.format(Locale.getDefault(), "%.1f%%", (healthy.toFloat() / flock.toFloat()) * 100f)
+        } else {
+            "--"
+        }
 
         val newSession = ScanSession(
             id = "session-$counter",
@@ -135,9 +149,11 @@ object CheckupSessionManager {
             healthyCount = healthy,
             illCount = ill,
             healthIndex = healthIndex,
-            barnId = barnId,
-            barnName = barnName,
-            zoneName = zoneName
+            barnId = effectiveBarnId,
+            barnName = effectiveBarnName,
+            zoneName = effectiveZoneName,
+            chickenDetails = chickenDetails,
+            timestamp = cal.timeInMillis
         )
 
         val currentList = getCompletedSessions(context).toMutableList()
@@ -147,10 +163,17 @@ object CheckupSessionManager {
         val json = Gson().toJson(trimmed)
         prefs.edit().putString(KEY_SESSION_HISTORY, json).apply()
 
-        // Sync to Firebase Cloud Realtime Database: /farms/scan_history/session-X
+        // Sync to the signed-in farmer's cloud history so it can be restored on
+        // another device. Unauthenticated installs fall back to the legacy farm node.
         try {
-            val db = FirebaseDatabase.getInstance().getReference("farms").child("scan_history")
-            db.child("session-$counter").setValue(newSession)
+            val uid = UserPreferences.getCachedUser(context)?.uid
+            val db = FirebaseConfig.database()
+            val historyRef = if (uid.isNullOrBlank()) {
+                db.getReference("farms").child("scan_history")
+            } else {
+                db.getReference("users").child(uid).child("scan_history")
+            }
+            historyRef.child("session-$counter").setValue(newSession)
         } catch (_: Exception) {}
     }
 
@@ -162,55 +185,96 @@ object CheckupSessionManager {
                 val type = object : TypeToken<List<ScanSession>>() {}.type
                 val list: List<ScanSession>? = Gson().fromJson(json, type)
                 if (!list.isNullOrEmpty()) {
-                    return list
+                    // One-time cleanup of demo scans and old "Barn Alpha/Beta" labels.
+                    val cleaned = list
+                        .filterNot { isLegacyDemoSession(it) }
+                        .map { normalizeLegacySession(context, it) }
+                    if (cleaned != list) {
+                        prefs.edit()
+                            .putString(KEY_SESSION_HISTORY, Gson().toJson(cleaned))
+                            .apply()
+                    }
+                    return cleaned
                 }
             } catch (_: Exception) {}
         }
 
-        return listOf(
-            ScanSession(
-                id = "session-108",
-                sessionNumber = "Scan #108",
-                date = "Sep 13, 2026",
-                time = "10:30 AM",
-                status = "Completed",
-                totalFlock = 350,
-                healthyCount = 346,
-                illCount = 4,
-                healthIndex = "98.8%",
-                barnId = "barn_alpha_zone_1",
-                barnName = "Barn Alpha",
-                zoneName = "Zone 1 (Main Pen)"
-            ),
-            ScanSession(
-                id = "session-107",
-                sessionNumber = "Scan #107",
-                date = "Sep 12, 2026",
-                time = "05:00 PM",
-                status = "Completed",
-                totalFlock = 350,
-                healthyCount = 345,
-                illCount = 5,
-                healthIndex = "98.5%",
-                barnId = "barn_alpha_zone_1",
-                barnName = "Barn Alpha",
-                zoneName = "Zone 1 (Main Pen)"
-            ),
-            ScanSession(
-                id = "session-106",
-                sessionNumber = "Scan #106",
-                date = "Sep 12, 2026",
-                time = "09:00 AM",
-                status = "Completed",
-                totalFlock = 350,
-                healthyCount = 348,
-                illCount = 2,
-                healthIndex = "99.4%",
-                barnId = "barn_beta_zone_1",
-                barnName = "Barn Beta",
-                zoneName = "Zone 1 (Layer Paddock)"
-            )
+        // No demo sessions: an empty history is the honest state until a real scan runs.
+        return emptyList()
+    }
+
+    private fun isLegacyDemoSession(session: ScanSession): Boolean {
+        if (session.id !in setOf("session-106", "session-107", "session-108")) return false
+        return session.date == "Sep 13, 2026" || session.date == "Sep 12, 2026"
+    }
+
+    /** Old builds shipped demo barn names; map those records onto the real farm zone. */
+    private fun normalizeLegacySession(context: Context, session: ScanSession): ScanSession {
+        val legacyIds = setOf("barn_alpha_zone_1", "barn_alpha_zone_2", "barn_beta_zone_1")
+        val legacyNames = setOf("Barn Alpha", "Barn Beta")
+        if (session.barnId !in legacyIds && session.barnName !in legacyNames) return session
+
+        val zone = FarmZoneManager.getAllZones(context).firstOrNull() ?: return session
+        return session.copy(
+            barnId = zone.id,
+            barnName = zone.barnName,
+            zoneName = zone.zoneName
         )
+    }
+
+    /**
+     * Merges the farmer's cloud scan history into the local cache so Alerts and
+     * History show the same completed scans after a reinstall or on another device.
+     */
+    suspend fun refreshFromCloud(context: Context): List<ScanSession> {
+        val local = getCompletedSessions(context)
+        val uid = UserPreferences.getCachedUser(context)?.uid
+        if (uid.isNullOrBlank()) return local
+
+        val snapshot = try {
+            withTimeoutOrNull(8_000L) {
+                FirebaseConfig.database()
+                    .getReference("users").child(uid).child("scan_history")
+                    .get()
+                    .await()
+            }
+        } catch (_: Exception) {
+            null
+        } ?: return local
+
+        if (!snapshot.exists()) return local
+
+        val cloud = snapshot.children.mapNotNull { child ->
+            try {
+                Gson().fromJson(Gson().toJson(child.value), ScanSession::class.java)
+            } catch (_: Exception) {
+                null
+            }
+        }.filterNot { isLegacyDemoSession(it) }
+            .map { normalizeLegacySession(context, it) }
+
+        if (cloud.isEmpty()) return local
+
+        val merged = (cloud + local)
+            .filterNot { isLegacyDemoSession(it) }
+            .associateBy { it.id }
+            .values
+            .sortedByDescending { sessionCounter(it) }
+            .take(30)
+
+        val prefs = getPrefs(context)
+        val highestCounter = merged.maxOfOrNull { sessionCounter(it) }?.toInt() ?: 0
+        prefs.edit()
+            .putString(KEY_SESSION_HISTORY, Gson().toJson(merged))
+            .putInt(KEY_SESSION_COUNTER, maxOf(prefs.getInt(KEY_SESSION_COUNTER, 0), highestCounter))
+            .apply()
+        return merged
+    }
+
+    private fun sessionCounter(session: ScanSession): Long {
+        return session.sessionNumber.filter { it.isDigit() }.toLongOrNull()
+            ?: session.id.filter { it.isDigit() }.toLongOrNull()
+            ?: 0L
     }
 
     fun getSessionDurationMinutes(context: Context): Int {
@@ -239,7 +303,7 @@ object CheckupSessionManager {
     // ─── Scheduling Preferences ───
 
     fun isScheduleEnabled(context: Context): Boolean {
-        return getPrefs(context).getBoolean(KEY_SCHEDULE_ENABLED, true)
+        return getPrefs(context).getBoolean(KEY_SCHEDULE_ENABLED, false)
     }
 
     fun setScheduleEnabled(context: Context, enabled: Boolean) {
@@ -273,8 +337,8 @@ object CheckupSessionManager {
 
     fun getScheduleDescription(context: Context): String {
         val prefs = getPrefs(context)
-        if (!prefs.getBoolean(KEY_SCHEDULE_ENABLED, true)) {
-            return "Automated checkups paused"
+        if (!prefs.getBoolean(KEY_SCHEDULE_ENABLED, false)) {
+            return "No automated checkup scheduled"
         }
         val hour = prefs.getInt(KEY_SCHEDULE_HOUR, 8)
         val minute = prefs.getInt(KEY_SCHEDULE_MINUTE, 0)

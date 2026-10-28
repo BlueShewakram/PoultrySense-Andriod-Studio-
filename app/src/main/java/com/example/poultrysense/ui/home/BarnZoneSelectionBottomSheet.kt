@@ -55,7 +55,30 @@ class BarnZoneSelectionBottomSheet : BottomSheetDialogFragment() {
         }
 
         binding.btnAddCustomZone.setOnClickListener {
-            showAddZoneDialog()
+            if (FarmZoneManager.canAddBarn(requireContext())) {
+                showAddZoneDialog()
+            } else {
+                Toast.makeText(
+                    requireContext(),
+                    "Maximum of ${FarmZoneManager.MAX_BARNS} barns reached. Delete a barn first.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        updateAddButtonState()
+    }
+
+    private fun updateAddButtonState() {
+        if (_binding == null) return
+        val ctx = context ?: return
+        val count = FarmZoneManager.getAllZones(ctx).size
+        val canAdd = count < FarmZoneManager.MAX_BARNS
+        binding.btnAddCustomZone.isEnabled = canAdd
+        binding.btnAddCustomZone.alpha = if (canAdd) 1f else 0.5f
+        binding.btnAddCustomZone.text = if (canAdd) {
+            "+ Add Barn (${count}/${FarmZoneManager.MAX_BARNS})"
+        } else {
+            "Maximum ${FarmZoneManager.MAX_BARNS} Barns Reached"
         }
     }
 
@@ -71,7 +94,7 @@ class BarnZoneSelectionBottomSheet : BottomSheetDialogFragment() {
                 FarmZoneManager.setActiveZone(requireContext(), selectedZone)
                 Toast.makeText(
                     context,
-                    "Active Zone: ${selectedZone.fullDisplayName}",
+                    "Active Barn: ${selectedZone.fullDisplayName}",
                     Toast.LENGTH_SHORT
                 ).show()
                 dismiss()
@@ -104,10 +127,19 @@ class BarnZoneSelectionBottomSheet : BottomSheetDialogFragment() {
         val allZones = FarmZoneManager.getAllZones(context)
         val activeZone = FarmZoneManager.getActiveZone(context)
         adapter.updateData(allZones, activeZone.id)
+        updateAddButtonState()
     }
 
     private fun showAddZoneDialog() {
         val context = requireContext()
+        if (!FarmZoneManager.canAddBarn(context)) {
+            Toast.makeText(
+                context,
+                "Maximum of ${FarmZoneManager.MAX_BARNS} barns reached. Delete a barn first.",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
         val dialogBinding = DialogAddBarnZoneBinding.inflate(LayoutInflater.from(context))
 
         val addDialog = AlertDialog.Builder(context)
@@ -130,10 +162,8 @@ class BarnZoneSelectionBottomSheet : BottomSheetDialogFragment() {
                 dialogBinding.tilBarnName.error = "Barn name is required"
                 return@setOnClickListener
             }
-            if (zoneName.isBlank()) {
-                dialogBinding.tilZoneName.error = "Zone name is required"
-                return@setOnClickListener
-            }
+            val effectiveZoneName = zoneName.ifBlank { "Main Pen" }
+            dialogBinding.tilZoneName.error = null
 
             val capacity = capacityStr.toIntOrNull() ?: 50
             val hasCamera = dialogBinding.switchAssignCamera.isChecked
@@ -142,16 +172,23 @@ class BarnZoneSelectionBottomSheet : BottomSheetDialogFragment() {
             val newZone = FarmZoneManager.addCustomZone(
                 context = context,
                 barnName = barnName,
-                zoneName = zoneName,
+                zoneName = effectiveZoneName,
                 capacity = capacity,
                 hasCamera = hasCamera,
                 hasSensor = hasSensor,
-                description = desc.ifBlank { "Custom Poultry Pen" }
-            )
+                description = desc.ifBlank { "Poultry barn" }
+            ) ?: run {
+                Toast.makeText(
+                    context,
+                    "Maximum of ${FarmZoneManager.MAX_BARNS} barns reached.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@setOnClickListener
+            }
 
-            // Switch to the newly created zone automatically
+            // Switch to the newly created barn automatically
             FarmZoneManager.setActiveZone(context, newZone)
-            Toast.makeText(context, "Registered & Activated: ${newZone.fullDisplayName}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Barn added & activated: ${newZone.fullDisplayName}", Toast.LENGTH_SHORT).show()
             addDialog.dismiss()
             dismiss()
         }
@@ -162,12 +199,16 @@ class BarnZoneSelectionBottomSheet : BottomSheetDialogFragment() {
     private fun confirmDeleteZone(zone: BarnZone) {
         val context = requireContext()
         AlertDialog.Builder(context)
-            .setTitle("Remove Farm Zone")
+            .setTitle("Remove Barn")
             .setMessage("Are you sure you want to delete ${zone.fullDisplayName}? This action cannot be undone.")
             .setPositiveButton("Delete") { _, _ ->
-                FarmZoneManager.deleteCustomZone(context, zone.id)
+                val removed = FarmZoneManager.deleteBarn(context, zone.id)
                 refreshList()
-                Toast.makeText(context, "Removed ${zone.fullDisplayName}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    if (removed) "Removed ${zone.barnName}" else "At least one barn is required",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
             .setNegativeButton("Cancel", null)
             .show()

@@ -50,7 +50,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="1dp"
                         android:fontFamily="sans-serif-medium"
-                        android:text="Barn Alpha • Zone 1 Monitoring"
+                        android:text="—"
                         android:textColor="@color/text_muted"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -80,7 +80,7 @@
                         android:layout_height="wrap_content"
                         android:layout_marginStart="6dp"
                         android:fontFamily="sans-serif-bold"
-                        android:text="Barn Alpha"
+                        android:text="—"
                         android:textColor="@color/text_primary"
                         android:textSize="13sp" />
 
@@ -155,7 +155,7 @@
                                     android:layout_height="wrap_content"
                                     android:layout_marginStart="6dp"
                                     android:fontFamily="sans-serif-black"
-                                    android:text="48"
+                                    android:text="--"
                                     android:textColor="@color/text_primary"
                                     android:textSize="20sp" />
 
@@ -198,7 +198,7 @@
                                     android:layout_height="wrap_content"
                                     android:layout_marginStart="6dp"
                                     android:fontFamily="sans-serif-black"
-                                    android:text="60"
+                                    android:text="--"
                                     android:textColor="@color/text_primary"
                                     android:textSize="20sp" />
 
@@ -294,7 +294,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
                                 android:fontFamily="sans-serif-black"
-                                android:text="2 Flagged"
+                                android:text="--"
                                 android:textColor="#E65100"
                                 android:textSize="13sp" />
 
@@ -329,7 +329,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
                                 android:fontFamily="sans-serif-black"
-                                android:text="1 New"
+                                android:text="0 New"
                                 android:textColor="#D32F2F"
                                 android:textSize="13sp" />
 
@@ -364,16 +364,17 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
                                 android:fontFamily="sans-serif-black"
-                                android:text="10:42 AM"
+                                android:text="--"
                                 android:textColor="@color/primary"
                                 android:textSize="13sp" />
 
                             <TextView
+                                android:id="@+id/tvLastScanStatus"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="AI Verified"
+                                android:text="No scan yet"
                                 android:textColor="@color/text_muted"
                                 android:textSize="10sp" />
                         </LinearLayout>
@@ -451,7 +452,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:fontFamily="sans-serif-medium"
-                            android:text="2 flagged\nZone 1 &amp; 3"
+                            android:text="No anomalies"
                             android:textColor="#EEFFFFFF"
                             android:textSize="9sp" />
 
@@ -461,10 +462,11 @@
                             android:layout_weight="1" />
 
                         <TextView
+                            android:id="@+id/tvAnomalyCapsuleLabel"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif-black"
-                            android:text="FLAGGED"
+                            android:text="NO ALERTS"
                             android:textColor="#FFCDD2"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -515,7 +517,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:fontFamily="sans-serif-medium"
-                            android:text="-- active\nAll zones OK"
+                            android:text="No active stream"
                             android:textColor="#EEFFFFFF"
                             android:textSize="9sp" />
 
@@ -525,10 +527,11 @@
                             android:layout_weight="1" />
 
                         <TextView
+                            android:id="@+id/tvActiveCapsuleLabel"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif-black"
-                            android:text="ACTIVE"
+                            android:text="STANDBY"
                             android:textColor="#C8E6C9"
                             android:textSize="11sp" />
                     </LinearLayout>
@@ -579,7 +582,7 @@
                             android:layout_height="wrap_content"
                             android:layout_marginTop="2dp"
                             android:fontFamily="sans-serif-medium"
-                            android:text="ESP32 Standby\nConnecting..."
+                            android:text="No sensor data"
                             android:textColor="#EEFFFFFF"
                             android:textSize="9sp" />
 
@@ -625,7 +628,7 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
                     android:fontFamily="sans-serif-bold"
-                    android:text="Live Environment Overview"
+                    android:text="Environment Overview"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp" />
 
@@ -644,11 +647,12 @@
                         android:backgroundTint="@color/primary" />
 
                     <TextView
+                        android:id="@+id/tvFeedBadge"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="5dp"
                         android:fontFamily="sans-serif-black"
-                        android:text="LIVE FEED"
+                        android:text="CAMERA FEED"
                         android:textColor="@color/primary"
                         android:textSize="10sp" />
                 </LinearLayout>
@@ -716,7 +720,7 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
                                 android:fontFamily="sans-serif"
-                                android:text="1080p AI Vision • Continuous tracking"
+                                android:text="Camera assigned • Waiting for frames"
                                 android:textColor="#B0FFFFFF"
                                 android:textSize="11sp" />
                         </LinearLayout>
@@ -769,18 +773,20 @@
                             android:orientation="vertical">
 
                             <TextView
+                                android:id="@+id/tvCameraTitle"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-bold"
-                                android:text="Camera 1 • Barn A"
+                                android:text="No camera assigned"
                                 android:textColor="@color/text_primary"
                                 android:textSize="13sp" />
 
                             <TextView
+                                android:id="@+id/tvCameraStatus"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:fontFamily="sans-serif-medium"
-                                android:text="Live AI Chicken Tracking Active"
+                                android:text="No live feed"
                                 android:textColor="@color/text_muted"
                                 android:textSize="11sp" />
                         </LinearLayout>

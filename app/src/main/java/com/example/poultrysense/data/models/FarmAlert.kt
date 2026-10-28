@@ -19,5 +19,9 @@ data class FarmAlert(
     val location: String? = null,
     val tagColorName: String? = null,
     val tagColorHex: String? = null,
-    val tagNumber: Int? = null
+    val tagNumber: Int? = null,
+    /** True for alerts reconstructed from a completed scan (read-only history). */
+    val isHistorical: Boolean = false,
+    /** Completed scan this alert belongs to, if any. */
+    val scanId: String? = null
 )

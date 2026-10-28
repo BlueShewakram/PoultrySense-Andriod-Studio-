@@ -12,8 +12,8 @@ data class BarnZone(
     val hasLiveHardware: Boolean,       // Master hardware state
     val hasCamera: Boolean = hasLiveHardware,   // true if physical camera assigned
     val hasSensor: Boolean = hasLiveHardware,   // true if physical ESP32 sensor assigned
-    val cameraName: String = if (hasCamera) "Cam 1 (Live AI Vision)" else "No Camera Assigned",
-    val sensorName: String = if (hasSensor) "ESP32 #1 (DHT22 Live)" else "No Sensor Assigned",
+    val cameraName: String = if (hasCamera) "Camera 1" else "No Camera Assigned",
+    val sensorName: String = if (hasSensor) "ESP32 Sensor" else "No Sensor Assigned",
     val cameraChannelId: Int = if (hasCamera) 1 else 0,
     val firebaseTelemetryPath: String = "sensor_data/live",
     val description: String = "Broiler Enclosure",

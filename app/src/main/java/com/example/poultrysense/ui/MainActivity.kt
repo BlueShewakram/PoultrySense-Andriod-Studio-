@@ -9,8 +9,10 @@ import androidx.navigation.NavController
 import androidx.navigation.NavOptions
 import androidx.navigation.fragment.NavHostFragment
 import com.example.poultrysense.R
-import com.example.poultrysense.data.CheckupSessionManager
-import com.example.poultrysense.data.ChickenTagHelper
+import com.example.poultrysense.data.FarmZoneManager
+import com.example.poultrysense.data.FirebaseConfig
+import com.example.poultrysense.data.SensorTelemetry
+import com.example.poultrysense.data.repository.ProfileRepository
 import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.data.repository.EnvironmentRepository
@@ -22,7 +24,6 @@ import com.example.poultrysense.data.NotificationHelper
 import com.example.poultrysense.data.repository.AuthRepository
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -45,52 +46,15 @@ class MainActivity : AppCompatActivity() {
 
     private var firebaseListener: ValueEventListener? = null
     private val climateSamples = mutableListOf<ClimateSample>()
-    private val realtimeDb by lazy {
-        FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
-    }
+    private val realtimeDb by lazy { FirebaseConfig.database() }
 
     private data class ClimateSample(
         val temperature: Double,
         val humidity: Double
     )
 
-    val farmAlerts = mutableListOf(
-        FarmAlert(
-            id = "alert-tag-3",
-            severity = AlertSeverity.CRITICAL,
-            title = "Prolonged Inactivity • 🟡 Yellow Tag #3",
-            description = "Chicken physically tagged with Bright Yellow Leg Band #3 has remained stationary for >180s with drooping posture in Coop 1.",
-            timeAgo = "3 mins ago",
-            timestamp = "Today at 10:14 AM",
-            chickenId = "3",
-            location = "Coop 1 (Main Barn)",
-            tagColorName = "Yellow",
-            tagColorHex = "#FFD600",
-            tagNumber = 3
-        ),
-        FarmAlert(
-            id = "alert-tag-1",
-            severity = AlertSeverity.WARNING,
-            title = "Flock Isolation • 🔴 Red Tag #1",
-            description = "Chicken physically tagged with Bright Red Leg Band #1 has separated from the main flock for >6 minutes near the feeding station.",
-            timeAgo = "15 mins ago",
-            timestamp = "Today at 10:02 AM",
-            chickenId = "1",
-            location = "Coop 1 (Main Barn)",
-            tagColorName = "Red",
-            tagColorHex = "#FF1744",
-            tagNumber = 1
-        ),
-        FarmAlert(
-            id = "alert-initial",
-            severity = AlertSeverity.INFO,
-            title = "DHT22 Climate Monitor Active",
-            description = "Listening for live temperature and humidity readings from ESP32...",
-            timeAgo = "Live Sensor",
-            timestamp = "Just now",
-            location = "Coop 1 (Main Barn)"
-        )
-    )
+    // Alerts are populated only from live sensor / AI data. No demo rows.
+    val farmAlerts = mutableListOf<FarmAlert>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,24 +92,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Restores the signed-in farmer's profile from the database on every launch.
+     * This is what makes name / farm / avatar survive an uninstall + reinstall.
+     */
     private fun preloadUserProfileAndAvatar() {
         val authRepo = AuthRepository()
         val currentUser = authRepo.currentUser ?: return
+        val profileRepository = ProfileRepository(this)
         lifecycleScope.launch {
-            val result = authRepo.getUserProfile(currentUser.uid)
-            result.onSuccess { cloudUser ->
-                com.example.poultrysense.data.UserPreferences.saveUser(this@MainActivity, cloudUser)
-                if (!cloudUser.avatarUrl.isNullOrEmpty() && (cloudUser.avatarUrl.startsWith("data:image") || cloudUser.avatarUrl.length > 100)) {
-                    try {
-                        val b64 = if (cloudUser.avatarUrl.contains("base64,")) cloudUser.avatarUrl.substringAfter("base64,") else cloudUser.avatarUrl
-                        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
-                        if (bytes != null && bytes.isNotEmpty()) {
-                            val localFile = java.io.File(filesDir, "profile_avatar.jpg")
-                            localFile.writeBytes(bytes)
-                        }
-                    } catch (_: Exception) {}
-                }
-            }
+            profileRepository.syncPendingProfile()
+            profileRepository.refreshProfile(currentUser)
         }
     }
 
@@ -243,13 +200,17 @@ class MainActivity : AppCompatActivity() {
         firebaseListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 if (!snapshot.exists()) return
+                // Do not raise climate alerts from stale cached telemetry.
+                if (!SensorTelemetry.isFresh(snapshot)) return
 
                 val temp = snapshot.child("temperature").getValue(Double::class.java)
                     ?: snapshot.child("temperature").getValue(Long::class.java)?.toDouble()
                 val hum = snapshot.child("humidity").getValue(Double::class.java)
                     ?: snapshot.child("humidity").getValue(Long::class.java)?.toDouble()
                 val timestamp = snapshot.child("timestamp").getValue(String::class.java) ?: "Just now"
-                val zone = snapshot.child("zone").getValue(String::class.java) ?: "Main Barn • Zone 1"
+                val zone = snapshot.child("zone").getValue(String::class.java)
+                    ?.takeIf { it.isNotBlank() }
+                    ?: FarmZoneManager.getActiveZone(this@MainActivity).fullDisplayName
 
                 if (temp != null && hum != null) {
                     evaluateDht22Alerts(temp, hum, timestamp, zone)
@@ -387,38 +348,20 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // 4. Flock Health Inspection Check
-        val latestSession = CheckupSessionManager.getCompletedSessions(this).firstOrNull()
-        if (latestSession != null && latestSession.illCount > 0) {
-            val taggedBirds = (1..latestSession.illCount.coerceAtMost(3)).map { i ->
-                val chickenNum = if (i == 1) 3 else (if (i == 2) 1 else 5)
-                ChickenTagHelper.getTagInfo(chickenNum)
-            }
-            val tagsSummary = taggedBirds.joinToString(", ") { it.displayLabel }
-            val firstTag = taggedBirds.firstOrNull()
-            newAlerts.add(
-                0,
-                FarmAlert(
-                    id = "alert-flock-${latestSession.id}",
-                    severity = AlertSeverity.CRITICAL,
-                    title = "Unhealthy Birds: $tagsSummary",
-                    description = "Latest scan (${latestSession.sessionNumber}) identified ${latestSession.illCount} distressed bird(s) needing attention: ${taggedBirds.joinToString { it.physicalDescription }}. Inspect bird posture in $zone.",
-                    timeAgo = latestSession.time,
-                    timestamp = "${latestSession.date} at ${latestSession.time}",
-                    chickenId = firstTag?.tagNumber?.toString() ?: "3",
-                    location = zone,
-                    tagColorName = firstTag?.colorName,
-                    tagColorHex = firstTag?.colorHex,
-                    tagNumber = firstTag?.tagNumber
-                )
-            )
-        }
-
-        // Update active alerts list
-        farmAlerts.clear()
+        // Replace only environment alerts. Live AI chicken alerts are owned by
+        // MonitorFragment and must not be wiped by every sensor reading.
+        farmAlerts.removeAll { isClimateAlertId(it.id) }
         farmAlerts.addAll(newAlerts)
 
         updateNotificationBadge()
+    }
+
+    private fun isClimateAlertId(id: String): Boolean {
+        return id.startsWith("alert-heat-") ||
+            id.startsWith("alert-cold-") ||
+            id.startsWith("alert-humidity-") ||
+            id.startsWith("alert-dry-air") ||
+            id.startsWith("alert-climate-")
     }
 
     fun addAlert(alert: FarmAlert) {

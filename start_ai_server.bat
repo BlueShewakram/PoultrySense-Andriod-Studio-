@@ -1,4 +1,4 @@
-@echo off
+    @echo off
 TITLE PoultrySense AI Vision Server
 COLOR 0A
 

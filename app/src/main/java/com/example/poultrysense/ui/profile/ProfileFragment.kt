@@ -17,11 +17,16 @@ import com.example.poultrysense.R
 import com.example.poultrysense.data.AiServerScanner
 import com.example.poultrysense.data.AppSettingsPreferences
 import com.example.poultrysense.data.CheckupSessionManager
+import com.example.poultrysense.data.FarmZoneManager
+import com.example.poultrysense.data.FirebaseConfig
+import com.example.poultrysense.data.SensorTelemetry
 import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.UserPreferences
 import com.example.poultrysense.data.WakeOnLanHelper
+import com.example.poultrysense.data.models.AiStatusResponse
 import com.example.poultrysense.data.models.User
 import com.example.poultrysense.data.repository.AuthRepository
+import com.example.poultrysense.data.repository.ProfileRepository
 import com.example.poultrysense.databinding.DialogAiServerSettingsBinding
 import com.example.poultrysense.databinding.DialogDesktopPowerBinding
 import com.example.poultrysense.databinding.DialogHelpDiagnosticsBinding
@@ -33,8 +38,8 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,6 +60,7 @@ class ProfileFragment : Fragment() {
     private var _binding: FragmentProfileBinding? = null
     private val binding get() = _binding!!
     private val authRepository = AuthRepository()
+    private fun profileRepository(): ProfileRepository = ProfileRepository(requireContext())
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(2, TimeUnit.SECONDS)
@@ -77,84 +83,52 @@ class ProfileFragment : Fragment() {
         loadOperationalStats()
         checkAiHubLiveStatus()
         setupClickListeners()
+        bindAppVersion()
+    }
+
+    private fun bindAppVersion() {
+        val ctx = context ?: return
+        val version = try {
+            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName.orEmpty()
+        } catch (_: Exception) {
+            ""
+        }
+        binding.tvAppVersion.text = if (version.isBlank()) {
+            "PoultrySense AI"
+        } else {
+            "PoultrySense AI v$version"
+        }
     }
 
     private fun loadUserData() {
-        val context = context ?: return
+        val ctx = context ?: return
         val currentUser = authRepository.currentUser
 
-        // 1. Instant Synchronous Display
-        val cachedUser = UserPreferences.getCachedUser(context)
+        // 1. Instant display from the local cache (works offline / immediately after launch).
+        val cachedUser = UserPreferences.getCachedUser(ctx)
         if (cachedUser != null) {
             displayUser(cachedUser)
         } else if (currentUser != null) {
-            val displayName = currentUser.displayName.orEmpty()
-            if (displayName.isNotEmpty()) {
-                binding.tvProfileName.text = displayName
-            }
-            binding.tvProfileEmail.text = currentUser.email.orEmpty()
-            binding.tvProfileRole.text = "Lead Farm Specialist • Poultry Farm"
+            val fallback = authRepository.userFromFirebase(currentUser)
+            displayUser(fallback)
         }
 
-        // 2. Background Refresh
+        // 2. Refresh from Firebase Realtime Database (the cross-device source of truth).
         if (currentUser != null) {
             lifecycleScope.launch {
-                val result = authRepository.getUserProfile(currentUser.uid)
-                result.onSuccess { user ->
-                    if (_binding == null) return@onSuccess
-                    val localFile = File(context.filesDir, "profile_avatar.jpg")
-
-                    val hasCloudAvatar = !user.avatarUrl.isNullOrEmpty() &&
-                            (user.avatarUrl.startsWith("data:image") || user.avatarUrl.startsWith("http") || user.avatarUrl.length > 100)
-
-                    val effectiveUser = if (hasCloudAvatar) {
-                        // Hydrate local storage file from cloud Base64 if needed
-                        if (user.avatarUrl.startsWith("data:image") || user.avatarUrl.length > 100) {
-                            try {
-                                val b64 = if (user.avatarUrl.contains("base64,")) {
-                                    user.avatarUrl.substringAfter("base64,")
-                                } else {
-                                    user.avatarUrl
-                                }
-                                val bytes = Base64.decode(b64, Base64.DEFAULT)
-                                if (bytes != null && bytes.isNotEmpty()) {
-                                    localFile.writeBytes(bytes)
-                                }
-                            } catch (_: Exception) {}
-                        }
-                        user
-                    } else if (localFile.exists() && localFile.length() > 0) {
-                        // Cloud has no avatar but local file exists -> sync local avatar up to cloud
-                        try {
-                            val bytes = localFile.readBytes()
-                            val base64 = "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
-                            launch {
-                                authRepository.updateAvatarUrl(currentUser.uid, base64)
-                            }
-                            user.copy(avatarUrl = base64)
-                        } catch (_: Exception) {
-                            user.copy(avatarUrl = Uri.fromFile(localFile).toString())
-                        }
-                    } else {
-                        user
-                    }
-
-                    UserPreferences.saveUser(context, effectiveUser)
-                    displayUser(effectiveUser)
-                }.onFailure {
-                    if (_binding == null) return@onFailure
-                    if (cachedUser == null) {
-                        val fallbackName = currentUser.displayName ?: ""
-                        binding.tvProfileName.text = fallbackName
-                        binding.tvProfileEmail.text = currentUser.email ?: ""
-                    }
+                val fresh = profileRepository().refreshProfile(currentUser)
+                if (_binding == null) return@launch
+                if (fresh != null) {
+                    displayUser(fresh)
                 }
             }
         }
     }
 
     private var isAiHubOnline = false
+    private var isVisionOnline = false
     private var isEsp32Online = false
+    private var sensorStatusListener: ValueEventListener? = null
 
     private fun loadOperationalStats() {
         val ctx = context ?: return
@@ -166,62 +140,91 @@ class ProfileFragment : Fragment() {
         val ip = ServerPreferences.getIp(ctx)
         binding.tvAiServerSubtext.text = "$ip • Port 5000"
 
-        // 3. Listen to Firebase to determine live ESP32 status
-        val realtimeDb = FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
-        realtimeDb.getReference("sensor_data").child("live").addListenerForSingleValueEvent(object : ValueEventListener {
+        // 3. Listen to Firebase and only count the sensor as online when its
+        //    timestamp is fresh (older cached values are not "live").
+        val realtimeDb = FirebaseConfig.database()
+        val sensorRef = realtimeDb.getReference("sensor_data").child("live")
+        val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 if (_binding == null) return
-                val temp = snapshot.child("temperature").getValue(Double::class.java)
-                isEsp32Online = (temp != null)
+                isEsp32Online = SensorTelemetry.isFresh(snapshot)
                 updateHardwareReadiness()
             }
-            override fun onCancelled(error: DatabaseError) {}
-        })
+            override fun onCancelled(error: DatabaseError) {
+                isEsp32Online = false
+                updateHardwareReadiness()
+            }
+        }
+        sensorStatusListener = listener
+        sensorRef.addValueEventListener(listener)
     }
 
     private fun updateHardwareReadiness() {
         if (_binding == null) return
         val ctx = context ?: return
+        val activeZone = FarmZoneManager.getActiveZone(ctx)
 
-        var score = 50 // Base: Account (25%) + Vision pipeline (25%)
+        // Four independent 25% modules. Nothing is assumed to be online.
+        var score = 0
         val primaryColor = ContextCompat.getColor(ctx, R.color.primary)
         val mutedColor = ContextCompat.getColor(ctx, R.color.text_muted)
+        val activeColor = android.graphics.Color.parseColor("#00B8D4")
 
-        // 1. AI Hub status
+        // 1. Account (signed in)
+        val hasAccount = authRepository.currentUser != null
+        if (hasAccount) score += 25
+        binding.dotReadinessProfile.backgroundTintList = ColorStateList.valueOf(
+            if (hasAccount) primaryColor else mutedColor
+        )
+        binding.tvReadinessProfileStatus.text = if (hasAccount) "Active" else "Sign in"
+        binding.tvReadinessProfileStatus.setTextColor(if (hasAccount) primaryColor else mutedColor)
+
+        // 2. Vision is only "online" when the AI server reports an active
+        //    camera stream — a mere camera assignment is not a live feed.
+        val visionLive = isVisionOnline
+        if (visionLive) score += 25
+        binding.dotReadinessCamera.backgroundTintList = ColorStateList.valueOf(
+            if (visionLive) primaryColor else mutedColor
+        )
+        binding.tvReadinessCameraStatus.text = when {
+            visionLive -> "Live"
+            activeZone.hasCamera -> "No signal"
+            else -> "No camera"
+        }
+        binding.tvReadinessCameraStatus.setTextColor(if (visionLive) primaryColor else mutedColor)
+
+        // 3. AI Hub status
         if (isAiHubOnline) {
             score += 25
-            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(android.graphics.Color.parseColor("#00E5FF"))
+            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(activeColor)
             binding.tvReadinessAiStatus.text = "Online"
-            binding.tvReadinessAiStatus.setTextColor(android.graphics.Color.parseColor("#00B8D4"))
+            binding.tvReadinessAiStatus.setTextColor(activeColor)
         } else {
             binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(mutedColor)
             binding.tvReadinessAiStatus.text = "Standby"
             binding.tvReadinessAiStatus.setTextColor(mutedColor)
         }
 
-        // 2. ESP32 Sensor status
-        if (isEsp32Online) {
-            score += 25
-            binding.dotReadinessEsp32.backgroundTintList = ColorStateList.valueOf(primaryColor)
-            binding.tvReadinessEsp32Status.text = "Live"
-            binding.tvReadinessEsp32Status.setTextColor(primaryColor)
-        } else {
-            binding.dotReadinessEsp32.backgroundTintList = ColorStateList.valueOf(mutedColor)
-            binding.tvReadinessEsp32Status.text = "Standby"
-            binding.tvReadinessEsp32Status.setTextColor(mutedColor)
+        // 4. ESP32 sensor status (only if the active zone actually has a sensor)
+        val sensorLive = activeZone.hasSensor && isEsp32Online
+        if (sensorLive) score += 25
+        binding.dotReadinessEsp32.backgroundTintList = ColorStateList.valueOf(
+            if (sensorLive) primaryColor else mutedColor
+        )
+        binding.tvReadinessEsp32Status.text = when {
+            !activeZone.hasSensor -> "No sensor"
+            isEsp32Online -> "Live"
+            else -> "No data"
         }
+        binding.tvReadinessEsp32Status.setTextColor(if (sensorLive) primaryColor else mutedColor)
 
-        // Vision & Account are active
-        binding.dotReadinessCamera.backgroundTintList = ColorStateList.valueOf(primaryColor)
-        binding.dotReadinessProfile.backgroundTintList = ColorStateList.valueOf(primaryColor)
-
-        // Progress bar animation / update
         binding.progressHardwareReadiness.progress = score
         binding.tvReadinessPercent.text = "$score%"
         binding.tvReadinessSubtitle.text = when {
             score == 100 -> "All modules operational and synchronized"
             score >= 75 -> "Core modules active • Ready for monitoring"
-            else -> "Awaiting AI Hub or ESP32 sensor connection"
+            score >= 50 -> "Partially configured • Pair the missing hardware"
+            else -> "Configure your account and hardware to begin"
         }
     }
 
@@ -231,23 +234,37 @@ class ProfileFragment : Fragment() {
 
         lifecycleScope.launch(Dispatchers.IO) {
             val url = "http://$ip:5000/status"
-            val isOnline = try {
+            var hubOnline = false
+            var visionOnline = false
+            try {
                 val request = Request.Builder().url(url).build()
                 val response = httpClient.newCall(request).execute()
-                val ok = response.isSuccessful
+                if (response.isSuccessful) {
+                    hubOnline = true
+                    val body = response.body?.string()
+                    if (!body.isNullOrBlank()) {
+                        val status = Gson().fromJson(body, AiStatusResponse::class.java)
+                        // "active" means the AI server is actually processing frames.
+                        visionOnline = status?.active == true
+                    }
+                }
                 response.close()
-                ok
             } catch (_: Exception) {
-                false
             }
 
             withContext(Dispatchers.Main) {
                 if (_binding == null) return@withContext
-                isAiHubOnline = isOnline
+                isAiHubOnline = hubOnline
+                isVisionOnline = visionOnline
                 updateHardwareReadiness()
-
-                // Status badge removed per user request
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (_binding != null) {
+            checkAiHubLiveStatus()
         }
     }
 
@@ -306,7 +323,11 @@ class ProfileFragment : Fragment() {
     private fun displayUser(user: User) {
         val ctx = context ?: return
         binding.tvProfileName.text = user.fullName
-        binding.tvProfileRole.text = "${user.role} • ${user.farmName}"
+        val subtitle = listOf(user.role, user.farmName)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString(" • ")
+        binding.tvProfileRole.text = subtitle.ifEmpty { "Farm profile" }
         binding.tvProfileEmail.text = user.email
 
         val avatarSource = resolveAvatarSource(ctx, user.avatarUrl)
@@ -434,20 +455,21 @@ class ProfileFragment : Fragment() {
                 .error(R.drawable.ic_person)
                 .into(binding.ivProfileAvatar)
 
-            // Instantly sync with cachedUser and Firebase so photo is never lost even if user dismisses dialog!
+            // Persist the picked photo to the database immediately; it is also kept
+            // locally so it survives even if the upload is temporarily offline.
             if (base64Data != null) {
-                val cached = UserPreferences.getCachedUser(ctx)
-                if (cached != null) {
-                    val updated = cached.copy(avatarUrl = base64Data)
-                    UserPreferences.saveUser(ctx, updated)
-                }
-                authRepository.currentUser?.let { user ->
-                    viewLifecycleOwner.lifecycleScope.launch {
-                        val uploadResult = authRepository.updateAvatarUrl(user.uid, base64Data)
-                        if (uploadResult.isSuccess) {
-                            Toast.makeText(ctx, "Profile photo saved to database", Toast.LENGTH_SHORT).show()
-                        }
+                val repository = ProfileRepository(ctx.applicationContext)
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val uploadResult = repository.saveAvatar(base64Data)
+                    if (!isAdded) return@launch
+                    val permissionDenied = repository.lastSyncError?.message
+                        ?.contains("permission", ignoreCase = true) == true
+                    val message = when {
+                        uploadResult.isSuccess -> "Profile photo saved to your account"
+                        permissionDenied -> "Photo saved locally • Firebase rules are blocking cloud sync"
+                        else -> "Photo saved on this device • will sync when the database is reachable"
                     }
+                    Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -489,7 +511,11 @@ class ProfileFragment : Fragment() {
 
         // Sign Out
         binding.btnSignOut.setOnClickListener {
-            context?.let { UserPreferences.clearUser(it) }
+            context?.let {
+                // Remove the device-local avatar so the next account cannot inherit it.
+                File(it.filesDir, "profile_avatar.jpg").delete()
+                UserPreferences.clearUser(it)
+            }
             authRepository.signOut()
             Toast.makeText(context, "Signed out of PoultrySense", Toast.LENGTH_SHORT).show()
 
@@ -620,7 +646,7 @@ class ProfileFragment : Fragment() {
                     lifecycleScope.launch(Dispatchers.IO) {
                         // 1. Dispatch cloud shutdown signal to Firebase (received by ESP32)
                         try {
-                            val db = com.google.firebase.database.FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
+                            val db = FirebaseConfig.database()
                             db.getReference("system_control").updateChildren(mapOf("shutdown" to true, "timestamp" to System.currentTimeMillis()))
                         } catch (_: Exception) {}
 
@@ -738,12 +764,12 @@ class ProfileFragment : Fragment() {
             val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
                 data = Uri.parse("mailto:blueshewakram@gmail.com")
                 putExtra(Intent.EXTRA_SUBJECT, "PoultrySense Farm Support & Diagnostics")
-                putExtra(Intent.EXTRA_TEXT, "Hello Engineering,\n\nDiagnostic Log:\nAI Server IP: ${ServerPreferences.getIp(ctx)}\nFarm: ${UserPreferences.getCachedUser(ctx)?.farmName ?: "Poultry Farm"}\n\nDescription of issue:\n")
+                putExtra(Intent.EXTRA_TEXT, "Hello Engineering,\n\nDiagnostic Log:\nAI Server IP: ${ServerPreferences.getIp(ctx)}\nFarm: ${UserPreferences.getCachedUser(ctx)?.farmName?.ifBlank { "Not set" } ?: "Not set"}\n\nDescription of issue:\n")
             }
             try {
                 startActivity(Intent.createChooser(emailIntent, "Send Support Request"))
             } catch (_: Exception) {
-                Toast.makeText(ctx, "Support email: bluesheawakram@gmail.com", Toast.LENGTH_LONG).show()
+                Toast.makeText(ctx, "Support email: blueshewakram@gmail.com", Toast.LENGTH_LONG).show()
             }
         }
 
@@ -768,21 +794,21 @@ class ProfileFragment : Fragment() {
         dialogAvatarImageView = dialogBinding.ivDialogAvatarPreview
         pendingAvatarBase64 = null
 
-        // Pre-fill user data
-        val currentFirstName = cachedUser?.firstName ?: currentUser.displayName?.split(" ")?.firstOrNull() ?: ""
-        val currentLastName = cachedUser?.lastName ?: currentUser.displayName?.split(" ")?.drop(1)?.joinToString(" ") ?: ""
-        val currentFarm = cachedUser?.farmName ?: "Poultry Farm"
-        val dialogAvatarSource = resolveAvatarSource(ctx, cachedUser?.avatarUrl)
+        // Pre-fill from the cached/cloud profile. Everything has a real value:
+        // no placeholder farm, role or join date is invented.
+        val authProfile = cachedUser ?: authRepository.userFromFirebase(currentUser)
+        val currentFirstName = authProfile.firstName
+        val currentLastName = authProfile.lastName
+        val currentFarm = authProfile.farmName
+        val dialogAvatarSource = resolveAvatarSource(ctx, authProfile.avatarUrl)
 
         dialogBinding.etEditFirstName.setText(currentFirstName)
         dialogBinding.etEditLastName.setText(currentLastName)
         dialogBinding.etEditFarmName.setText(currentFarm)
 
-        val joinDateText = if (!cachedUser?.formattedDate.isNullOrEmpty()) {
-            "Member since ${cachedUser?.formattedDate}"
-        } else {
-            "Member since August 2026"
-        }
+        // Always render the real account creation timestamp, never a hardcoded month.
+        val joinDateText = "Member since " +
+            SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()).format(Date(authProfile.createdAt))
         dialogBinding.tvAccountCreatedDate.text = joinDateText
 
         Glide.with(this@ProfileFragment)
@@ -815,52 +841,53 @@ class ProfileFragment : Fragment() {
             dialogBinding.tilEditFirstName.error = null
 
             val localFile = File(ctx.filesDir, "profile_avatar.jpg")
-            val avatarString = pendingAvatarBase64 ?: cachedUser?.avatarUrl?.takeIf {
-                it.isNotEmpty() && !it.startsWith("content://") && !it.contains("unsplash.com")
-            } ?: if (localFile.exists() && localFile.length() > 0) {
-                try {
-                    val bytes = localFile.readBytes()
-                    "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
-                } catch (_: Exception) {
+            val avatarString = pendingAvatarBase64
+                ?: authProfile.avatarUrl.takeIf {
+                    it.startsWith("data:image") ||
+                        (it.startsWith("http") && !it.contains("unsplash.com"))
+                }
+                ?: if (localFile.exists() && localFile.length() > 0) {
+                    try {
+                        val bytes = localFile.readBytes()
+                        "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    } catch (_: Exception) {
+                        ""
+                    }
+                } else {
                     ""
                 }
-            } else {
-                cachedUser?.avatarUrl.orEmpty()
-            }
 
-            val updatedUser = User(
+            val updatedUser = authProfile.copy(
                 uid = currentUser.uid,
                 firstName = newFirst,
                 lastName = newLast,
                 email = currentUser.email.orEmpty(),
-                farmName = if (newFarm.isNotEmpty()) newFarm else "Poultry Farm",
-                role = cachedUser?.role ?: "Lead Farm Specialist",
-                avatarUrl = avatarString,
-                createdAt = cachedUser?.createdAt ?: System.currentTimeMillis(),
-                createdDay = cachedUser?.createdDay ?: 29,
-                createdMonth = cachedUser?.createdMonth ?: 8,
-                createdMonthName = cachedUser?.createdMonthName ?: "August",
-                createdYear = cachedUser?.createdYear ?: 2026,
-                formattedDate = cachedUser?.formattedDate ?: "August 29, 2026",
-                scansCount = cachedUser?.scansCount ?: 0,
-                activeDays = cachedUser?.activeDays ?: 1
+                farmName = newFarm,
+                avatarUrl = avatarString
             )
 
-            // 1. Instant local update
+            // Optimistic local update so the screen responds instantly.
             UserPreferences.saveUser(ctx, updatedUser)
             displayUser(updatedUser)
-
-            // 2. Cloud update in background
-            viewLifecycleOwner.lifecycleScope.launch {
-                authRepository.updateUserProfile(currentUser.uid, updatedUser.toMap())
-                if (avatarString.isNotEmpty()) {
-                    authRepository.updateAvatarUrl(currentUser.uid, avatarString)
-                }
-            }
-
-            Toast.makeText(ctx, "Profile and picture updated successfully", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
+
+            // Authoritative database write. Failure is surfaced (and queued for retry)
+            // instead of being silently swallowed, which is how profiles used to get lost.
+            val repository = ProfileRepository(ctx.applicationContext)
+            viewLifecycleOwner.lifecycleScope.launch {
+                val result = repository.saveProfile(currentUser.uid, updatedUser)
+                if (!isAdded) return@launch
+                val permissionDenied = repository.lastSyncError?.message
+                    ?.contains("permission", ignoreCase = true) == true
+                val message = when {
+                    result.isSuccess -> "Profile saved to your account"
+                    permissionDenied -> "Saved locally • Firebase rules are blocking cloud sync"
+                    else -> "Saved on this device • will sync when the database is reachable"
+                }
+                Toast.makeText(requireContext(), message, Toast.LENGTH_SHORT).show()
+            }
         }
+
 
         dialog.show()
     }
@@ -1003,6 +1030,10 @@ class ProfileFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        sensorStatusListener?.let {
+            FirebaseConfig.database().getReference("sensor_data").child("live").removeEventListener(it)
+        }
+        sensorStatusListener = null
         super.onDestroyView()
         _binding = null
     }

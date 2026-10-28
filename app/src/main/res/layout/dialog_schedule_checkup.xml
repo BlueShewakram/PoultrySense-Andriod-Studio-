@@ -105,7 +105,7 @@
                 android:layout_marginStart="12dp"
                 android:layout_weight="1"
                 android:fontFamily="sans-serif-black"
-                android:text="08:00 AM"
+                android:text="--:--"
                 android:textColor="#0F172A"
                 android:textSize="18sp" />
 
@@ -136,6 +136,26 @@
         android:layout_marginTop="6dp"
         app:selectionRequired="true"
         app:singleSelection="true">
+
+        <com.google.android.material.chip.Chip
+            android:id="@+id/chipDur5"
+            style="@style/Widget.Material3.Chip.Filter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="5 Mins"
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
+
+        <com.google.android.material.chip.Chip
+            android:id="@+id/chipDur10"
+            style="@style/Widget.Material3.Chip.Filter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="10 Mins"
+            android:textColor="@color/chip_state_text_color"
+            app:chipBackgroundColor="@color/chip_state_background_color"
+            app:chipStrokeColor="#CBD5E1" />
 
         <com.google.android.material.chip.Chip
             android:id="@+id/chipDur15"

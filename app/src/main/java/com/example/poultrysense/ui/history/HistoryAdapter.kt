@@ -7,7 +7,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.example.poultrysense.data.ChickenTagHelper
-import com.example.poultrysense.data.models.ChickenSessionDetail
 import com.example.poultrysense.data.models.ScanSession
 import com.example.poultrysense.databinding.ItemHistoryBinding
 import com.google.android.material.chip.Chip
@@ -31,19 +30,23 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
 
     override fun onBindViewHolder(holder: HistoryViewHolder, position: Int) {
         val session = sessions[position]
-        val isExpanded = expandedSessionIds.contains(session.id)
+        val details = session.chickenDetails
+        val hasDetails = details.isNotEmpty()
+        val isExpanded = expandedSessionIds.contains(session.id) && hasDetails
 
         with(holder.binding) {
             tvHistorySessionNum.text = session.sessionNumber
             tvHistoryStatus.text = session.status
             tvHistoryBarnLocation.text = session.barnDisplayName
-            tvHistoryDateTime.text = "${session.date} • ${session.time}"
+            tvHistoryDateTime.text = session.loggedAt
             tvHistoryHealthIndex.text = "Health Index: ${session.healthIndex}"
             tvHistoryTotal.text = session.totalFlock.toString()
             tvHistoryHealthy.text = session.healthyCount.toString()
             tvHistoryFlagged.text = session.illCount.toString()
 
-            // Expandable Tag Dropdown State
+            // Expandable Tag Dropdown State — only shown when the scan actually
+            // recorded per-bird details (never fabricated from a count).
+            btnToggleChickenDropdown.visibility = if (hasDetails) View.VISIBLE else View.GONE
             layoutChickenDropdown.visibility = if (isExpanded) View.VISIBLE else View.GONE
             ivDropdownChevron.rotation = if (isExpanded) 180f else 0f
 
@@ -60,21 +63,6 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
             // Populate Chicken Tag Chips
             chipGroupFlagged.removeAllViews()
             chipGroupNormal.removeAllViews()
-
-            val details = if (session.chickenDetails.isNotEmpty()) {
-                session.chickenDetails
-            } else {
-                val total = if (session.totalFlock > 0) session.totalFlock else (session.healthyCount + session.illCount)
-                (1..total).map { idx ->
-                    val isIll = idx <= session.illCount
-                    ChickenSessionDetail(
-                        chickenId = idx,
-                        anomalyScore = if (isIll) 85 else 5,
-                        anomalyTier = if (isIll) "High Concern" else "Normal",
-                        behavior = if (isIll) "Low Locomotion" else "Active Pecking"
-                    )
-                }
-            }
 
             val flaggedBirds = details.filter { it.anomalyTier != "Normal" || it.anomalyScore >= 40 }
             val normalBirds = details.filter { it.anomalyTier == "Normal" && it.anomalyScore < 40 }

@@ -14,6 +14,8 @@ import com.example.poultrysense.R
 import com.example.poultrysense.databinding.FragmentHomeBinding
 import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.FarmZoneManager
+import com.example.poultrysense.data.FirebaseConfig
+import com.example.poultrysense.data.SensorTelemetry
 import com.example.poultrysense.data.models.BarnZone
 import com.example.poultrysense.ui.MainActivity
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +30,6 @@ import com.example.poultrysense.data.models.AiStatusResponse
 import com.google.gson.Gson
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
-import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -53,9 +54,7 @@ class HomeFragment : Fragment() {
     private var streamJob: Job? = null
     private var statusJob: Job? = null
     private var firebaseSensorListener: ValueEventListener? = null
-    private val realtimeDb by lazy {
-        FirebaseDatabase.getInstance("https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app")
-    }
+    private val realtimeDb by lazy { FirebaseConfig.database() }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -80,6 +79,12 @@ class HomeFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        // Pick up profile changes (e.g. a renamed farm) that alter the starter zone label.
+        val currentZone = FarmZoneManager.getActiveZone(requireContext())
+        if (currentZone != activeZone) {
+            activeZone = currentZone
+            applyActiveZone(currentZone)
+        }
         updateAlertsAndMetrics()
         startStreamPolling()
         startSensorPolling()
@@ -134,12 +139,38 @@ class HomeFragment : Fragment() {
 
     private fun applyActiveZone(zone: BarnZone) {
         if (_binding == null) return
+        // Never carry one barn's live counts into another barn's view.
+        liveFlockCount = null
+        liveHealthyCount = null
+        liveFlaggedCount = null
+
         binding.tvActiveZoneName.text = zone.barnName
         binding.tvHomeZoneSubtitle.text = "${zone.barnName} • ${zone.zoneName} Monitoring"
-        binding.tvBarnCapacity.text = "${zone.totalCapacity}"
+        binding.tvBarnCapacity.text = if (zone.totalCapacity > 0) "${zone.totalCapacity}" else "--"
 
         val flagged = liveFlaggedCount ?: 0
-        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\n${zone.barnName}"
+        binding.tvAnomalyCapsuleDesc.text = when {
+            !zone.hasCamera -> "No camera\n${zone.barnName}"
+            flagged > 0 -> "$flagged flagged\n${zone.barnName}"
+            else -> "No anomalies\n${zone.barnName}"
+        }
+        binding.tvCameraTitle.text = if (zone.hasCamera) {
+            "${zone.cameraName} • ${zone.barnName}"
+        } else {
+            "No camera assigned"
+        }
+        binding.tvCameraStatus.text = if (zone.hasCamera) {
+            "Waiting for live AI feed"
+        } else {
+            "Pair a camera in Settings"
+        }
+        binding.tvFeedBadge.text = if (zone.hasCamera) "CAMERA FEED" else "STANDBY"
+        binding.tvAnomalyCapsuleLabel.text = when {
+            !zone.hasCamera -> "STANDBY"
+            flagged > 0 -> "FLAGGED"
+            else -> "NO ALERTS"
+        }
+        binding.tvActiveCapsuleLabel.text = if (zone.hasCamera) "MONITOR" else "STANDBY"
 
         // Camera hardware routing
         if (!zone.hasCamera) {
@@ -150,7 +181,7 @@ class HomeFragment : Fragment() {
             binding.tvStreamPlaceholderSubtitle.text = "Standby • Switch active zone or pair camera in Settings"
         } else {
             binding.tvStreamPlaceholderTitle.text = "Live Poultry Vision Stream"
-            binding.tvStreamPlaceholderSubtitle.text = "1080p AI Vision • Continuous tracking"
+            binding.tvStreamPlaceholderSubtitle.text = "Camera assigned • Waiting for live frames"
             startStreamPolling()
         }
 
@@ -166,6 +197,8 @@ class HomeFragment : Fragment() {
             binding.tvBarnTempStatus.text = "STANDBY"
             binding.tvBarnHumidityStatus.text = "STANDBY"
         } else {
+            // Reset stale values from the previous zone until real telemetry arrives.
+            updateClimateUI(null, null)
             startSensorPolling()
         }
     }
@@ -189,10 +222,18 @@ class HomeFragment : Fragment() {
     private fun updateFlockMetrics(flock: Int, healthy: Int, flagged: Int) {
         if (_binding == null) return
         binding.tvTotalFlockCount.text = "$flock"
-        binding.tvBarnCapacity.text = "${activeZone?.totalCapacity ?: (flock * 1.25).toInt()}"
+        val capacity = activeZone?.totalCapacity ?: 0
+        binding.tvBarnCapacity.text = if (capacity > 0) "$capacity" else "--"
         binding.tvFlaggedCount.text = "$flagged Flagged"
-        binding.tvAnomalyCapsuleDesc.text = "$flagged flagged\n${activeZone?.barnName ?: "Barn Alpha"}"
-        binding.tvActiveCapsuleDesc.text = if (healthy > 0) "$healthy active\nAll zones OK" else "0 active\nAll zones OK"
+        val barn = activeZone?.barnName.orEmpty()
+        binding.tvAnomalyCapsuleDesc.text = if (flagged > 0) "$flagged flagged\n$barn" else "No anomalies\n$barn"
+        binding.tvActiveCapsuleDesc.text = if (healthy > 0) {
+            "$healthy active\nNo anomalies"
+        } else {
+            "No birds tracked\nWaiting for AI"
+        }
+        binding.tvAnomalyCapsuleLabel.text = if (flagged > 0) "FLAGGED" else "NO ALERTS"
+        binding.tvActiveCapsuleLabel.text = if (healthy > 0) "ACTIVE" else "STANDBY"
         animateNormalRing(healthy, if (flock > 0) flock else 1)
     }
 
@@ -202,26 +243,65 @@ class HomeFragment : Fragment() {
         val activeAlertsCount = mainActivity?.farmAlerts?.count { !it.read } ?: 0
         binding.tvActiveAlertsCount.text = if (activeAlertsCount == 1) "1 New" else "$activeAlertsCount New"
 
-        // Dynamic inspection metrics from live AI status or CheckupSessionManager (Zero fake data on standby barns)
-        val hasCam = activeZone?.hasCamera == true
-        val latestSession = com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull { it.barnId == activeZone?.id }
-            ?: com.example.poultrysense.data.CheckupSessionManager.getCompletedSessions(ctx).firstOrNull()
+        val zone = activeZone ?: FarmZoneManager.getActiveZone(ctx)
+        val hasCam = zone.hasCamera
+        // Only show a scan that actually belongs to this barn. Never borrow another barn's numbers.
+        val latestSession = com.example.poultrysense.data.CheckupSessionManager
+            .getCompletedSessions(ctx)
+            .firstOrNull { it.barnId == zone.id }
 
         val totalFlock = if (hasCam) (liveFlockCount ?: (latestSession?.totalFlock ?: 0)) else 0
-        val healthy = if (hasCam) (liveHealthyCount ?: (latestSession?.healthyCount ?: totalFlock)) else 0
+        val healthy = if (hasCam) (liveHealthyCount ?: (latestSession?.healthyCount ?: 0)) else 0
         val flagged = if (hasCam) (liveFlaggedCount ?: (latestSession?.illCount ?: 0)) else 0
-        val lastTime = if (hasCam) (if (liveFlockCount != null) "Live Stream" else (latestSession?.time ?: "--")) else "Standby (No Cam)"
+        val lastTime = when {
+            !hasCam -> "Standby (No Cam)"
+            liveFlockCount != null -> "Live Stream"
+            latestSession != null -> "${latestSession.date} • ${latestSession.time}"
+            else -> "--"
+        }
 
         binding.tvTotalFlockCount.text = if (hasCam && totalFlock > 0) "$totalFlock" else "--"
-        binding.tvBarnCapacity.text = "${activeZone?.totalCapacity ?: "--"}"
+        val capacity = zone.totalCapacity
+        binding.tvBarnCapacity.text = if (capacity > 0) "$capacity" else "--"
         binding.tvFlaggedCount.text = if (hasCam) "$flagged Flagged" else "--"
         binding.tvLastScanTime.text = lastTime
+        binding.tvLastScanStatus.text = when {
+            liveFlockCount != null -> "Live AI Feed"
+            latestSession != null -> "AI Verified"
+            else -> "No scan yet"
+        }
 
-        binding.tvAnomalyCapsuleDesc.text = if (hasCam) "$flagged flagged\n${activeZone?.barnName ?: "Barn Alpha"}" else "Standby\nNo camera"
-        binding.tvActiveCapsuleDesc.text = if (hasCam && healthy > 0) "$healthy active\nAll zones OK" else "Standby\nNo active stream"
+        binding.tvAnomalyCapsuleDesc.text = when {
+            !hasCam -> "Standby\nNo camera"
+            flagged > 0 -> "$flagged flagged\n${zone.barnName}"
+            else -> "No anomalies\n${zone.barnName}"
+        }
+        binding.tvActiveCapsuleDesc.text = when {
+            !hasCam -> "Standby\nNo active stream"
+            healthy > 0 -> "$healthy active\nNo anomalies"
+            else -> "No birds tracked\nWaiting for AI"
+        }
+        binding.tvAnomalyCapsuleLabel.text = when {
+            !hasCam -> "STANDBY"
+            flagged > 0 -> "FLAGGED"
+            else -> "NO ALERTS"
+        }
+        binding.tvActiveCapsuleLabel.text = when {
+            !hasCam -> "STANDBY"
+            healthy > 0 -> "ACTIVE"
+            else -> "STANDBY"
+        }
 
-        animateNormalRing(if (hasCam) healthy else 0, if (hasCam && totalFlock > 0) totalFlock else (activeZone?.totalCapacity ?: 1))
+        animateNormalRing(
+            if (hasCam) healthy else 0,
+            when {
+                hasCam && totalFlock > 0 -> totalFlock
+                capacity > 0 -> capacity
+                else -> 1
+            }
+        )
     }
+
 
     private fun setupCapsuleInteractions() {
         val mainActivity = activity as? MainActivity
@@ -276,7 +356,7 @@ class HomeFragment : Fragment() {
         val sheetBinding = com.example.poultrysense.databinding.DialogClimateDetailsBinding.inflate(layoutInflater)
         activeClimateSheetBinding = sheetBinding
         dialog.setContentView(sheetBinding.root)
-        sheetBinding.tvClimateDialogSubtitle.text = "${activeZone?.fullDisplayName ?: "Barn Alpha • Zone 1"} Real-time Telemetry"
+        sheetBinding.tvClimateDialogSubtitle.text = "${activeZone?.fullDisplayName ?: "Active Zone"} Real-time Telemetry"
         updateClimateSheetValues(sheetBinding, liveTemp, liveHumidity)
         sheetBinding.btnDismissClimateSheet.setOnClickListener {
             dialog.dismiss()
@@ -295,9 +375,12 @@ class HomeFragment : Fragment() {
         if (temp != null && hum != null) {
             sheetBinding.tvDialogTemperature.text = String.format(Locale.getDefault(), "%.1f°C", temp)
             sheetBinding.tvDialogHumidity.text = String.format(Locale.getDefault(), "%.1f%%", hum)
+            sheetBinding.tvClimateStatusPill.text =
+                com.example.poultrysense.data.repository.EnvironmentRepository.getClimateStatus(temp, hum)
         } else {
             sheetBinding.tvDialogTemperature.text = "--.-°C"
             sheetBinding.tvDialogHumidity.text = "--%"
+            sheetBinding.tvClimateStatusPill.text = "NO SENSOR DATA"
         }
     }
 
@@ -346,6 +429,7 @@ class HomeFragment : Fragment() {
                                     binding.ivDashboardStream.setImageBitmap(bitmap)
                                     binding.ivDashboardStream.visibility = View.VISIBLE
                                     binding.layoutOfflinePlaceholder.visibility = View.GONE
+                                    binding.tvFeedBadge.text = "LIVE FEED"
                                 }
                             }
                         }
@@ -366,6 +450,7 @@ class HomeFragment : Fragment() {
             if (_binding != null) {
                 binding.ivDashboardStream.visibility = View.GONE
                 binding.layoutOfflinePlaceholder.visibility = View.VISIBLE
+                binding.tvFeedBadge.text = "CAMERA FEED"
             }
         }
     }
@@ -416,7 +501,8 @@ class HomeFragment : Fragment() {
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 if (_binding == null) return
-                if (!snapshot.exists()) {
+                // Stale cached telemetry from a powered-off ESP32 is not live data.
+                if (!SensorTelemetry.isFresh(snapshot)) {
                     updateClimateUI(null, null)
                     return
                 }

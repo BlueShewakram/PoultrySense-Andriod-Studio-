@@ -169,7 +169,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:fontFamily="sans-serif-black"
-                        android:text="50%"
+                        android:text="0%"
                         android:textColor="@color/primary"
                         android:textSize="18sp" />
                 </LinearLayout>
@@ -180,7 +180,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:progress="50"
+                    android:progress="0"
                     app:indicatorColor="@color/primary"
                     app:trackColor="#E2E8F0"
                     app:trackCornerRadius="4dp"
@@ -276,7 +276,7 @@
                             android:layout_width="8dp"
                             android:layout_height="8dp"
                             android:background="@drawable/bg_notification_dot"
-                            android:backgroundTint="@color/primary" />
+                            android:backgroundTint="@color/text_muted" />
 
                         <TextView
                             android:id="@+id/tvReadinessCameraLabel"
@@ -293,8 +293,8 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif"
-                            android:text="Ready"
-                            android:textColor="@color/primary"
+                            android:text="No camera"
+                            android:textColor="@color/text_muted"
                             android:textSize="9.5sp" />
                     </LinearLayout>
 
@@ -311,7 +311,7 @@
                             android:layout_width="8dp"
                             android:layout_height="8dp"
                             android:background="@drawable/bg_notification_dot"
-                            android:backgroundTint="@color/primary" />
+                            android:backgroundTint="@color/text_muted" />
 
                         <TextView
                             android:id="@+id/tvReadinessProfileLabel"
@@ -328,8 +328,8 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif"
-                            android:text="Active"
-                            android:textColor="@color/primary"
+                            android:text="Sign in"
+                            android:textColor="@color/text_muted"
                             android:textSize="9.5sp" />
                     </LinearLayout>
 
@@ -731,12 +731,13 @@
 
         <!-- App Footer Info -->
         <TextView
+            android:id="@+id/tvAppVersion"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="16dp"
             android:fontFamily="sans-serif"
-            android:text="PoultrySense AI v1.2.0 • Edge Neural Engine v2.4"
+            android:text="PoultrySense AI"
             android:textColor="@color/text_muted"
             android:textSize="11sp" />
 

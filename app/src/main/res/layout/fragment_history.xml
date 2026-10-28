@@ -66,37 +66,60 @@
                     app:chipBackgroundColor="@color/chip_state_background_color"
                     app:chipStrokeColor="#CBD5E1" />
 
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipFilterBarnAlpha"
-                    style="@style/Widget.Material3.Chip.Filter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Barn Alpha"
-                    android:textColor="@color/chip_state_text_color"
-                    app:chipBackgroundColor="@color/chip_state_background_color"
-                    app:chipStrokeColor="#CBD5E1" />
-
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/chipFilterBarnBeta"
-                    style="@style/Widget.Material3.Chip.Filter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Barn Beta"
-                    android:textColor="@color/chip_state_text_color"
-                    app:chipBackgroundColor="@color/chip_state_background_color"
-                    app:chipStrokeColor="#CBD5E1" />
+                <!-- Barn-specific filter chips are generated from real scan history. -->
             </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/rvHistory"
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_marginTop="16dp"
-            android:layout_weight="1"
-            android:clipToPadding="false"
-            android:paddingBottom="120dp"
-            tools:listitem="@layout/item_history" />
+            android:layout_weight="1">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvHistory"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingBottom="120dp"
+                tools:listitem="@layout/item_history" />
+
+            <LinearLayout
+                android:id="@+id/tvEmptyHistory"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:alpha="0.35"
+                    android:src="@drawable/ic_history"
+                    app:tint="#64748B"
+                    tools:ignore="ContentDescription" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:fontFamily="sans-serif-bold"
+                    android:text="No scans recorded yet"
+                    android:textColor="@color/text_primary"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:fontFamily="sans-serif"
+                    android:text="Completed AI checkups will appear here."
+                    android:textColor="@color/text_muted"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </FrameLayout>
 
     </LinearLayout>
 </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>

@@ -219,12 +219,17 @@ class SignUpActivity : AppCompatActivity() {
             setLoading(false)
 
             result.onSuccess { user ->
-                com.example.poultrysense.data.UserPreferences.saveUser(this@SignUpActivity, user)
-                Toast.makeText(
-                    this@SignUpActivity,
-                    "Account created! Welcome, ${user.firstName}.",
-                    Toast.LENGTH_SHORT
-                ).show()
+                // Persist the new profile document immediately so it can be restored
+                // on any other device (or after an uninstall/reinstall).
+                val profileRepository = com.example.poultrysense.data.repository.ProfileRepository(this@SignUpActivity)
+                val saveResult = profileRepository.saveProfile(user.uid, user)
+
+                val message = if (saveResult.isSuccess) {
+                    "Account created! Welcome, ${user.firstName}."
+                } else {
+                    "Account created. Profile saved on this device and will sync when the database is reachable."
+                }
+                Toast.makeText(this@SignUpActivity, message, Toast.LENGTH_LONG).show()
 
                 val intent = Intent(this@SignUpActivity, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK

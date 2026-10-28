@@ -47,11 +47,11 @@ class BarnZoneAdapter(
 
             binding.tvBarnTitle.text = zone.fullDisplayName
             binding.tvBarnDesc.text = zone.description
-            binding.tvCapacityBadge.text = "Cap: ${zone.totalCapacity}"
+            binding.tvCapacityBadge.text = if (zone.totalCapacity > 0) "Cap: ${zone.totalCapacity}" else "Cap: --"
 
             // Camera status pill
             if (zone.hasCamera) {
-                binding.tvCameraStatus.text = "📷 Cam 1 Active"
+                binding.tvCameraStatus.text = "📷 ${zone.cameraName}"
                 binding.tvCameraStatus.setTextColor(ContextCompat.getColor(context, R.color.primary))
                 binding.tvCameraStatus.setBackgroundResource(R.drawable.bg_capsule_ai)
             } else {
@@ -79,7 +79,7 @@ class BarnZoneAdapter(
 
             // Master Hardware Status Pill
             if (zone.isFullyOnline) {
-                binding.tvHardwareStatus.text = "LIVE ONLINE"
+                binding.tvHardwareStatus.text = "ASSIGNED"
                 binding.tvHardwareStatus.setBackgroundResource(R.drawable.bg_healthy_badge)
                 binding.tvHardwareStatus.setTextColor(ContextCompat.getColor(context, R.color.healthy))
             } else if (zone.hasCamera || zone.hasSensor) {
@@ -109,8 +109,8 @@ class BarnZoneAdapter(
                 binding.ivBarnIcon.setColorFilter(ContextCompat.getColor(context, R.color.text_secondary))
             }
 
-            // Delete button for custom-created zones
-            if (zone.isCustom) {
+            // Delete is available for any barn while more than one remains.
+            if (zones.size > 1) {
                 binding.btnDeleteZone.visibility = View.VISIBLE
                 binding.btnDeleteZone.setOnClickListener {
                     onZoneDeleted?.invoke(zone)

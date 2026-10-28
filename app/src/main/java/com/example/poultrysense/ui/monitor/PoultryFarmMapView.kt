@@ -9,6 +9,10 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
+import android.view.GestureDetector
+import android.view.ScaleGestureDetector
+import android.text.TextPaint
+import android.text.TextUtils
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.HapticFeedbackConstants
@@ -47,9 +51,19 @@ class PoultryFarmMapView @JvmOverloads constructor(
 
     data class ZoneStats(
         val chickenCount: Int = 0,
-        val healthIndex: Int = 98,
-        val temperature: Double = 26.5
+        val healthIndex: Int = 0,
+        val temperature: Double = 0.0
     )
+
+    /** A real barn shown on one of the three map pens. */
+    data class MapBarn(
+        val name: String,
+        val online: Boolean,
+        val hasCamera: Boolean
+    )
+
+    private var mapBarns: List<MapBarn> = emptyList()
+    private var activeBarnIndex: Int = 0
 
     var onZoneSelectedListener: ((PoultryZoneId) -> Unit)? = null
 
@@ -66,9 +80,98 @@ class PoultryFarmMapView @JvmOverloads constructor(
     var selectedZone: PoultryZoneId = PoultryZoneId.OVERVIEW
         private set
 
+    private fun fillScale(): Float {
+        val viewW = width.toFloat().coerceAtLeast(1f)
+        val viewH = height.toFloat().coerceAtLeast(1f)
+        return (viewW / worldWidth).coerceAtLeast(viewH / worldHeight)
+    }
+
+    private fun clampTranslation() {
+        val maxX = (worldWidth * (currentScale - 1f)) / (2f * currentScale)
+        val maxY = (worldHeight * (currentScale - 1f)) / (2f * currentScale)
+        currentTransX = currentTransX.coerceIn(-maxX, maxX)
+        currentTransY = currentTransY.coerceIn(-maxY, maxY)
+    }
+
+    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScaleBegin(detector: ScaleGestureDetector): Boolean = true
+
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            val oldScale = currentScale
+            val newScale = (currentScale * detector.scaleFactor).coerceIn(1f, 3f)
+            if (newScale == oldScale) return true
+
+            val fs = fillScale()
+            val baseTransX = (width - worldWidth * fs) / 2f
+            val baseTransY = (height - worldHeight * fs) / 2f
+            val ax = baseTransX + fs * (width / 2f)
+            val ay = baseTransY + fs * (height / 2f)
+
+            // Keep the world point under the fingers fixed while zooming.
+            val delta = (1f / newScale - 1f / oldScale) / fs
+            currentTransX += (detector.focusX - ax) * delta
+            currentTransY += (detector.focusY - ay) * delta
+            currentScale = newScale
+            targetScale = newScale
+            clampTranslation()
+            targetTransX = currentTransX
+            targetTransY = currentTransY
+            invalidate()
+            return true
+        }
+    })
+
+    private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onScroll(
+            e1: MotionEvent?,
+            e2: MotionEvent,
+            distanceX: Float,
+            distanceY: Float
+        ): Boolean {
+            if (currentScale > 1f) {
+                val fs = fillScale()
+                currentTransX -= distanceX / (fs * currentScale)
+                currentTransY -= distanceY / (fs * currentScale)
+                clampTranslation()
+                targetTransX = currentTransX
+                targetTransY = currentTransY
+                invalidate()
+                return true
+            }
+            return false
+        }
+
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            val (worldX, worldY) = screenToWorld(e.x, e.y)
+            when {
+                rectCoop1.contains(worldX, worldY) -> selectZone(PoultryZoneId.COOP_1)
+                rectBrooder.contains(worldX, worldY) -> selectZone(PoultryZoneId.BROODER)
+                rectNesting.contains(worldX, worldY) -> selectZone(PoultryZoneId.NESTING)
+                else -> selectZone(PoultryZoneId.OVERVIEW)
+            }
+            return true
+        }
+
+        override fun onDoubleTap(e: MotionEvent): Boolean {
+            if (currentScale > 1.05f) {
+                selectZone(PoultryZoneId.OVERVIEW)
+            } else {
+                val (worldX, worldY) = screenToWorld(e.x, e.y)
+                when {
+                    rectCoop1.contains(worldX, worldY) -> selectZone(PoultryZoneId.COOP_1)
+                    rectBrooder.contains(worldX, worldY) -> selectZone(PoultryZoneId.BROODER)
+                    rectNesting.contains(worldX, worldY) -> selectZone(PoultryZoneId.NESTING)
+                    else -> selectZone(PoultryZoneId.OVERVIEW)
+                }
+            }
+            return true
+        }
+    })
+
+
     // Live Stats Cache per Zone (Brooder & Nesting in Standby until hardware paired)
     private val zoneStatsMap = mutableMapOf(
-        PoultryZoneId.COOP_1 to ZoneStats(0, 98, 26.4),
+        PoultryZoneId.COOP_1 to ZoneStats(0, 0, 0.0),
         PoultryZoneId.BROODER to ZoneStats(0, 0, 0.0),
         PoultryZoneId.NESTING to ZoneStats(0, 0, 0.0)
     )
@@ -130,7 +233,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
     }
     private val badgeTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#0F172A")
-        textSize = 15f
+        textSize = 22f
         isFakeBoldText = true
         style = Paint.Style.FILL
     }
@@ -148,7 +251,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
     }
     private val badgeStandbyTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#64748B")
-        textSize = 14f
+        textSize = 20f
         isFakeBoldText = true
         style = Paint.Style.FILL
     }
@@ -165,9 +268,20 @@ class PoultryFarmMapView @JvmOverloads constructor(
         postInvalidateOnAnimation()
     }
 
+    /**
+     * Binds the three physical map pens to the farmer's real barns.
+     * Pens without a barn are labelled "Empty Barn" and their animals are hidden.
+     */
+    fun setBarns(barns: List<MapBarn>, activeIndex: Int) {
+        mapBarns = barns.take(3)
+        activeBarnIndex = activeIndex.coerceIn(0, 2)
+        postInvalidateOnAnimation()
+    }
+
     private val bgClearPaint = Paint().apply {
         color = Color.parseColor("#5A9031") // Farm grass perimeter color
     }
+
 
     // ─── Character Roles & Living Entities State ───
     enum class PersonRole {
@@ -218,14 +332,12 @@ class PoultryFarmMapView @JvmOverloads constructor(
             speed = 1.2f,
             facingRight = false
         ),
-        // 3. Vet Inspector: North road inspecting Brooder & Coop
+        // 3. Vet Inspector: stays on the central service lane between the pens
         Person(
             role = PersonRole.INSPECTOR,
             waypoints = listOf(
                 Pair(600f, 450f),
-                Pair(600f, 200f),
-                Pair(720f, 200f), // Pauses near Brooder nursery
-                Pair(600f, 200f),
+                Pair(600f, 150f),
                 Pair(600f, 450f)
             ),
             x = 600f,
@@ -233,17 +345,18 @@ class PoultryFarmMapView @JvmOverloads constructor(
             speed = 1.05f,
             facingRight = true
         ),
-        // 4. Assistant Caretaker: Rounds near southwest road by Nesting pasture
+        // 4. Assistant Caretaker: uses the central lane and the bottom service road
         Person(
             role = PersonRole.FEEDER,
             waypoints = listOf(
                 Pair(450f, 450f),
-                Pair(320f, 450f),
-                Pair(320f, 680f),
-                Pair(450f, 680f),
-                Pair(450f, 450f)
+                Pair(600f, 450f),
+                Pair(600f, 870f),
+                Pair(450f, 870f),
+                Pair(600f, 870f),
+                Pair(600f, 450f)
             ),
-            x = 320f,
+            x = 500f,
             y = 450f,
             speed = 1.15f,
             facingRight = false
@@ -252,6 +365,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
 
     private class Chicken(
         val penBounds: RectF,
+        val penIndex: Int,
         var x: Float,
         var y: Float,
         val isChick: Boolean = false,
@@ -276,7 +390,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
         for (i in 0 until 5) {
             val cx = coopYard.left + 40f + (i % 3) * 110f + (Math.random() * 25).toFloat()
             val cy = coopYard.top + 30f + (i / 3) * 60f + (Math.random() * 25).toFloat()
-            chickens.add(Chicken(coopYard, cx, cy, isChick = false))
+            chickens.add(Chicken(coopYard, 0, cx, cy, isChick = false))
         }
 
         // Brooder: 6 active animated baby chicks scurrying and pecking!
@@ -284,7 +398,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
         for (i in 0 until 6) {
             val cx = brooderYard.left + 30f + (i % 3) * 100f + (Math.random() * 20).toFloat()
             val cy = brooderYard.top + 30f + (i / 3) * 60f + (Math.random() * 20).toFloat()
-            chickens.add(Chicken(brooderYard, cx, cy, isChick = true))
+            chickens.add(Chicken(brooderYard, 1, cx, cy, isChick = true))
         }
 
         // Nesting: 6 free-range layers grazing in the pasture
@@ -292,7 +406,7 @@ class PoultryFarmMapView @JvmOverloads constructor(
         for (i in 0 until 6) {
             val cx = nestingYard.left + 50f + (i % 3) * 120f + (Math.random() * 30).toFloat()
             val cy = nestingYard.top + 40f + (i / 3) * 90f + (Math.random() * 30).toFloat()
-            chickens.add(Chicken(nestingYard, cx, cy, isChick = false))
+            chickens.add(Chicken(nestingYard, 2, cx, cy, isChick = false))
         }
     }
 
@@ -383,37 +497,10 @@ class PoultryFarmMapView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.action == MotionEvent.ACTION_UP) {
-            performClick()
-            val worldPt = screenToWorld(event.x, event.y)
-
-            // ONLY Poultry Monitoring coops are clickable!
-            when {
-                rectCoop1.contains(worldPt.first, worldPt.second) -> {
-                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    selectZone(PoultryZoneId.COOP_1)
-                    return true
-                }
-                rectBrooder.contains(worldPt.first, worldPt.second) -> {
-                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    selectZone(PoultryZoneId.BROODER)
-                    return true
-                }
-                rectNesting.contains(worldPt.first, worldPt.second) -> {
-                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    selectZone(PoultryZoneId.NESTING)
-                    return true
-                }
-                else -> {
-                    // Tapping outside on the pathways or background resets to Overview
-                    if (selectedZone != PoultryZoneId.OVERVIEW) {
-                        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        selectZone(PoultryZoneId.OVERVIEW)
-                        return true
-                    }
-                }
-            }
-        }
+        // Pinch to zoom, drag to pan when zoomed, double-tap to zoom/reset.
+        scaleDetector.onTouchEvent(event)
+        gestureDetector.onTouchEvent(event)
+        if (event.action == MotionEvent.ACTION_UP) performClick()
         return true
     }
 
@@ -554,12 +641,14 @@ class PoultryFarmMapView @JvmOverloads constructor(
         // ─── 2. Drifting Soft Cloud Shadows ───
         drawCloudShadows(canvas)
 
-        // ─── 3. Interactive Selection Halo around Active Coop ───
-        when (selectedZone) {
-            PoultryZoneId.COOP_1 -> drawSelectionFrame(canvas, rectCoop1)
-            PoultryZoneId.BROODER -> drawSelectionFrame(canvas, rectBrooder)
-            PoultryZoneId.NESTING -> drawSelectionFrame(canvas, rectNesting)
-            PoultryZoneId.OVERVIEW -> { /* No halo */ }
+        // ─── 3. Active barn highlight ───
+        if (mapBarns.isNotEmpty()) {
+            val activeRect = when (activeBarnIndex) {
+                0 -> rectCoop1
+                1 -> rectBrooder
+                else -> rectNesting
+            }
+            drawSelectionFrame(canvas, activeRect)
         }
 
         // ─── 4. Animated People (Poultry Owner, Feeder, Inspector) with Soft Ground Shadows ───
@@ -567,15 +656,31 @@ class PoultryFarmMapView @JvmOverloads constructor(
             drawPerson(canvas, p)
         }
 
-        // ─── 5. Roaming Hens & Scurrying Baby Chicks with Ground Shadows ───
+        // ─── 5. Roaming Hens & Baby Chicks, only in pens that contain a real barn ───
         for (c in chickens) {
-            drawChicken(canvas, c)
+            if (c.penIndex < mapBarns.size) drawChicken(canvas, c)
         }
 
-        // ─── 6. Modern Translucent Badges over Coops ───
-        drawZoneBadge(canvas, rectCoop1, "Coop 1 • CAM 1", zoneStatsMap[PoultryZoneId.COOP_1]?.chickenCount ?: 0, coop1Online)
-        drawZoneBadge(canvas, rectBrooder, "Brooder • CAM 2", zoneStatsMap[PoultryZoneId.BROODER]?.chickenCount ?: 0, brooderOnline)
-        drawZoneBadge(canvas, rectNesting, "Nesting • CAM 3", zoneStatsMap[PoultryZoneId.NESTING]?.chickenCount ?: 0, nestingOnline)
+        // ─── 6. Real barn names over the three map pens ───
+        val penRects = listOf(rectCoop1, rectBrooder, rectNesting)
+        for (i in 0..2) {
+            val barn = mapBarns.getOrNull(i)
+            val label = barn?.name ?: "Empty Slot"
+            val status = when {
+                barn == null -> ""
+                barn.online -> "Live"
+                barn.hasCamera -> "Standby"
+                else -> "No Camera"
+            }
+            drawBarnBadge(
+                canvas,
+                penRects[i],
+                label,
+                status,
+                online = barn?.online == true,
+                active = i == activeBarnIndex && barn != null
+            )
+        }
 
         canvas.restore()
 
@@ -641,6 +746,11 @@ class PoultryFarmMapView @JvmOverloads constructor(
         val peckAngle = if (c.isPecking) (sin(c.peckCycle.toDouble()) * maxPeck).toFloat().coerceAtLeast(0f) else 0f
         val peckDown = if (c.isPecking) (sin(c.peckCycle.toDouble()) * 3.0f).toFloat().coerceAtLeast(0f) else 0f
 
+        // Keep every bird inside its own fenced yard. Without this, wandering
+        // sprites visually crossed the fence lines and looked like ghosting.
+        canvas.save()
+        canvas.clipRect(c.penBounds)
+
         if (bmp != null && !bmp.isRecycled) {
             if (c.isChick) {
                 // Baby Chick: Small cute ground shadow
@@ -693,6 +803,57 @@ class PoultryFarmMapView @JvmOverloads constructor(
                 canvas.restore()
             }
         }
+
+        canvas.restore()
+    }
+
+    private fun drawBarnBadge(
+        canvas: Canvas,
+        rect: RectF,
+        label: String,
+        status: String,
+        online: Boolean,
+        active: Boolean
+    ) {
+        val textPaint = if (online) badgeTextPaint else badgeStandbyTextPaint
+        val fullText = if (status.isBlank()) label else "$label • $status"
+        val availableWidth = (rect.width() - 24f).coerceAtLeast(90f)
+        val maxTextWidth = availableWidth - 36f
+        val text = if (textPaint.measureText(fullText) > maxTextWidth) {
+            TextUtils.ellipsize(
+                fullText,
+                TextPaint(textPaint),
+                maxTextWidth,
+                TextUtils.TruncateAt.END
+            ).toString()
+        } else {
+            fullText
+        }
+
+        val badgeH = 34f
+        val badgeW = (textPaint.measureText(text) + 40f).coerceAtMost(availableWidth)
+        val bx = rect.centerX() - badgeW / 2f
+        val by = rect.top + 8f
+        val bgRect = RectF(bx, by, bx + badgeW, by + badgeH)
+
+        canvas.drawRoundRect(
+            bgRect,
+            13f,
+            13f,
+            if (online) badgeBgPaint else badgeStandbyBgPaint
+        )
+        canvas.drawRoundRect(bgRect, 13f, 13f, badgeStrokePaint)
+        if (active) {
+            canvas.drawRoundRect(bgRect, 13f, 13f, selectionStrokePaint)
+        }
+
+        canvas.drawCircle(
+            bx + 15f,
+            by + badgeH / 2f,
+            5f,
+            if (online) liveDotPaint else standbyDotPaint
+        )
+        canvas.drawText(text, bx + 26f, by + 24f, textPaint)
     }
 
     private fun drawZoneBadge(canvas: Canvas, rect: RectF, label: String, count: Int, isOnline: Boolean) {

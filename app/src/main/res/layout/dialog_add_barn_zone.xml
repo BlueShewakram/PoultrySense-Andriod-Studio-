@@ -30,7 +30,7 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="sans-serif-black"
                 android:letterSpacing="-0.02"
-                android:text="Register Farm Zone"
+                android:text="Register Barn"
                 android:textColor="@color/text_primary"
                 android:textSize="20sp" />
 
@@ -39,7 +39,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
                 android:fontFamily="sans-serif-medium"
-                android:text="Add a new barn or pen zone to PoultrySense"
+                android:text="Add a barn to PoultrySense • maximum 3 barns"
                 android:textColor="@color/text_muted"
                 android:textSize="12sp" />
         </LinearLayout>
@@ -69,7 +69,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="10dp"
-        android:hint="Barn / House Name (e.g. Barn Beta)">
+        android:hint="Barn / House Name (e.g. North Barn)">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etBarnName"
@@ -87,7 +87,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="10dp"
-        android:hint="Zone / Pen Area (e.g. Zone 1 - Nursery)">
+        android:hint="Pen / Zone Name (optional, e.g. Main Pen)">
 
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/etZoneName"
@@ -208,7 +208,7 @@
         android:fontFamily="sans-serif-bold"
         android:insetTop="0dp"
         android:insetBottom="0dp"
-        android:text="Save &amp; Activate Zone"
+        android:text="Save &amp; Activate Barn"
         android:textColor="@color/white"
         app:cornerRadius="14dp" />
 
