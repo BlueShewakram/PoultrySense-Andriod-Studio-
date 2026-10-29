@@ -77,7 +77,7 @@ class HistoryFragment : Fragment() {
         group.addView(allChip)
         barnChipIds[allChip.id] = ALL_FILTER
 
-        val barnNames = (allSessions.map { it.barnName } +
+        val barnNames = (allSessions.map { it.barnName.orEmpty() } +
             FarmZoneManager.getAllZones(requireContext()).map { it.barnName })
             .map { it.trim() }
             .filter { it.isNotEmpty() }
@@ -135,7 +135,7 @@ class HistoryFragment : Fragment() {
         val filtered = if (selectedBarnFilter == ALL_FILTER) {
             allSessions
         } else {
-            allSessions.filter { it.barnName.equals(selectedBarnFilter, ignoreCase = true) }
+            allSessions.filter { it.barnName.orEmpty().equals(selectedBarnFilter, ignoreCase = true) }
         }
         historyAdapter.updateData(filtered)
 

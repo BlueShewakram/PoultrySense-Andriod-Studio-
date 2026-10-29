@@ -88,8 +88,9 @@ class AlertsFragment : Fragment() {
     }
 
     private fun buildScanGroup(session: ScanSession): AlertGroup? {
-        val flaggedDetails = session.chickenDetails.filter {
-            it.anomalyTier != "Normal" || it.anomalyScore >= 40
+        val flaggedDetails = session.safeChickenDetails.filter {
+            val tier = it.anomalyTier.orEmpty()
+            (tier.isNotBlank() && tier != "Normal") || it.anomalyScore >= 40
         }
 
         val alerts = if (flaggedDetails.isNotEmpty()) {
@@ -132,13 +133,13 @@ class AlertsFragment : Fragment() {
         detail: com.example.poultrysense.data.models.ChickenSessionDetail
     ): FarmAlert {
         val tag = ChickenTagHelper.getTagInfo(detail.chickenId)
-        val tier = detail.anomalyTier.ifBlank { "Needs Attention" }
+        val tier = detail.anomalyTier?.ifBlank { "Needs Attention" } ?: "Needs Attention"
         val critical = tier.equals("High Concern", ignoreCase = true) || detail.anomalyScore >= 70
-        val behavior = detail.behavior.ifBlank { "Abnormal behavior" }
+        val behavior = (detail.behavior?.ifBlank { "Abnormal behavior" } ?: "Abnormal behavior")
             .replaceFirstChar { it.uppercase() }
         val description = buildString {
             append("${behavior} • Anomaly score ${detail.anomalyScore}/100")
-            detail.geminiSummary.takeIf { it.isNotBlank() }?.let {
+            detail.geminiSummary?.takeIf { it.isNotBlank() }?.let {
                 append("\n${it}")
             }
         }

@@ -30,7 +30,7 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
 
     override fun onBindViewHolder(holder: HistoryViewHolder, position: Int) {
         val session = sessions[position]
-        val details = session.chickenDetails
+        val details = session.safeChickenDetails
         val hasDetails = details.isNotEmpty()
         val isExpanded = expandedSessionIds.contains(session.id) && hasDetails
 
@@ -64,8 +64,8 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
             chipGroupFlagged.removeAllViews()
             chipGroupNormal.removeAllViews()
 
-            val flaggedBirds = details.filter { it.anomalyTier != "Normal" || it.anomalyScore >= 40 }
-            val normalBirds = details.filter { it.anomalyTier == "Normal" && it.anomalyScore < 40 }
+            val flaggedBirds = details.filter { (it.anomalyTier ?: "Normal") != "Normal" || it.anomalyScore >= 40 }
+            val normalBirds = details.filter { (it.anomalyTier ?: "Normal") == "Normal" && it.anomalyScore < 40 }
 
             if (flaggedBirds.isNotEmpty()) {
                 tvFlaggedSectionHeader.visibility = View.VISIBLE
