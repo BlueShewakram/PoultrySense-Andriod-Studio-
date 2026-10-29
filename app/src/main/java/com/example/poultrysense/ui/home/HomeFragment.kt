@@ -326,10 +326,6 @@ class HomeFragment : Fragment() {
                 showClimateBottomSheet()
             }
         }
-
-        binding.btnCustomizeStations.setOnClickListener {
-            mainActivity?.navigateToTab(R.id.navigation_monitor)
-        }
     }
 
     private fun setupNavigationActions() {
@@ -338,11 +334,6 @@ class HomeFragment : Fragment() {
         // View Full Feed -> Navigate to Monitor Tab
         binding.btnViewStream.setOnClickListener {
             mainActivity?.navigateToTab(R.id.navigation_monitor)
-        }
-
-        // View Environmental Gauges -> Open Climate Sheet
-        binding.btnEnvDetails.setOnClickListener {
-            showClimateBottomSheet()
         }
     }
 

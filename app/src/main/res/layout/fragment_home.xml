@@ -385,30 +385,19 @@
             </com.google.android.material.card.MaterialCardView>
 
             <!-- 3. Flock Status Arch Cards (Chicken Illustration with Poultry Monitoring Info) -->
-            <LinearLayout
+                        <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="24dp"
-                android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <TextView
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:fontFamily="sans-serif-bold"
                     android:text="Flock Activity Overview"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/btnCustomizeStations"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-bold"
-                    android:text="All Zones →"
-                    android:textColor="@color/primary"
-                    android:textSize="13sp" />
             </LinearLayout>
 
             <LinearLayout
@@ -812,30 +801,19 @@
             </com.google.android.material.card.MaterialCardView>
 
             <!-- 4. Section: Environmental Conditions (Replacing Body Measurement) -->
-            <LinearLayout
+                        <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="24dp"
-                android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <TextView
-                    android:layout_width="0dp"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:fontFamily="sans-serif-bold"
                     android:text="Environmental Conditions"
                     android:textColor="@color/text_primary"
                     android:textSize="16sp" />
-
-                <TextView
-                    android:id="@+id/btnEnvDetails"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="sans-serif-bold"
-                    android:text="Details →"
-                    android:textColor="@color/primary"
-                    android:textSize="13sp" />
             </LinearLayout>
 
             <!-- Environmental Conditions Card (Humidity, Temperature) -->
