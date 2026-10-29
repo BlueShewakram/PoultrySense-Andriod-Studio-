@@ -193,7 +193,42 @@
                     android:layout_marginTop="14dp"
                     android:orientation="horizontal">
 
-                    <!-- AI Hub -->
+                    <!-- 1. Farm Account / Profile -->
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:orientation="vertical">
+
+                        <View
+                            android:id="@+id/dotReadinessProfile"
+                            android:layout_width="8dp"
+                            android:layout_height="8dp"
+                            android:background="@drawable/bg_notification_dot"
+                            android:backgroundTint="@color/text_muted" />
+
+                        <TextView
+                            android:id="@+id/tvReadinessProfileLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="Account"
+                            android:textColor="@color/text_primary"
+                            android:textSize="10.5sp" />
+
+                        <TextView
+                            android:id="@+id/tvReadinessProfileStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif"
+                            android:text="Sign in"
+                            android:textColor="@color/text_muted"
+                            android:textSize="9.5sp" />
+                    </LinearLayout>
+
+                    <!-- 2. AI Hub (Desktop Processing Server) -->
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -228,42 +263,7 @@
                             android:textSize="9.5sp" />
                     </LinearLayout>
 
-                    <!-- ESP32 Bridge -->
-                    <LinearLayout
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="center"
-                        android:orientation="vertical">
-
-                        <View
-                            android:id="@+id/dotReadinessEsp32"
-                            android:layout_width="8dp"
-                            android:layout_height="8dp"
-                            android:background="@drawable/bg_notification_dot"
-                            android:backgroundTint="@color/text_muted" />
-
-                        <TextView
-                            android:id="@+id/tvReadinessEsp32Label"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="4dp"
-                            android:fontFamily="sans-serif-bold"
-                            android:text="ESP32"
-                            android:textColor="@color/text_primary"
-                            android:textSize="10.5sp" />
-
-                        <TextView
-                            android:id="@+id/tvReadinessEsp32Status"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:fontFamily="sans-serif"
-                            android:text="Standby"
-                            android:textColor="@color/text_muted"
-                            android:textSize="9.5sp" />
-                    </LinearLayout>
-
-                    <!-- Camera Stream -->
+                    <!-- 3. Vision (USB HD Camera Feed) -->
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -298,7 +298,7 @@
                             android:textSize="9.5sp" />
                     </LinearLayout>
 
-                    <!-- Farm Profile -->
+                    <!-- 4. ESP32 Microcontroller & Climate Sensor -->
                     <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -307,28 +307,28 @@
                         android:orientation="vertical">
 
                         <View
-                            android:id="@+id/dotReadinessProfile"
+                            android:id="@+id/dotReadinessEsp32"
                             android:layout_width="8dp"
                             android:layout_height="8dp"
                             android:background="@drawable/bg_notification_dot"
                             android:backgroundTint="@color/text_muted" />
 
                         <TextView
-                            android:id="@+id/tvReadinessProfileLabel"
+                            android:id="@+id/tvReadinessEsp32Label"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="4dp"
                             android:fontFamily="sans-serif-bold"
-                            android:text="Account"
+                            android:text="ESP32"
                             android:textColor="@color/text_primary"
                             android:textSize="10.5sp" />
 
                         <TextView
-                            android:id="@+id/tvReadinessProfileStatus"
+                            android:id="@+id/tvReadinessEsp32Status"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:fontFamily="sans-serif"
-                            android:text="Sign in"
+                            android:text="Standby"
                             android:textColor="@color/text_muted"
                             android:textSize="9.5sp" />
                     </LinearLayout>

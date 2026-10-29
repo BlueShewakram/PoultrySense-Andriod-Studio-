@@ -179,8 +179,19 @@ class ProfileFragment : Fragment() {
         binding.tvReadinessProfileStatus.text = if (hasAccount) "Active" else "Sign in"
         binding.tvReadinessProfileStatus.setTextColor(if (hasAccount) primaryColor else mutedColor)
 
-        // 2. Vision is only "online" when the AI server reports an active
-        //    camera stream — a mere camera assignment is not a live feed.
+        // 2. AI Hub status
+        if (isAiHubOnline) {
+            score += 25
+            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(activeColor)
+            binding.tvReadinessAiStatus.text = "Online"
+            binding.tvReadinessAiStatus.setTextColor(activeColor)
+        } else {
+            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(mutedColor)
+            binding.tvReadinessAiStatus.text = "Standby"
+            binding.tvReadinessAiStatus.setTextColor(mutedColor)
+        }
+
+        // 3. Vision status (active camera stream)
         val visionLive = isVisionOnline
         if (visionLive) score += 25
         binding.dotReadinessCamera.backgroundTintList = ColorStateList.valueOf(
@@ -192,18 +203,6 @@ class ProfileFragment : Fragment() {
             else -> "No camera"
         }
         binding.tvReadinessCameraStatus.setTextColor(if (visionLive) primaryColor else mutedColor)
-
-        // 3. AI Hub status
-        if (isAiHubOnline) {
-            score += 25
-            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(activeColor)
-            binding.tvReadinessAiStatus.text = "Online"
-            binding.tvReadinessAiStatus.setTextColor(activeColor)
-        } else {
-            binding.dotReadinessAi.backgroundTintList = ColorStateList.valueOf(mutedColor)
-            binding.tvReadinessAiStatus.text = "Standby"
-            binding.tvReadinessAiStatus.setTextColor(mutedColor)
-        }
 
         // 4. ESP32 sensor status (only if the active zone actually has a sensor)
         val sensorLive = activeZone.hasSensor && isEsp32Online
