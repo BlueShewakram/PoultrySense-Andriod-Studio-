@@ -144,6 +144,9 @@ class ProfileFragment : Fragment() {
         //    timestamp is fresh (older cached values are not "live").
         val realtimeDb = FirebaseConfig.database()
         val sensorRef = realtimeDb.getReference("sensor_data").child("live")
+        sensorStatusListener?.let {
+            sensorRef.removeEventListener(it)
+        }
         val listener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 if (_binding == null) return
@@ -321,22 +324,26 @@ class ProfileFragment : Fragment() {
 
     private fun displayUser(user: User) {
         val ctx = context ?: return
+        if (_binding == null) return
         binding.tvProfileName.text = user.fullName
-        val subtitle = listOf(user.role, user.farmName)
-            .map { it.trim() }
+        val subtitle = listOfNotNull(user.role?.trim(), user.farmName?.trim())
             .filter { it.isNotEmpty() }
             .joinToString(" • ")
         binding.tvProfileRole.text = subtitle.ifEmpty { "Farm profile" }
-        binding.tvProfileEmail.text = user.email
+        binding.tvProfileEmail.text = user.email.orEmpty()
 
         val avatarSource = resolveAvatarSource(ctx, user.avatarUrl)
 
-        Glide.with(this@ProfileFragment)
-            .load(avatarSource)
-            .circleCrop()
-            .placeholder(R.drawable.ic_person)
-            .error(R.drawable.ic_person)
-            .into(binding.ivProfileAvatar)
+        if (avatarSource is Int) {
+            binding.ivProfileAvatar.setImageResource(avatarSource)
+        } else {
+            Glide.with(this@ProfileFragment)
+                .load(avatarSource)
+                .circleCrop()
+                .placeholder(R.drawable.ic_person)
+                .error(R.drawable.ic_person)
+                .into(binding.ivProfileAvatar)
+        }
     }
 
     private var pendingAvatarBase64: String? = null
@@ -556,9 +563,10 @@ class ProfileFragment : Fragment() {
 
         // Hydrate from Firebase Realtime Database in background if available
         try {
-            FirebaseConfig.database().getReference("system_control/sms_alert_settings")
-                .get().addOnSuccessListener { snapshot ->
-                    if (!isAdded || context == null) return@addOnSuccessListener
+            val smsRef = FirebaseConfig.database().getReference("system_control/sms_alert_settings")
+            smsRef.addListenerForSingleValueEvent(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    if (!isAdded || context == null) return
                     val cloudPhone = snapshot.child("farmer_phone_number").getValue(String::class.java)
                     val cloudSms = snapshot.child("sms_alerts_enabled").getValue(Boolean::class.java)
                     if (!cloudPhone.isNullOrBlank() && dialogBinding.etAlertPhoneNumber.text.isNullOrBlank()) {
@@ -570,6 +578,8 @@ class ProfileFragment : Fragment() {
                         AppSettingsPreferences.setSmsAlertsEnabled(ctx, cloudSms)
                     }
                 }
+                override fun onCancelled(error: DatabaseError) {}
+            })
         } catch (_: Exception) {}
 
         // Master switch toggle behavior

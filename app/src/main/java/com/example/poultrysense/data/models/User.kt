@@ -27,11 +27,15 @@ data class User(
     val updatedAt: Long = 0L
 ) {
     val fullName: String
-        get() = when {
-            firstName.isNotBlank() && lastName.isNotBlank() -> "$firstName $lastName"
-            firstName.isNotBlank() -> firstName
-            lastName.isNotBlank() -> lastName
-            else -> "PoultrySense Specialist"
+        get() {
+            val f = firstName.orEmpty().trim()
+            val l = lastName.orEmpty().trim()
+            return when {
+                f.isNotEmpty() && l.isNotEmpty() -> "$f $l"
+                f.isNotEmpty() -> f
+                l.isNotEmpty() -> l
+                else -> "PoultrySense Specialist"
+            }
         }
 
     fun toMap(): Map<String, Any?> {

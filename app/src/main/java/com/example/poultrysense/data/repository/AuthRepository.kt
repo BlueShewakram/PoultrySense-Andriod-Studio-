@@ -7,6 +7,12 @@ import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.UserProfileChangeRequest
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.ValueEventListener
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -171,8 +177,23 @@ class AuthRepository {
     suspend fun getUserProfile(uid: String): Result<User> {
         return try {
             val userRef = usersRef.child(uid)
-            val snapshot = withTimeoutOrNull(PROFILE_TIMEOUT_MS) { userRef.get().await() }
-                ?: return Result.failure(Exception("Timed out while loading profile"))
+            val snapshot = withTimeoutOrNull(PROFILE_TIMEOUT_MS) {
+                suspendCancellableCoroutine<DataSnapshot> { cont ->
+                    val listener = object : ValueEventListener {
+                        override fun onDataChange(snapshot: DataSnapshot) {
+                            if (cont.isActive) cont.resume(snapshot)
+                        }
+
+                        override fun onCancelled(error: DatabaseError) {
+                            if (cont.isActive) cont.resumeWithException(error.toException())
+                        }
+                    }
+                    userRef.addListenerForSingleValueEvent(listener)
+                    cont.invokeOnCancellation {
+                        userRef.removeEventListener(listener)
+                    }
+                }
+            } ?: return Result.failure(Exception("Timed out while loading profile"))
             if (!snapshot.exists()) {
                 return Result.failure(ProfileNotFoundException())
             }

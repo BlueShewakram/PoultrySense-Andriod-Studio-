@@ -9,6 +9,12 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.ValueEventListener
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -233,10 +239,23 @@ object CheckupSessionManager {
 
         val snapshot = try {
             withTimeoutOrNull(8_000L) {
-                FirebaseConfig.database()
-                    .getReference("users").child(uid).child("scan_history")
-                    .get()
-                    .await()
+                suspendCancellableCoroutine<DataSnapshot> { cont ->
+                    val ref = FirebaseConfig.database()
+                        .getReference("users").child(uid).child("scan_history")
+                    val listener = object : ValueEventListener {
+                        override fun onDataChange(snapshot: DataSnapshot) {
+                            if (cont.isActive) cont.resume(snapshot)
+                        }
+
+                        override fun onCancelled(error: DatabaseError) {
+                            if (cont.isActive) cont.resumeWithException(error.toException())
+                        }
+                    }
+                    ref.addListenerForSingleValueEvent(listener)
+                    cont.invokeOnCancellation {
+                        ref.removeEventListener(listener)
+                    }
+                }
             }
         } catch (_: Exception) {
             null
