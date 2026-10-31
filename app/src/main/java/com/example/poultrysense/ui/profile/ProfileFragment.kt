@@ -547,6 +547,31 @@ class ProfileFragment : Fragment() {
         dialogBinding.switchAlertSound.isChecked = AppSettingsPreferences.isAlertSoundEnabled(ctx)
         dialogBinding.switchAlertVibrate.isChecked = AppSettingsPreferences.isAlertVibrateEnabled(ctx)
 
+        // SMS Alert Preferences
+        dialogBinding.switchSmsAlerts.isChecked = AppSettingsPreferences.isSmsAlertsEnabled(ctx)
+        val cachedPhone = AppSettingsPreferences.getAlertPhoneNumber(ctx)
+        if (cachedPhone.isNotBlank()) {
+            dialogBinding.etAlertPhoneNumber.setText(cachedPhone)
+        }
+
+        // Hydrate from Firebase Realtime Database in background if available
+        try {
+            FirebaseConfig.database().getReference("system_control/sms_alert_settings")
+                .get().addOnSuccessListener { snapshot ->
+                    if (!isAdded || context == null) return@addOnSuccessListener
+                    val cloudPhone = snapshot.child("farmer_phone_number").getValue(String::class.java)
+                    val cloudSms = snapshot.child("sms_alerts_enabled").getValue(Boolean::class.java)
+                    if (!cloudPhone.isNullOrBlank() && dialogBinding.etAlertPhoneNumber.text.isNullOrBlank()) {
+                        dialogBinding.etAlertPhoneNumber.setText(cloudPhone)
+                        AppSettingsPreferences.setAlertPhoneNumber(ctx, cloudPhone)
+                    }
+                    if (cloudSms != null) {
+                        dialogBinding.switchSmsAlerts.isChecked = cloudSms
+                        AppSettingsPreferences.setSmsAlertsEnabled(ctx, cloudSms)
+                    }
+                }
+        } catch (_: Exception) {}
+
         // Master switch toggle behavior
         dialogBinding.switchMasterNotifications.setOnCheckedChangeListener { _, isChecked ->
             dialogBinding.cardSensorAlerts.alpha = if (isChecked) 1.0f else 0.5f
@@ -554,11 +579,16 @@ class ProfileFragment : Fragment() {
             dialogBinding.switchHumidity.isEnabled = isChecked
             dialogBinding.switchCameraDisconnect.isEnabled = isChecked
             dialogBinding.switchDailySummary.isEnabled = isChecked
+            dialogBinding.switchSmsAlerts.isEnabled = isChecked
+            dialogBinding.tilAlertPhoneNumber.isEnabled = isChecked
         }
 
         // Save Button
         dialogBinding.btnSaveNotificationPreferences.setOnClickListener {
             val enabled = dialogBinding.switchMasterNotifications.isChecked
+            val smsEnabled = dialogBinding.switchSmsAlerts.isChecked
+            val phoneNumber = dialogBinding.etAlertPhoneNumber.text?.toString()?.trim() ?: ""
+
             AppSettingsPreferences.setNotificationsEnabled(ctx, enabled)
             AppSettingsPreferences.setCriticalTempAlertEnabled(ctx, dialogBinding.switchCriticalTemp.isChecked)
             AppSettingsPreferences.setHumidityAlertEnabled(ctx, dialogBinding.switchHumidity.isChecked)
@@ -566,6 +596,19 @@ class ProfileFragment : Fragment() {
             AppSettingsPreferences.setDailySummaryAlertEnabled(ctx, dialogBinding.switchDailySummary.isChecked)
             AppSettingsPreferences.setAlertSoundEnabled(ctx, dialogBinding.switchAlertSound.isChecked)
             AppSettingsPreferences.setAlertVibrateEnabled(ctx, dialogBinding.switchAlertVibrate.isChecked)
+            AppSettingsPreferences.setSmsAlertsEnabled(ctx, smsEnabled)
+            AppSettingsPreferences.setAlertPhoneNumber(ctx, phoneNumber)
+
+            // Push SMS alert settings to Firebase Realtime Database for Python AI server
+            try {
+                val smsPayload = mapOf(
+                    "sms_alerts_enabled" to smsEnabled,
+                    "farmer_phone_number" to phoneNumber,
+                    "updated_at" to System.currentTimeMillis()
+                )
+                FirebaseConfig.database().getReference("system_control/sms_alert_settings")
+                    .setValue(smsPayload)
+            } catch (_: Exception) {}
 
             Toast.makeText(ctx, "Notification preferences updated", Toast.LENGTH_SHORT).show()
             dialog.dismiss()

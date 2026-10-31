@@ -488,6 +488,122 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Section 3: Twilio Emergency SMS Alerts -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="8dp"
+            android:fontFamily="sans-serif-bold"
+            android:text="EMERGENCY SMS NOTIFICATIONS (TWILIO)"
+            android:textColor="@color/text_muted"
+            android:textSize="11sp" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/surface"
+            app:cardCornerRadius="18dp"
+            app:cardElevation="1dp"
+            app:strokeColor="@color/border_light"
+            app:strokeWidth="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <!-- SMS Toggle Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="4dp">
+
+                    <ImageView
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:src="@drawable/ic_notifications_black_24dp"
+                        app:tint="@color/primary"
+                        tools:ignore="ContentDescription" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="Critical Flock SMS Alerts"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:fontFamily="sans-serif"
+                            android:text="Send SMS via Twilio on High or Critical AI diagnoses"
+                            android:textColor="@color/text_muted"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <com.google.android.material.materialswitch.MaterialSwitch
+                        android:id="@+id/switchSmsAlerts"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:checked="true" />
+                </LinearLayout>
+
+                <com.google.android.material.divider.MaterialDivider
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="12dp"
+                    app:dividerColor="@color/border_light" />
+
+                <!-- Registered Phone Number Input -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/tilAlertPhoneNumber"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Farmer Alert Phone Number"
+                    app:boxBackgroundColor="#F8FAFC"
+                    app:boxCornerRadiusBottomEnd="14dp"
+                    app:boxCornerRadiusBottomStart="14dp"
+                    app:boxCornerRadiusTopEnd="14dp"
+                    app:boxCornerRadiusTopStart="14dp"
+                    app:boxStrokeColor="#0284C7"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="1.5dp"
+                    app:helperText="E.164 format (e.g. +639171234567 or +15551234567)"
+                    app:helperTextTextColor="@color/text_muted"
+                    app:hintTextColor="#0284C7"
+                    app:startIconDrawable="@drawable/ic_call"
+                    app:startIconTint="#0284C7">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etAlertPhoneNumber"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="sans-serif-medium"
+                        android:inputType="phone"
+                        android:textColor="#0F172A"
+                        android:textColorHighlight="#BAE6FD"
+                        android:textColorHint="#64748B"
+                        android:textSize="14sp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Save Button -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSaveNotificationPreferences"

@@ -32,7 +32,7 @@ from collections import defaultdict, deque
 try:
     import requests
 except ImportError:
-    pass
+    requests = None
 
 try:
     from google import genai
@@ -40,6 +40,13 @@ try:
     HAS_GEMINI = True
 except ImportError:
     HAS_GEMINI = False
+
+# --- Twilio SMS Alert Integration ---
+try:
+    from twilio.rest import Client as TwilioClient
+    HAS_TWILIO = True
+except ImportError:
+    HAS_TWILIO = False
 
 # --- 2. Import Ultralytics YOLO ---
 os.environ["YOLO_AUTOINSTALL"] = "0"
@@ -61,6 +68,174 @@ except ImportError:
 # --- Paths and Models ---
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
+
+# --- Environment Variables (.env) Loader ---
+def load_env_file():
+    """Load configuration from .env into os.environ if not already present."""
+    candidates = [
+        os.path.join(SCRIPT_DIR, ".env"),
+        os.path.join(os.path.dirname(SCRIPT_DIR), ".env")
+    ]
+    for env_path in candidates:
+        if os.path.isfile(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip('"').strip("'")
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+            except Exception as e:
+                print(f"[ENV] Notice reading {env_path}: {e}")
+
+load_env_file()
+
+# --- Firebase & Twilio Alert Dispatch Logic ---
+FIREBASE_DATABASE_URL = os.environ.get(
+    "FIREBASE_DATABASE_URL",
+    "https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app"
+).rstrip("/")
+
+_last_sms_sent_time = {}
+
+def get_cloud_sms_settings():
+    """Fetches real-time SMS alert preferences configured by the farmer in the Android app."""
+    if requests is None:
+        return None
+    try:
+        url = f"{FIREBASE_DATABASE_URL}/system_control/sms_alert_settings.json"
+        resp = requests.get(url, timeout=3)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return None
+
+def get_current_climate():
+    """Returns (temperature, humidity, climate_str) from live memory or Firebase fallback."""
+    global latest_sensor_data
+    t = latest_sensor_data.get("temperature")
+    h = latest_sensor_data.get("humidity")
+
+    if (t is None or h is None) and requests is not None:
+        try:
+            resp = requests.get(f"{FIREBASE_DATABASE_URL}/sensor_data.json", timeout=2)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict):
+                    if t is None:
+                        raw_t = data.get("temperature") or data.get("temp")
+                        if raw_t is not None:
+                            t = float(raw_t)
+                    if h is None:
+                        raw_h = data.get("humidity") or data.get("hum")
+                        if raw_h is not None:
+                            h = float(raw_h)
+        except Exception:
+            pass
+
+    if t is not None and h is not None:
+        return t, h, f"{t:.1f}°C • {h:.1f}% Hum"
+    elif t is not None:
+        return t, None, f"{t:.1f}°C"
+    elif h is not None:
+        return None, h, f"{h:.1f}% Hum"
+    else:
+        return None, None, "Unavailable"
+
+def send_sms_alert(severity, reason, farmer_action, chicken_id=None, tag_label=None, climate_str=None):
+    """
+    Dispatches a real-time SMS notification via Twilio when Gemini outputs High or Critical severity.
+    Checks Android app notification preferences in Firebase first, falling back to .env configuration.
+    Includes ambient coop climate (DHT22 temperature & humidity) in the alert.
+    """
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+    from_number = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
+    to_number = os.environ.get("FARMER_ALERT_PHONE_NUMBER", "").strip()
+
+    if not HAS_TWILIO:
+        print("[SMS] Notice: twilio library not available. Skipping SMS.")
+        return False
+
+    # Check real-time settings configured by the farmer in the Android app
+    cloud_settings = get_cloud_sms_settings()
+    if cloud_settings:
+        if cloud_settings.get("sms_alerts_enabled") is False:
+            print("[SMS] Notice: SMS alerts toggled OFF by farmer in Android app. Skipping dispatch.")
+            return False
+        app_phone = str(cloud_settings.get("farmer_phone_number") or "").strip()
+        if app_phone:
+            to_number = app_phone
+
+    if not (account_sid and auth_token and from_number and to_number):
+        print("[SMS] Notice: Twilio credentials or recipient phone number not configured in App or .env. SMS skipped.")
+        return False
+
+    # Prevent flooding the farmer with repeat texts (20-minute cooldown per target)
+    cooldown = float(os.environ.get("TWILIO_ALERT_COOLDOWN_SEC", "1200"))
+    dedup_key = f"{chicken_id}_{severity}"
+    curr_time = time.time()
+    if curr_time - _last_sms_sent_time.get(dedup_key, 0.0) < cooldown:
+        remaining = int(cooldown - (curr_time - _last_sms_sent_time.get(dedup_key, 0.0)))
+        print(f"[SMS] Cooldown active for Chicken #{chicken_id} ({remaining}s remaining). Skipping duplicate SMS.")
+        return False
+
+    # Format concise SMS body (under 160-300 characters)
+    target = f"Chicken #{chicken_id}" if chicken_id is not None else "Flock"
+    if tag_label:
+        target += f" ({tag_label})"
+
+    if not climate_str:
+        _, _, climate_str = get_current_climate()
+    climate_line = f"Climate: {climate_str}\n" if climate_str and climate_str != "Unavailable" else ""
+
+    clean_reason = (reason or "Health anomaly detected").strip()
+    clean_action = (farmer_action or "Inspect bird immediately").strip()
+    if len(clean_reason) > 85:
+        clean_reason = clean_reason[:82] + "..."
+    if len(clean_action) > 85:
+        clean_action = clean_action[:82] + "..."
+
+    sms_body = (
+        f"[PoultrySense ALERT]\n"
+        f"Severity: {str(severity).upper()}\n"
+        f"Target: {target}\n"
+        f"{climate_line}"
+        f"Reason: {clean_reason}\n"
+        f"Action: {clean_action}"
+    )
+
+    try:
+        client = TwilioClient(account_sid, auth_token)
+        msg = client.messages.create(
+            body=sms_body,
+            from_=from_number,
+            to=to_number
+        )
+        _last_sms_sent_time[dedup_key] = curr_time
+        print(f"[SMS] ✓ Dispatched {str(severity).upper()} alert to {to_number} (SID: {msg.sid})")
+        return True
+    except Exception as e:
+        print(f"[SMS] ⚠ Failed to dispatch Twilio SMS to {to_number}: {e}")
+        return False
+
+def sync_alert_to_firebase(alert_obj):
+    """Writes the structured alert object directly to Firebase Realtime Database via REST."""
+    if requests is None:
+        return
+    try:
+        cid = alert_obj.get("chicken_id", "unknown")
+        url = f"{FIREBASE_DATABASE_URL}/active_alerts/chicken_{cid}.json"
+        requests.put(url, json=alert_obj, timeout=5)
+    except Exception as e:
+        print(f"[Firebase] ⚠ Failed to sync alert to RTDB: {e}")
+
 TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", "botsort.yaml")
 if not os.path.exists(TRACKER_YAML):
     TRACKER_YAML = "botsort.yaml"
@@ -511,6 +686,11 @@ class GeminiVerdictEngine:
         tier = anomaly_info["anomaly_tier"]
         sub = anomaly_info["sub_scores"]
 
+        # Fetch live coop environmental climate from sensor / Firebase
+        curr_temp, curr_hum, climate_str = get_current_climate()
+        temp_str = f"{curr_temp:.1f}°C" if curr_temp is not None else "Sensor offline / not connected"
+        hum_str = f"{curr_hum:.1f}%" if curr_hum is not None else "Sensor offline / not connected"
+
         # Default local heuristic fallback (used when Gemini is unavailable)
         gemini_evaluated = False
         verdict_tier = tier
@@ -530,6 +710,9 @@ class GeminiVerdictEngine:
                     f"You are the FINAL AUTHORITY on this chicken's health status.\n"
                     f"The local anomaly heuristic has provided a preliminary score. "
                     f"Your job is to VERIFY or OVERRIDE it using the image + behavioral dataset below.\n\n"
+                    f"=== COOP ENVIRONMENTAL TELEMETRY (ESP32 DHT22 SENSOR) ===\n"
+                    f"- Ambient Temperature: {temp_str} (Normal Thermal Comfort: 20°C–26°C)\n"
+                    f"- Relative Humidity: {hum_str} (Ideal Range: 50%–70%)\n\n"
                     f"=== BEHAVIORAL DATASET FOR CHICKEN #{track_id} ===\n"
                     f"- Total Observation Time: {stats['observed_sec']:.1f}s\n"
                     f"- Behavior Distribution: Walking {stats['walk_pct']}% | Feeding {stats['feed_pct']}% | Resting {stats['rest_pct']}%\n"
@@ -551,12 +734,16 @@ class GeminiVerdictEngine:
                     f"pale/cyanotic comb, nasal/ocular discharge, solitary corner isolation away from entire flock.\n"
                     f"3. DO NOT diagnose a specific disease from vision alone.\n"
                     f"4. If the chicken looks healthy in the image but the heuristic score is high, "
-                    f"OVERRIDE the heuristic and return Healthy. Trust the image over pure numbers.\n\n"
+                    f"OVERRIDE the heuristic and return Healthy. Trust the image over pure numbers.\n"
+                    f"5. CLIMATE CORRELATION: Correlate bird behavior with coop climate. "
+                    f"High temperature (>30°C) causes heat stress (wing elevation, open-mouth panting, lethargy). "
+                    f"Low temperature (<18°C) causes cold stress (huddling, puffed plumage). "
+                    f"If ambient climate explains the behavior, account for it in your verdict reason and farmer_action.\n\n"
                     f"=== RESPONSE FORMAT (JSON ONLY, NO MARKDOWN) ===\n"
                     f"{{\"verdict\": \"Healthy\" or \"Monitor\" or \"Needs Attention\" or \"High Concern\", "
-                    f"\"severity\": \"None\" or \"Mild\" or \"Moderate\" or \"Severe\", "
+                    f"\"severity\": \"Low\" or \"Moderate\" or \"High\" or \"Critical\", "
                     f"\"reason\": \"<1 sentence>\", "
-                    f"\"recommendation\": \"<farmer action>\"}}"
+                    f"\"farmer_action\": \"<action for farmer>\"}}"
                 )
 
                 response = self.client.models.generate_content(
@@ -580,7 +767,7 @@ class GeminiVerdictEngine:
                     gemini_evaluated = True
                     raw_verdict = parsed.get("verdict", verdict_label)
                     verdict_reason = parsed.get("reason", verdict_reason)
-                    verdict_recommendation = parsed.get("recommendation", verdict_recommendation)
+                    verdict_recommendation = parsed.get("farmer_action") or parsed.get("recommendation", verdict_recommendation)
                     verdict_severity = parsed.get("severity", verdict_severity)
 
                     # Map Gemini's verdict string to internal tier
@@ -607,7 +794,11 @@ class GeminiVerdictEngine:
             "label": verdict_label,
             "reason": verdict_reason,
             "recommendation": verdict_recommendation,
+            "farmer_action": verdict_recommendation,
             "severity": verdict_severity,
+            "temperature": curr_temp,
+            "humidity": curr_hum,
+            "climate": climate_str,
             "gemini_evaluated": gemini_evaluated,
             "timestamp": curr_time
         }
@@ -630,10 +821,29 @@ class GeminiVerdictEngine:
             "severity": verdict_severity,
             "reason": verdict_reason,
             "recommendation": verdict_recommendation,
+            "farmer_action": verdict_recommendation,
+            "temperature": curr_temp,
+            "humidity": curr_hum,
+            "climate": climate_str,
             "gemini_evaluated": gemini_evaluated,
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
         }
         self.active_alerts[track_id] = alert_obj
+
+        # 1. Dispatch SMS via Twilio if severity is High or Critical (or Severe / High Concern)
+        sev_clean = str(verdict_severity).strip().upper()
+        if sev_clean in ["HIGH", "CRITICAL", "SEVERE"] or str(verdict_tier).upper() in ["HIGH CONCERN", "CRITICAL"]:
+            send_sms_alert(
+                severity=verdict_severity,
+                reason=verdict_reason,
+                farmer_action=verdict_recommendation,
+                chicken_id=track_id,
+                tag_label=tag_info["tag_label"],
+                climate_str=climate_str
+            )
+
+        # 2. Sync to Firebase Realtime Database
+        sync_alert_to_firebase(alert_obj)
 
     def get_verdict(self, track_id):
         """Returns the latest Gemini verdict for a chicken, or None if not yet evaluated."""

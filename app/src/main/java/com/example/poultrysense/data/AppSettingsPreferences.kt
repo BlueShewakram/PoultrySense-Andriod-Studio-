@@ -15,12 +15,26 @@ object AppSettingsPreferences {
     private const val KEY_DAILY_SUMMARY_ALERT = "key_daily_summary_alert"
     private const val KEY_ALERT_SOUND_ENABLED = "key_alert_sound_enabled"
     private const val KEY_ALERT_VIBRATE_ENABLED = "key_alert_vibrate_enabled"
+    private const val KEY_SMS_ALERTS_ENABLED = "key_sms_alerts_enabled"
+    private const val KEY_ALERT_PHONE_NUMBER = "key_alert_phone_number"
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     // ─── Notification Getters & Setters ───
+
+    fun isSmsAlertsEnabled(context: Context): Boolean =
+        getPrefs(context).getBoolean(KEY_SMS_ALERTS_ENABLED, true)
+
+    fun setSmsAlertsEnabled(context: Context, enabled: Boolean) =
+        getPrefs(context).edit().putBoolean(KEY_SMS_ALERTS_ENABLED, enabled).apply()
+
+    fun getAlertPhoneNumber(context: Context): String =
+        getPrefs(context).getString(KEY_ALERT_PHONE_NUMBER, "") ?: ""
+
+    fun setAlertPhoneNumber(context: Context, phoneNumber: String) =
+        getPrefs(context).edit().putString(KEY_ALERT_PHONE_NUMBER, phoneNumber.trim()).apply()
 
     fun isNotificationsEnabled(context: Context): Boolean =
         getPrefs(context).getBoolean(KEY_NOTIFICATIONS_ENABLED, true)

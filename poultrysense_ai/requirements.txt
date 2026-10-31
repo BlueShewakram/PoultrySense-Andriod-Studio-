@@ -52,3 +52,4 @@ ultralytics
 ultralytics-thop
 urllib3
 Werkzeug
+twilio>=9.0.0
