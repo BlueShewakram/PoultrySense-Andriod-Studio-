@@ -35,11 +35,33 @@ except ImportError:
     requests = None
 
 try:
+    from pydantic import BaseModel, Field
+    from typing import Literal
+    HAS_PYDANTIC = True
+except ImportError:
+    HAS_PYDANTIC = False
+
+try:
     from google import genai
     from google.genai import types
     HAS_GEMINI = True
 except ImportError:
     HAS_GEMINI = False
+
+# --- Pydantic Schema for Enforced Gemini Output ---
+if HAS_PYDANTIC:
+    class ChickenDiagnosticVerdict(BaseModel):
+        severity: Literal["Low", "Medium", "High", "Critical"] = Field(
+            description="Diagnostic severity rating: Low, Medium, High, or Critical."
+        )
+        reason: str = Field(
+            description="Diagnostic explanation based on visual posture, plumage, comb, duration, and climate telemetry."
+        )
+        farmer_action: str = Field(
+            description="Concrete, actionable recommendation for the poultry farmer or caretaker."
+        )
+else:
+    ChickenDiagnosticVerdict = None
 
 # --- Twilio SMS Alert Integration ---
 try:
@@ -99,7 +121,52 @@ FIREBASE_DATABASE_URL = os.environ.get(
     "https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app"
 ).rstrip("/")
 
-_last_sms_sent_time = {}
+# --- Global Alert Cooldown Configuration (Handling Tracker ID Switches) ---
+# When chickens exit/re-enter camera view, tracker IDs can switch. A global cooldown
+# ensures no new Gemini queries or SMS alerts fire across the entire system until
+# the cooldown window expires after an alert (default: 900 seconds = 15 minutes).
+GLOBAL_ALERT_COOLDOWN_SEC = float(os.environ.get("GLOBAL_ALERT_COOLDOWN_SEC", "900.0"))
+DAYTIME_RECUMBENT_THRESHOLD_SEC = float(os.environ.get("DAYTIME_RECUMBENT_THRESHOLD_SEC", os.environ.get("STATIONARY_DURATION_THRESHOLD_SEC", "45.0")))
+
+_last_global_alert_timestamp = 0.0
+_last_global_sms_timestamp = 0.0
+_global_cooldown_lock = threading.Lock()
+_last_cooldown_log_time = 0.0
+
+def is_global_cooldown_active(curr_time=None):
+    """Returns True if the global alert cooldown window is active across the system."""
+    global _last_global_alert_timestamp
+    if curr_time is None:
+        curr_time = time.time()
+    with _global_cooldown_lock:
+        return (curr_time - _last_global_alert_timestamp) < GLOBAL_ALERT_COOLDOWN_SEC
+
+def get_global_cooldown_remaining(curr_time=None):
+    """Returns remaining seconds in the global alert cooldown window."""
+    global _last_global_alert_timestamp
+    if curr_time is None:
+        curr_time = time.time()
+    with _global_cooldown_lock:
+        elapsed = curr_time - _last_global_alert_timestamp
+        return max(0.0, GLOBAL_ALERT_COOLDOWN_SEC - elapsed)
+
+def record_global_alert(timestamp=None):
+    """Records an alert and locks the system-wide global alert cooldown (900-second / 15-minute window)."""
+    global _last_global_alert_timestamp
+    if timestamp is None:
+        timestamp = time.time()
+    with _global_cooldown_lock:
+        _last_global_alert_timestamp = timestamp
+        print(f"[COOLDOWN] Global alert cooldown active for {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s ({GLOBAL_ALERT_COOLDOWN_SEC/60:.1f} min). "
+              f"All new Gemini queries and SMS texts paused across the entire flock.")
+
+def reset_global_cooldown():
+    """Manually resets the global cooldown timer (e.g. on user reset)."""
+    global _last_global_alert_timestamp, _last_global_sms_timestamp
+    with _global_cooldown_lock:
+        _last_global_alert_timestamp = 0.0
+        _last_global_sms_timestamp = 0.0
+        print("[COOLDOWN] Global alert cooldown reset.")
 
 def get_cloud_sms_settings():
     """Fetches real-time SMS alert preferences configured by the farmer in the Android app."""
@@ -153,88 +220,113 @@ def send_sms_alert(severity, reason, farmer_action, chicken_id=None, tag_label=N
     Dispatches a real-time SMS notification via Twilio when Gemini outputs High or Critical severity.
     Checks Android app notification preferences in Firebase first, falling back to .env configuration.
     Includes ambient coop climate (DHT22 temperature & humidity) in the alert.
+    Enforces the global cooldown to avoid duplicate SMS alerts caused by tracker ID switches.
+    Wrapped in try-except for fault-tolerant operation.
     """
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
-    from_number = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
-    to_number = os.environ.get("FARMER_ALERT_PHONE_NUMBER", "").strip()
-
-    if not HAS_TWILIO:
-        print("[SMS] Notice: twilio library not available. Skipping SMS.")
-        return False
-
-    # Check real-time settings configured by the farmer in the Android app
-    cloud_settings = get_cloud_sms_settings()
-    if cloud_settings:
-        if cloud_settings.get("sms_alerts_enabled") is False:
-            print("[SMS] Notice: SMS alerts toggled OFF by farmer in Android app. Skipping dispatch.")
-            return False
-        app_phone = str(cloud_settings.get("farmer_phone_number") or "").strip()
-        if app_phone:
-            to_number = app_phone
-
-    if not (account_sid and auth_token and from_number and to_number):
-        print("[SMS] Notice: Twilio credentials or recipient phone number not configured in App or .env. SMS skipped.")
-        return False
-
-    # Prevent flooding the farmer with repeat texts (20-minute cooldown per target)
-    cooldown = float(os.environ.get("TWILIO_ALERT_COOLDOWN_SEC", "1200"))
-    dedup_key = f"{chicken_id}_{severity}"
-    curr_time = time.time()
-    if curr_time - _last_sms_sent_time.get(dedup_key, 0.0) < cooldown:
-        remaining = int(cooldown - (curr_time - _last_sms_sent_time.get(dedup_key, 0.0)))
-        print(f"[SMS] Cooldown active for Chicken #{chicken_id} ({remaining}s remaining). Skipping duplicate SMS.")
-        return False
-
-    # Format concise SMS body (under 160-300 characters)
-    target = f"Chicken #{chicken_id}" if chicken_id is not None else "Flock"
-    if tag_label:
-        target += f" ({tag_label})"
-
-    if not climate_str:
-        _, _, climate_str = get_current_climate()
-    climate_line = f"Climate: {climate_str}\n" if climate_str and climate_str != "Unavailable" else ""
-
-    clean_reason = (reason or "Health anomaly detected").strip()
-    clean_action = (farmer_action or "Inspect bird immediately").strip()
-    if len(clean_reason) > 85:
-        clean_reason = clean_reason[:82] + "..."
-    if len(clean_action) > 85:
-        clean_action = clean_action[:82] + "..."
-
-    sms_body = (
-        f"[PoultrySense ALERT]\n"
-        f"Severity: {str(severity).upper()}\n"
-        f"Target: {target}\n"
-        f"{climate_line}"
-        f"Reason: {clean_reason}\n"
-        f"Action: {clean_action}"
-    )
-
+    global _last_global_sms_timestamp
     try:
+        sev_clean = str(severity).strip().capitalize()
+        if sev_clean not in ["High", "Critical"]:
+            return False
+
+        if not HAS_TWILIO:
+            print("[SMS] Notice: twilio library not available. Skipping SMS.")
+            return False
+
+        # Global SMS Cooldown Check (prevent spamming farmer when tracker IDs switch)
+        curr_time = time.time()
+        with _global_cooldown_lock:
+            if _last_global_sms_timestamp > 0.0 and (curr_time - _last_global_sms_timestamp) < GLOBAL_ALERT_COOLDOWN_SEC:
+                rem = int(GLOBAL_ALERT_COOLDOWN_SEC - (curr_time - _last_global_sms_timestamp))
+                print(f"[SMS] Global alert cooldown active ({rem}s remaining). Skipping duplicate SMS dispatch.")
+                return False
+
+        account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+        auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+        from_number = os.environ.get("TWILIO_PHONE_NUMBER", "").strip()
+        to_number = os.environ.get("FARMER_ALERT_PHONE_NUMBER", "").strip()
+
+        # Check real-time settings configured by the farmer in the Android app
+        cloud_settings = get_cloud_sms_settings()
+        if cloud_settings:
+            if cloud_settings.get("sms_alerts_enabled") is False:
+                print("[SMS] Notice: SMS alerts toggled OFF by farmer in Android app. Skipping dispatch.")
+                return False
+            app_phone = str(cloud_settings.get("farmer_phone_number") or "").strip()
+            if app_phone:
+                to_number = app_phone
+
+        if not (account_sid and auth_token and from_number and to_number):
+            print("[SMS] Notice: Twilio credentials or recipient phone number not configured. SMS skipped.")
+            return False
+
+        # Format concise SMS body (under 160-300 characters)
+        target = f"Chicken #{chicken_id}" if chicken_id is not None else "Flock"
+        if tag_label:
+            target += f" ({tag_label})"
+
+        if not climate_str:
+            _, _, climate_str = get_current_climate()
+        climate_line = f"Climate: {climate_str}\n" if climate_str and climate_str != "Unavailable" else ""
+
+        clean_reason = (reason or "Health anomaly detected").strip()
+        clean_action = (farmer_action or "Inspect bird immediately").strip()
+        if len(clean_reason) > 90:
+            clean_reason = clean_reason[:87] + "..."
+        if len(clean_action) > 90:
+            clean_action = clean_action[:87] + "..."
+
+        sms_body = (
+            f"[PoultrySense ALERT]\n"
+            f"Severity: {sev_clean.upper()}\n"
+            f"Target: {target}\n"
+            f"{climate_line}"
+            f"Reason: {clean_reason}\n"
+            f"Action: {clean_action}"
+        )
+
         client = TwilioClient(account_sid, auth_token)
         msg = client.messages.create(
             body=sms_body,
             from_=from_number,
             to=to_number
         )
-        _last_sms_sent_time[dedup_key] = curr_time
-        print(f"[SMS] ✓ Dispatched {str(severity).upper()} alert to {to_number} (SID: {msg.sid})")
+        with _global_cooldown_lock:
+            _last_global_sms_timestamp = curr_time
+        print(f"[SMS] ✓ Dispatched {sev_clean.upper()} alert to {to_number} (SID: {msg.sid})")
         return True
     except Exception as e:
-        print(f"[SMS] ⚠ Failed to dispatch Twilio SMS to {to_number}: {e}")
+        print(f"[SMS] ⚠ Failed to dispatch Twilio SMS: {e}")
         return False
 
-def sync_alert_to_firebase(alert_obj):
-    """Writes the structured alert object directly to Firebase Realtime Database via REST."""
+def sync_verdict_to_firebase(verdict_obj):
+    """
+    Writes Gemini's JSON diagnostic verdict directly to Firebase Realtime Database via REST.
+    Stores under active_alerts/chicken_{id}.json and diagnostic_verdicts/latest.json.
+    """
     if requests is None:
-        return
+        return False
+    cid = verdict_obj.get("chicken_id", "unknown")
     try:
-        cid = alert_obj.get("chicken_id", "unknown")
-        url = f"{FIREBASE_DATABASE_URL}/active_alerts/chicken_{cid}.json"
-        requests.put(url, json=alert_obj, timeout=5)
+        # 1. Update active alerts node for live alerts view
+        url_alert = f"{FIREBASE_DATABASE_URL}/active_alerts/chicken_{cid}.json"
+        requests.put(url_alert, json=verdict_obj, timeout=5)
+
+        # 2. Update diagnostic verdicts node
+        url_diag = f"{FIREBASE_DATABASE_URL}/diagnostic_verdicts/chicken_{cid}.json"
+        requests.put(url_diag, json=verdict_obj, timeout=5)
+
+        # 3. Update latest verdict reference
+        url_latest = f"{FIREBASE_DATABASE_URL}/diagnostic_verdicts/latest.json"
+        requests.put(url_latest, json=verdict_obj, timeout=5)
+        print(f"[Firebase] ✓ Synced diagnostic verdict to RTDB for Chicken #{cid} ({verdict_obj.get('severity')})")
+        return True
     except Exception as e:
-        print(f"[Firebase] ⚠ Failed to sync alert to RTDB: {e}")
+        print(f"[Firebase] ⚠ Failed to sync diagnostic verdict to RTDB: {e}")
+        return False
+
+# Backward compatibility alias
+sync_alert_to_firebase = sync_verdict_to_firebase
 
 TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", "botsort.yaml")
 if not os.path.exists(TRACKER_YAML):
@@ -568,282 +660,327 @@ def get_poultry_tag_info(track_id):
     }
 
 
+GEMINI_SYSTEM_INSTRUCTION = (
+    "You are PoultrySense AI's expert poultry veterinary and ethology diagnostic engine.\n"
+    "Your objective is to evaluate multimodal chicken observations consisting of:\n"
+    "1. A cropped camera snapshot of a flagged chicken ('flagged_chicken.jpg') flagged by YOLO/ByteTrack or environmental sensors.\n"
+    "2. Quantitative telemetry data including stationary duration, optical flow motion, lethargy markers, flock isolation, and ambient environmental sensor vectors (DHT22 temperature & humidity).\n\n"
+    "DIAGNOSTIC GUIDELINES:\n"
+    "- Distinguish between physiological rest/sleep vs pathological lethargy/illness.\n"
+    "- Normal rest/sleep: smooth plumage, bright red comb, head tucked or upright, resting in flock proximity.\n"
+    "- Pathological markers: ruffled/dirty plumage, closed eyes, drooped wings resting on litter, hunched 'sick bird' posture, cyanotic/pale comb, solitary isolation.\n"
+    "- Correlate with climate: Temperature >30°C causes acute heat stress (panting, wing elevation, lethargy). Temperature <18°C causes cold huddling.\n"
+    "- Output MUST strictly conform to the required JSON schema with fields: severity, reason, and farmer_action.\n"
+    "- The 'severity' field must be one of: 'Low', 'Medium', 'High', 'Critical'."
+)
+
+
 class GeminiVerdictEngine:
     """
-    Gemini 3.6 Flash as the PRIMARY HEALTH VERDICT ENGINE for every tracked chicken.
+    Multimodal Gemini 3.6 Flash Health Diagnostic Engine for PoultrySense.
 
     Architecture:
-    1. Local anomaly engine provides real-time preliminary scoring (instant, 30 FPS)
-    2. Gemini 3.6 Flash receives the FULL behavioral dataset + crop image
-    3. Gemini returns the DEFINITIVE health verdict that OVERRIDES local heuristics
-    4. Adaptive cooldowns prevent API spam while keeping verdicts fresh
-
-    Cooldown tiers:
-    - First verdict:    After 25s of observation (cold-start protection)
-    - Healthy chickens: Re-evaluate every 60s
-    - Monitor tier:     Re-evaluate every 45s
-    - Suspicious/High:  Re-evaluate every 30s
+    1. YOLO/ByteTrack or environmental sensors detect abnormal behaviors (prolonged immobility, lethargic posture,
+       flock isolation, or heat/cold stress).
+    2. Automatically crops and saves temporary snapshot ('flagged_chicken.jpg').
+    3. Global timestamp-based cooldown (15 minutes = 900 seconds) ensures no duplicate queries or SMS alerts across the entire flock,
+       preventing duplicate notifications when tracker IDs switch upon exit/re-entry.
+    4. Gemini 3.6 Flash evaluates both cropped image and text telemetry with enforced JSON schema.
+    5. Saves diagnostic verdict directly to Firebase Realtime Database.
+    6. Dispatches Twilio SMS alert if severity is High or Critical, wrapped in try-except.
     """
-    # Tier -> cooldown seconds mapping
-    TIER_COOLDOWNS = {
-        "Normal": 60.0,
-        "Monitor": 45.0,
-        "Suspicious": 30.0,
-        "High Concern": 30.0
-    }
-    MIN_OBSERVATION_FOR_VERDICT = 25.0  # Don't call Gemini before 25s of tracking data
 
     def __init__(self):
-        self.last_verdict_time = {}     # track_id -> timestamp of last Gemini call
         self.verdicts = {}              # track_id -> full verdict dict from Gemini
         self.active_alerts = {}         # track_id -> alert dict (for /alerts endpoint)
         self.chicken_summaries = {}     # track_id -> 1-sentence reason (backwards compat)
         self.model_name = "gemini-3.6-flash"
+        self._query_in_progress = False
         self.api_key = self._find_api_key()
         self.client = None
         self._init_client()
 
     def _find_api_key(self):
+        global GLOBAL_ALERT_COOLDOWN_SEC
         # 1. Environment variable
         key = os.environ.get("GEMINI_API_KEY", "").strip()
         model = os.environ.get("GEMINI_MODEL", "").strip()
         if model:
             self.model_name = model
-        if key:
-            return key
         # 2. Local config json
         cfg_path = os.path.join(SCRIPT_DIR, "gemini_config.json")
         if os.path.exists(cfg_path):
             try:
-                with open(cfg_path, "r") as f:
+                with open(cfg_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     k = data.get("gemini_api_key", "").strip()
                     m = data.get("model", "").strip()
                     if m:
                         self.model_name = m
-                    if k and k != "YOUR_GEMINI_API_KEY_HERE":
-                        return k
+                    cd = data.get("cooldown_seconds")
+                    if cd is not None:
+                        try:
+                            GLOBAL_ALERT_COOLDOWN_SEC = float(cd)
+                        except Exception:
+                            pass
+                    if k and k != "YOUR_GEMINI_API_KEY_HERE" and not key:
+                        key = k
             except Exception:
                 pass
         # 3. Local .env file
-        env_path = os.path.join(SCRIPT_DIR, ".env")
-        if os.path.exists(env_path):
-            try:
-                with open(env_path, "r") as f:
-                    for line in f:
-                        if line.strip().startswith("GEMINI_API_KEY="):
-                            k = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
-                            if k:
-                                return k
-                        elif line.strip().startswith("GEMINI_MODEL="):
-                            m = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
-                            if m:
-                                self.model_name = m
-            except Exception:
-                pass
-        return ""
+        if not key:
+            env_path = os.path.join(SCRIPT_DIR, ".env")
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if line.strip().startswith("GEMINI_API_KEY="):
+                                k = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+                                if k:
+                                    key = k
+                            elif line.strip().startswith("GEMINI_MODEL="):
+                                m = line.strip().split("=", 1)[1].strip().strip('"').strip("'")
+                                if m:
+                                    self.model_name = m
+                except Exception:
+                    pass
+        return key
 
     def _init_client(self):
         if self.api_key and HAS_GEMINI:
             try:
                 self.client = genai.Client(api_key=self.api_key)
-                print(f"[Gemini] ✓ Initialized as PRIMARY VERDICT ENGINE ({self.model_name}).")
+                print(f"[Gemini 3.6 Flash] ✓ Initialized multimodal diagnostic engine ({self.model_name}).")
             except Exception as e:
-                print(f"[Gemini] Client init notice: {e}")
+                print(f"[Gemini 3.6 Flash] Client init notice: {e}")
         else:
             if not self.api_key:
-                print("[Gemini] Notice: GEMINI_API_KEY not found. Operating in LOCAL heuristic-only mode.")
-                print("             Add key to poultrysense_ai/gemini_config.json to enable Gemini verdicts.")
+                print("[Gemini 3.6 Flash] Notice: GEMINI_API_KEY not found. Operating in local heuristic-only mode.")
+                print("                  Add key to poultrysense_ai/gemini_config.json to enable Gemini multimodal verdicts.")
 
-    def request_verdict_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec):
-        """Request a Gemini verdict for ANY chicken (all tiers). Respects adaptive cooldowns."""
-        observed_sec = stats.get("observed_sec", 0.0)
-
-        # Don't call Gemini until we have enough behavioral data
-        if observed_sec < self.MIN_OBSERVATION_FOR_VERDICT:
+    def request_verdict_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec, snapshot_path=None, abnormal_flags=None):
+        """
+        Triggers asynchronous multimodal analysis with Gemini 3.6 Flash.
+        Enforces 15-minute global timestamp-based cooldown to handle tracker ID switches.
+        """
+        # 1. Global Alert Cooldown Check (prevents duplicates when chicken changes tracker ID)
+        if is_global_cooldown_active(curr_time):
             return
 
-        # Adaptive cooldown based on current local tier
-        local_tier = anomaly_info.get("anomaly_tier", "Normal")
-        cooldown = self.TIER_COOLDOWNS.get(local_tier, 60.0)
+        # 2. Prevent concurrent queries
+        if self._query_in_progress:
+            return
 
-        last_t = self.last_verdict_time.get(track_id, 0.0)
-        if curr_time - last_t < cooldown:
-            return  # Still within cooldown — skip
+        self._query_in_progress = True
 
-        self.last_verdict_time[track_id] = curr_time
+        # Save temporary snapshot of flagged chicken
+        if snapshot_path is None:
+            snapshot_path = os.path.join(SCRIPT_DIR, "flagged_chicken.jpg")
+        if crop is not None and crop.size > 0:
+            try:
+                cv2.imwrite(snapshot_path, crop)
+            except Exception as ex_save:
+                print(f"[Vision Engine] Notice saving flagged snapshot: {ex_save}")
+
+        # Immediately lock global cooldown timer (15 minutes) so subsequent frames and tracker switches cannot trigger
+        record_global_alert(curr_time)
+
         threading.Thread(
             target=self._verdict_worker,
-            args=(track_id, stats, baseline, anomaly_info,
-                  crop.copy() if crop is not None else None,
-                  curr_time, is_isolated, stationary_sec),
+            args=(track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags),
             daemon=True
         ).start()
 
-    def _verdict_worker(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec):
-        """Background worker: sends full behavioral dataset + image to Gemini 3.6 Flash."""
-        score = anomaly_info["anomaly_score"]
-        tier = anomaly_info["anomaly_tier"]
-        sub = anomaly_info["sub_scores"]
+    def _verdict_worker(self, track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags=None):
+        """
+        Background worker: passes cropped image snapshot and telemetry vectors to Gemini 3.6 Flash,
+        enforces schema, saves verdict to Firebase RTDB, dispatches Twilio SMS on High/Critical,
+        and enforces 15-minute global alert cooldown.
+        """
+        try:
+            score = anomaly_info.get("anomaly_score", 0)
+            tier = anomaly_info.get("anomaly_tier", "Normal")
+            sub = anomaly_info.get("sub_scores", {})
 
-        # Fetch live coop environmental climate from sensor / Firebase
-        curr_temp, curr_hum, climate_str = get_current_climate()
-        temp_str = f"{curr_temp:.1f}°C" if curr_temp is not None else "Sensor offline / not connected"
-        hum_str = f"{curr_hum:.1f}%" if curr_hum is not None else "Sensor offline / not connected"
+            # Fetch live coop environmental climate from sensor / Firebase
+            curr_temp, curr_hum, climate_str = get_current_climate()
+            temp_str = f"{curr_temp:.1f}°C" if curr_temp is not None else "Sensor offline / not connected"
+            hum_str = f"{curr_hum:.1f}%" if curr_hum is not None else "Sensor offline / not connected"
 
-        # Default local heuristic fallback (used when Gemini is unavailable)
-        gemini_evaluated = False
-        verdict_tier = tier
-        verdict_label = anomaly_info.get("status", tier)
-        verdict_reason = f"Local heuristic assessment: {tier} ({score}%)"
-        verdict_recommendation = f"Continue monitoring Chicken #{track_id}."
-        verdict_severity = "None" if score < 30 else ("Moderate" if score < 80 else "Severe")
+            climate_note = "Normal ambient thermal range"
+            if curr_temp is not None:
+                if curr_temp > 30.0:
+                    climate_note = "HEAT STRESS (Elevated ambient temperature > 30°C, high risk of heat-induced lethargy and panting)"
+                elif curr_temp < 18.0:
+                    climate_note = "COLD STRESS (Low ambient temperature < 18°C, high risk of huddled immobility)"
 
-        if self.client is not None and crop is not None and crop.size > 0:
-            try:
-                # Encode crop to JPEG
-                _, buf = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                img_bytes = buf.tobytes()
+            flags_summary = ", ".join(abnormal_flags) if abnormal_flags else "Flagged behavioral anomaly"
 
-                prompt = (
-                    f"You are PoultrySense AI's PRIMARY HEALTH VERDICT ENGINE.\n"
-                    f"You are the FINAL AUTHORITY on this chicken's health status.\n"
-                    f"The local anomaly heuristic has provided a preliminary score. "
-                    f"Your job is to VERIFY or OVERRIDE it using the image + behavioral dataset below.\n\n"
-                    f"=== COOP ENVIRONMENTAL TELEMETRY (ESP32 DHT22 SENSOR) ===\n"
-                    f"- Ambient Temperature: {temp_str} (Normal Thermal Comfort: 20°C–26°C)\n"
-                    f"- Relative Humidity: {hum_str} (Ideal Range: 50%–70%)\n\n"
-                    f"=== BEHAVIORAL DATASET FOR CHICKEN #{track_id} ===\n"
-                    f"- Total Observation Time: {stats['observed_sec']:.1f}s\n"
-                    f"- Behavior Distribution: Walking {stats['walk_pct']}% | Feeding {stats['feed_pct']}% | Resting {stats['rest_pct']}%\n"
-                    f"- Continuous Inactivity: {stats['continuous_inactivity_sec']:.1f}s\n"
-                    f"- Stationary Duration: {stationary_sec:.1f}s (motion < 1.6 px/frame)\n"
-                    f"- Avg Optical Flow Motion: {stats['avg_motion']:.2f} (Normal: >= 2.0 | Lethargic: < 0.8)\n"
-                    f"- Flock Isolation: {stats['isolation_pct']:.1f}% of time isolated | Currently isolated: {is_isolated}\n"
-                    f"- Sample Count: {stats['sample_count']} behavior frames\n\n"
-                    f"=== LOCAL HEURISTIC (PRELIMINARY — YOU MAY OVERRIDE) ===\n"
-                    f"- Anomaly Score: {score}/100 → Tier: {tier}\n"
-                    f"- Sub-Scores: Activity={sub['activity']}, Feeding={sub['feeding']}, "
-                    f"Movement={sub['movement']}, Isolation={sub['isolation']}, Posture={sub['posture']}\n\n"
-                    f"=== VETERINARY ETHOLOGY RULES (MANDATORY) ===\n"
-                    f"1. SLEEP VS SICKNESS: Chickens naturally rest/sleep up to 60% of the day. "
-                    f"A chicken sitting peacefully with smooth plumage near flockmates is HEALTHY and SLEEPING. "
-                    f"DO NOT flag normal rest/sleep as sick.\n"
-                    f"2. PATHOLOGICAL MARKERS (flag ONLY if you observe these in the image): "
-                    f"Ruffled unkempt plumage, drooping wings on litter, hunched 'puffed-ball' posture, "
-                    f"pale/cyanotic comb, nasal/ocular discharge, solitary corner isolation away from entire flock.\n"
-                    f"3. DO NOT diagnose a specific disease from vision alone.\n"
-                    f"4. If the chicken looks healthy in the image but the heuristic score is high, "
-                    f"OVERRIDE the heuristic and return Healthy. Trust the image over pure numbers.\n"
-                    f"5. CLIMATE CORRELATION: Correlate bird behavior with coop climate. "
-                    f"High temperature (>30°C) causes heat stress (wing elevation, open-mouth panting, lethargy). "
-                    f"Low temperature (<18°C) causes cold stress (huddling, puffed plumage). "
-                    f"If ambient climate explains the behavior, account for it in your verdict reason and farmer_action.\n\n"
-                    f"=== RESPONSE FORMAT (JSON ONLY, NO MARKDOWN) ===\n"
-                    f"{{\"verdict\": \"Healthy\" or \"Monitor\" or \"Needs Attention\" or \"High Concern\", "
-                    f"\"severity\": \"Low\" or \"Moderate\" or \"High\" or \"Critical\", "
-                    f"\"reason\": \"<1 sentence>\", "
-                    f"\"farmer_action\": \"<action for farmer>\"}}"
-                )
+            # Default local heuristic fallback
+            gemini_evaluated = False
+            verdict_severity = "Low" if score < 30 else ("Medium" if score < 60 else ("High" if score < 80 else "Critical"))
+            verdict_reason = f"Chicken #{track_id} flagged: {flags_summary} (Local score: {score}%)."
+            verdict_farmer_action = "Continue monitoring flock; ensure adequate ventilation and clean water."
 
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=[
-                        types.Part.from_bytes(data=img_bytes, mime_type='image/jpeg'),
-                        prompt
-                    ]
-                )
+            # Multimodal Gemini 3.6 Flash Analysis
+            if self.client is not None and os.path.exists(snapshot_path):
+                try:
+                    with open(snapshot_path, "rb") as f:
+                        img_bytes = f.read()
 
-                resp_text = response.text.strip()
-                # Strip markdown codeblocks if returned
-                if resp_text.startswith("```"):
-                    resp_text = resp_text.split("```")[1]
-                    if resp_text.startswith("json"):
-                        resp_text = resp_text[4:]
-                resp_text = resp_text.strip()
+                    image_part = types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
 
-                parsed = json.loads(resp_text)
-                if isinstance(parsed, dict):
-                    gemini_evaluated = True
-                    raw_verdict = parsed.get("verdict", verdict_label)
-                    verdict_reason = parsed.get("reason", verdict_reason)
-                    verdict_recommendation = parsed.get("farmer_action") or parsed.get("recommendation", verdict_recommendation)
-                    verdict_severity = parsed.get("severity", verdict_severity)
+                    telemetry_prompt = (
+                        f"[POULTRYSENSE MULTIMODAL TELEMETRY LOG]\n"
+                        f"- Target Chicken ID: #{track_id}\n"
+                        f"- Flagged Anomaly Triggers: {flags_summary}\n"
+                        f"- Posture State: Recumbent / Stationary\n"
+                        f"- Stationary Duration: {stationary_sec:.1f}s (Daytime Threshold: {DAYTIME_RECUMBENT_THRESHOLD_SEC:.1f}s)\n"
+                        f"- Continuous Inactivity: {stats.get('continuous_inactivity_sec', stationary_sec):.1f}s\n"
+                        f"- Total Observed Time: {stats.get('observed_sec', 0.0):.1f}s\n"
+                        f"- Average Optical Motion: {stats.get('avg_motion', 0.0):.2f} px/frame (Normal >= 2.0 | Lethargic < 0.8)\n"
+                        f"- Behavior Time Distribution: Resting {stats.get('rest_pct', 0.0)}% | Walking {stats.get('walk_pct', 0.0)}% | Feeding {stats.get('feed_pct', 0.0)}%\n"
+                        f"- Spatial Proximity: {'Isolated from flock' if is_isolated else 'Within flock cluster'} ({stats.get('isolation_pct', 0.0):.1f}% time isolated)\n\n"
+                        f"[COOP ENVIRONMENTAL SENSOR VECTORS]\n"
+                        f"- Ambient Temperature: {temp_str} (Normal Thermal Comfort: 20°C - 26°C)\n"
+                        f"- Relative Humidity: {hum_str} (Ideal Range: 50% - 70%)\n"
+                        f"- Climate Stress Status: {climate_note}\n\n"
+                        f"[ANALYSIS TASK]\n"
+                        f"Evaluate the attached cropped snapshot ('flagged_chicken.jpg') alongside these sensor and behavioral telemetry vectors.\n"
+                        f"Determine whether this flagged anomaly represents healthy physiological resting/sleep or pathological lethargy, heat/cold stress, or injury.\n"
+                        f"You MUST output valid JSON strictly conforming to the schema with fields 'severity', 'reason', and 'farmer_action'."
+                    )
 
-                    # Map Gemini's verdict string to internal tier
-                    VERDICT_TO_TIER = {
-                        "Healthy": "Normal",
-                        "Monitor": "Monitor",
-                        "Needs Attention": "Suspicious",
-                        "High Concern": "High Concern"
-                    }
-                    verdict_tier = VERDICT_TO_TIER.get(raw_verdict, tier)
-                    verdict_label = raw_verdict
+                    config = types.GenerateContentConfig(
+                        system_instruction=GEMINI_SYSTEM_INSTRUCTION,
+                        response_mime_type="application/json",
+                        response_schema=ChickenDiagnosticVerdict,
+                        temperature=0.2
+                    )
 
-                    override_msg = ""
-                    if verdict_tier != tier:
-                        override_msg = f" [OVERRIDE: local={tier} → gemini={verdict_tier}]"
-                    print(f"[Gemini] ✓ Verdict for Chicken #{track_id}: {raw_verdict} — {verdict_reason}{override_msg}")
+                    response = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=[image_part, telemetry_prompt],
+                        config=config
+                    )
 
-            except Exception as ex:
-                print(f"[Gemini] API notice for Chicken #{track_id}: {ex}")
+                    # Parse structured response
+                    parsed_data = None
+                    if hasattr(response, "parsed") and response.parsed is not None:
+                        if isinstance(response.parsed, ChickenDiagnosticVerdict):
+                            parsed_data = response.parsed.model_dump()
+                        elif isinstance(response.parsed, dict):
+                            parsed_data = response.parsed
+                        else:
+                            parsed_data = json.loads(json.dumps(response.parsed, default=str))
 
-        # Store the full verdict (accessible from camera loop on next frame)
-        self.verdicts[track_id] = {
-            "tier": verdict_tier,
-            "label": verdict_label,
-            "reason": verdict_reason,
-            "recommendation": verdict_recommendation,
-            "farmer_action": verdict_recommendation,
-            "severity": verdict_severity,
-            "temperature": curr_temp,
-            "humidity": curr_hum,
-            "climate": climate_str,
-            "gemini_evaluated": gemini_evaluated,
-            "timestamp": curr_time
-        }
+                    if parsed_data is None and hasattr(response, "text") and response.text:
+                        raw_text = response.text.strip()
+                        if raw_text.startswith("```"):
+                            raw_text = raw_text.split("```")[1]
+                            if raw_text.startswith("json"):
+                                raw_text = raw_text[4:]
+                        raw_text = raw_text.strip()
+                        parsed_data = json.loads(raw_text)
 
-        # Backwards-compatible summary and alert storage
-        self.chicken_summaries[track_id] = f"Gemini: {verdict_reason}" if gemini_evaluated else verdict_reason
+                    if isinstance(parsed_data, dict):
+                        gemini_evaluated = True
+                        raw_sev = str(parsed_data.get("severity", "Low")).strip().capitalize()
+                        if raw_sev in ["Low", "Medium", "High", "Critical"]:
+                            verdict_severity = raw_sev
+                        elif "CRIT" in raw_sev.upper():
+                            verdict_severity = "Critical"
+                        elif "HIGH" in raw_sev.upper():
+                            verdict_severity = "High"
+                        elif "MED" in raw_sev.upper() or "MOD" in raw_sev.upper():
+                            verdict_severity = "Medium"
+                        else:
+                            verdict_severity = "Low"
 
-        tag_info = get_poultry_tag_info(track_id)
-        alert_obj = {
-            "chicken_id": track_id,
-            "tag_number": tag_info["tag_number"],
-            "tag_color": tag_info["tag_color"],
-            "tag_color_hex": tag_info["tag_color_hex"],
-            "tag_label": tag_info["tag_label"],
-            "status": f"{verdict_label} • {tag_info['tag_label']}",
-            "anomaly_score": score,
-            "anomaly_tier": verdict_tier,
-            "behavior": f"Resting {stats['rest_pct']}% • Walking {stats['walk_pct']}%",
-            "duration_sec": stats["observed_sec"],
-            "severity": verdict_severity,
-            "reason": verdict_reason,
-            "recommendation": verdict_recommendation,
-            "farmer_action": verdict_recommendation,
-            "temperature": curr_temp,
-            "humidity": curr_hum,
-            "climate": climate_str,
-            "gemini_evaluated": gemini_evaluated,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        self.active_alerts[track_id] = alert_obj
+                        verdict_reason = parsed_data.get("reason", verdict_reason)
+                        verdict_farmer_action = parsed_data.get("farmer_action", verdict_farmer_action)
 
-        # 1. Dispatch SMS via Twilio if severity is High or Critical (or Severe / High Concern)
-        sev_clean = str(verdict_severity).strip().upper()
-        if sev_clean in ["HIGH", "CRITICAL", "SEVERE"] or str(verdict_tier).upper() in ["HIGH CONCERN", "CRITICAL"]:
-            send_sms_alert(
-                severity=verdict_severity,
-                reason=verdict_reason,
-                farmer_action=verdict_recommendation,
-                chicken_id=track_id,
-                tag_label=tag_info["tag_label"],
-                climate_str=climate_str
-            )
+                        print(f"[Gemini 1.5 Flash] ✓ Verdict for Chicken #{track_id}: {verdict_severity} — {verdict_reason}")
 
-        # 2. Sync to Firebase Realtime Database
-        sync_alert_to_firebase(alert_obj)
+                except Exception as ex:
+                    print(f"[Gemini 1.5 Flash] API error for Chicken #{track_id}: {ex}")
+
+            # Map severity to internal tier and label
+            SEV_TO_TIER = {
+                "Low": ("Normal", "Healthy"),
+                "Medium": ("Monitor", "Monitor"),
+                "High": ("Suspicious", "Needs Attention"),
+                "Critical": ("High Concern", "Critical Alert")
+            }
+            v_tier, v_label = SEV_TO_TIER.get(verdict_severity, (tier, tier))
+
+            tag_info = get_poultry_tag_info(track_id)
+
+            # Store the verdict in memory
+            self.verdicts[track_id] = {
+                "tier": v_tier,
+                "label": v_label,
+                "severity": verdict_severity,
+                "reason": verdict_reason,
+                "recommendation": verdict_farmer_action,
+                "farmer_action": verdict_farmer_action,
+                "temperature": curr_temp,
+                "humidity": curr_hum,
+                "climate": climate_str,
+                "gemini_evaluated": gemini_evaluated,
+                "timestamp": curr_time
+            }
+
+            self.chicken_summaries[track_id] = f"Gemini: {verdict_reason}" if gemini_evaluated else verdict_reason
+
+            alert_obj = {
+                "chicken_id": track_id,
+                "tag_number": tag_info["tag_number"],
+                "tag_color": tag_info["tag_color"],
+                "tag_color_hex": tag_info["tag_color_hex"],
+                "tag_label": tag_info["tag_label"],
+                "status": f"{verdict_severity} • {tag_info['tag_label']}",
+                "severity": verdict_severity,
+                "reason": verdict_reason,
+                "farmer_action": verdict_farmer_action,
+                "recommendation": verdict_farmer_action,
+                "anomaly_score": score,
+                "anomaly_tier": v_tier,
+                "behavior": f"Stationary {stationary_sec:.0f}s • Resting {stats.get('rest_pct', 0.0)}%",
+                "duration_sec": round(stationary_sec, 1),
+                "stationary_sec": round(stationary_sec, 1),
+                "temperature": curr_temp,
+                "humidity": curr_hum,
+                "climate": climate_str,
+                "gemini_evaluated": gemini_evaluated,
+                "model": self.model_name,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "timestamp_epoch": time.time()
+            }
+            self.active_alerts[track_id] = alert_obj
+
+            # 1. Save Gemini's JSON diagnostic verdict directly to Firebase Realtime Database
+            sync_verdict_to_firebase(alert_obj)
+
+            # 2. Dispatch Twilio SMS alert if severity is High or Critical (wrapped in try-except)
+            if verdict_severity in ["High", "Critical"]:
+                try:
+                    send_sms_alert(
+                        severity=verdict_severity,
+                        reason=verdict_reason,
+                        farmer_action=verdict_farmer_action,
+                        chicken_id=track_id,
+                        tag_label=tag_info["tag_label"],
+                        climate_str=climate_str
+                    )
+                except Exception as sms_err:
+                    print(f"[SMS] ⚠ Twilio SMS dispatch error block caught: {sms_err}")
+
+            # 3. Lock global alert cooldown timer for 15 minutes after alert
+            record_global_alert(time.time())
+
+        finally:
+            self._query_in_progress = False
 
     def get_verdict(self, track_id):
         """Returns the latest Gemini verdict for a chicken, or None if not yet evaluated."""
@@ -1298,6 +1435,20 @@ def frame_jpg():
         return Response(latest_jpeg_bytes, mimetype='image/jpeg')
 
 
+@flask_app.route('/flagged_chicken.jpg')
+def flagged_chicken_jpg():
+    """Returns the most recent flagged recumbent chicken crop snapshot."""
+    snapshot_path = os.path.join(SCRIPT_DIR, "flagged_chicken.jpg")
+    if os.path.exists(snapshot_path):
+        try:
+            with open(snapshot_path, "rb") as f:
+                img_data = f.read()
+            return Response(img_data, mimetype='image/jpeg')
+        except Exception:
+            pass
+    return "No flagged chicken snapshot available", 404
+
+
 @flask_app.route('/status')
 def status():
     """Real-time JSON telemetry endpoint for PoultrySense."""
@@ -1307,11 +1458,13 @@ def status():
 
 @flask_app.route('/api/alerts')
 def api_alerts():
-    """Returns active chicken health alerts generated by the anomaly engine and Gemini 2.5."""
+    """Returns active chicken health alerts generated by the vision engine and Gemini 1.5 Flash."""
     with frame_lock:
         return jsonify({
             "status": "success",
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "global_cooldown_active": is_global_cooldown_active(),
+            "global_cooldown_remaining_sec": int(get_global_cooldown_remaining()),
             "alerts": gemini_escalator.get_active_alerts()
         })
 
@@ -1375,7 +1528,7 @@ def handle_sensor():
 
 @flask_app.route('/reset_ids')
 def reset_ids():
-    """Reset persistent chicken IDs and track histories."""
+    """Reset persistent chicken IDs, track histories, and global alert cooldown."""
     track_display_ids.clear()
     track_missed_counts.clear()
     track_histories.clear()
@@ -1390,7 +1543,8 @@ def reset_ids():
     track_hit_streaks.clear()
     track_confirmed_raw_ids.clear()
     display_coasting_boxes.clear()
-    return jsonify({"status": "success", "message": "Chicken tracking IDs and histories reset successfully."})
+    reset_global_cooldown()
+    return jsonify({"status": "success", "message": "Chicken tracking IDs, histories, and alert cooldown reset successfully."})
 
 
 @flask_app.route('/')
@@ -2108,27 +2262,75 @@ def camera_loop():
                     color = (70, 70, 255)  # Vivid Alert Red
                     unhealthy_count += 1
 
-                # 5. Request Gemini 3.6 Flash Verdict for EVERY chicken (adaptive cooldown)
-                gemini_escalator.request_verdict_async(
-                    track_id=display_id,
-                    stats=stats,
-                    baseline=baseline,
-                    anomaly_info=anomaly_info,
-                    crop=crop,
-                    curr_time=curr_time,
-                    is_isolated=is_isolated,
-                    stationary_sec=stationary_sec
-                )
+                # 5. Multimodal Abnormal Behavior & Sensor Stress Analysis with Gemini 3.6 Flash
+                # Triggered when ANY abnormal behavior or environmental stress is detected:
+                # - Prolonged immobility / recumbency
+                # - Lethargic posture (classifier / posture sub-score)
+                # - Persistent flock isolation
+                # - Thermal stress (ambient temperature > 30°C or < 18°C from ESP32 DHT22)
+                # - Composite anomaly tier (Suspicious / High Concern)
+                abnormal_triggers = []
+                if stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC:
+                    abnormal_triggers.append(f"Prolonged immobility ({stationary_sec:.0f}s >= {DAYTIME_RECUMBENT_THRESHOLD_SEC:.0f}s threshold)")
+                elif stationary_sec >= 25.0 and behavior_label in ("rest", "stand", "sit"):
+                    abnormal_triggers.append(f"Extended stationary resting ({stationary_sec:.0f}s)")
 
-                # 6. GEMINI VERDICT OVERRIDE — Gemini is the FINAL AUTHORITY
+                if unhealthy_prob >= 0.40 or anomaly_info.get("sub_scores", {}).get("posture", 0) >= 40.0:
+                    abnormal_triggers.append(f"Lethargic posture / visual anomaly score ({unhealthy_prob:.2f})")
+
+                if is_isolated and (stats.get("isolation_pct", 0) >= 35.0 or elapsed_obs >= 20.0):
+                    abnormal_triggers.append(f"Spatial isolation away from flock ({stats.get('isolation_pct', 0):.0f}%)")
+
+                curr_t_check, _, _ = get_current_climate()
+                if curr_t_check is not None:
+                    if curr_t_check > 30.0 and (stationary_sec >= 15.0 or motion < 1.6):
+                        abnormal_triggers.append(f"Heat stress condition ({curr_t_check:.1f}°C > 30°C with reduced activity)")
+                    elif curr_t_check < 18.0 and (stationary_sec >= 15.0 or motion < 1.6):
+                        abnormal_triggers.append(f"Cold stress condition ({curr_t_check:.1f}°C < 18°C with huddled inactivity)")
+
+                if anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60:
+                    abnormal_triggers.append(f"High anomaly score ({anomaly_tier} {anomaly_score}%)")
+
+                is_abnormal_flagged = len(abnormal_triggers) > 0
+
+                if is_abnormal_flagged and crop.size > 0 and crop.shape[0] >= 20 and crop.shape[1] >= 20:
+                    snapshot_file = os.path.join(SCRIPT_DIR, "flagged_chicken.jpg")
+                    try:
+                        cv2.imwrite(snapshot_file, crop)
+                    except Exception as ex_crop:
+                        print(f"[Vision Engine] Notice saving flagged snapshot: {ex_crop}")
+
+                    # 15-minute global timestamp-based cooldown (prevents duplicate queries and SMS when tracker IDs switch)
+                    if is_global_cooldown_active(curr_time):
+                        if curr_time - _last_cooldown_log_time >= 30.0:
+                            _last_cooldown_log_time = curr_time
+                            rem = int(get_global_cooldown_remaining(curr_time))
+                            print(f"[COOLDOWN] Global alert cooldown active ({rem}s remaining / {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s). Skipping Gemini query for Chicken #{display_id}.")
+                    else:
+                        gemini_escalator.request_verdict_async(
+                            track_id=display_id,
+                            stats=stats,
+                            baseline=baseline,
+                            anomaly_info=anomaly_info,
+                            crop=crop,
+                            curr_time=curr_time,
+                            is_isolated=is_isolated,
+                            stationary_sec=stationary_sec,
+                            snapshot_path=snapshot_file,
+                            abnormal_flags=abnormal_triggers
+                        )
+
+                # 6. GEMINI VERDICT OVERRIDE — Gemini 3.6 Flash is the DEFINITIVE AUTHORITY
                 gemini_verdict = gemini_escalator.get_verdict(display_id)
                 gemini_summary = ""
                 gemini_verified = False
+                gemini_severity = "Low"
 
                 if gemini_verdict and gemini_verdict.get("gemini_evaluated", False):
                     gemini_verified = True
                     gemini_tier = gemini_verdict["tier"]
                     gemini_label = gemini_verdict["label"]
+                    gemini_severity = gemini_verdict.get("severity", "Low")
                     gemini_reason = gemini_verdict["reason"]
                     gemini_summary = f"Gemini: {gemini_reason}"
 
@@ -2159,7 +2361,7 @@ def camera_loop():
                         color = (0, 140, 255)
                         warning_count += 1
                     else:  # High Concern
-                        health_label = "High Concern"
+                        health_label = "Critical Alert"
                         color = (70, 70, 255)
                         unhealthy_count += 1
                 else:
@@ -2173,12 +2375,14 @@ def camera_loop():
             gemini_check = " \u2713" if gemini_verified else ""
             if elapsed_obs < OBSERVATION_WINDOW:
                 badge_text = f"#{display_id}"
+            elif gemini_verified:
+                badge_text = f"#{display_id} {gemini_severity.upper()}{gemini_check}"
             elif anomaly_tier == "Normal":
-                badge_text = f"#{display_id} {behavior_label.upper()}{gemini_check}"
+                badge_text = f"#{display_id} {behavior_label.upper()}"
             elif anomaly_tier == "Monitor":
-                badge_text = f"#{display_id} WATCH{gemini_check}"
+                badge_text = f"#{display_id} WATCH"
             else:
-                badge_text = f"#{display_id} {anomaly_tier.upper()} {anomaly_score}%{gemini_check}"
+                badge_text = f"#{display_id} {anomaly_tier.upper()} {anomaly_score}%"
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.45
@@ -2208,6 +2412,7 @@ def camera_loop():
                 "health_detail": health_detail,
                 "anomaly_score": anomaly_score,
                 "anomaly_tier": anomaly_tier,
+                "severity": gemini_severity if gemini_verified else ("Low" if anomaly_tier == "Normal" else ("Medium" if anomaly_tier == "Monitor" else ("High" if anomaly_tier == "Suspicious" else "Critical"))),
                 "gemini_summary": gemini_summary,
                 "gemini_verified": gemini_verified,
 
@@ -2249,6 +2454,8 @@ def camera_loop():
                 "sensor_connected": (time.time() - latest_sensor_data.get("last_updated", 0) < 30.0) and (latest_sensor_data.get("temperature") is not None),
                 "temperature": latest_sensor_data.get("temperature") if (time.time() - latest_sensor_data.get("last_updated", 0) < 30.0) else None,
                 "humidity": latest_sensor_data.get("humidity") if (time.time() - latest_sensor_data.get("last_updated", 0) < 30.0) else None,
+                "global_cooldown_active": is_global_cooldown_active(),
+                "global_cooldown_remaining_sec": int(get_global_cooldown_remaining()),
                 "detections": detection_list,
                 "alerts": gemini_escalator.get_active_alerts()
 
