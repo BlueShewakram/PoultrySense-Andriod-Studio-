@@ -40,6 +40,7 @@ import com.google.android.material.timepicker.TimeFormat
 import android.animation.ValueAnimator
 import android.view.animation.OvershootInterpolator
 import com.example.poultrysense.data.AiServerScanner
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import com.example.poultrysense.data.ChickenTagHelper
@@ -76,6 +77,11 @@ class MonitorFragment : Fragment() {
     private var hasShownOfflineMascotAlert = false
     private var isStreamReceivingFrames = false
     private var clientDisplayFps = 0.0
+    enum class VideoFeedMode {
+        CLEAN,
+        AI_VISION
+    }
+    private var currentFeedMode: VideoFeedMode = VideoFeedMode.CLEAN
     private var chickenBobAnimator: ObjectAnimator? = null
 
     private val zoneListener: (BarnZone) -> Unit = { zone ->
@@ -104,6 +110,7 @@ class MonitorFragment : Fragment() {
         showMascotScanOnce()
 
         setupPoultryFarmMapView()
+        setupStreamModeToggle()
         setupSnapshotButton()
         setupOfflineRetry()
         setupCuteMascotAlert()
@@ -278,6 +285,66 @@ class MonitorFragment : Fragment() {
         }
     }
 
+    // ─── 1-Tap Stream Mode Selector (Clean Camera vs AI Vision) ───
+
+    private fun setupStreamModeToggle() {
+        updateStreamModeUi()
+
+        binding.btnToggleClean.setOnClickListener {
+            if (currentFeedMode != VideoFeedMode.CLEAN) {
+                it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                currentFeedMode = VideoFeedMode.CLEAN
+                updateStreamModeUi()
+                startCameraStream()
+            }
+        }
+
+        binding.btnToggleAi.setOnClickListener {
+            if (currentFeedMode != VideoFeedMode.AI_VISION) {
+                it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                currentFeedMode = VideoFeedMode.AI_VISION
+                updateStreamModeUi()
+                startCameraStream()
+            }
+        }
+
+        // Tapping the HUD pill inside the video viewport also toggles the feed mode
+        binding.hudLivePill.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            currentFeedMode = if (currentFeedMode == VideoFeedMode.CLEAN) {
+                VideoFeedMode.AI_VISION
+            } else {
+                VideoFeedMode.CLEAN
+            }
+            updateStreamModeUi()
+            startCameraStream()
+        }
+    }
+
+    private fun updateStreamModeUi() {
+        if (_binding == null) return
+        val ctx = context ?: return
+        val isClean = currentFeedMode == VideoFeedMode.CLEAN
+
+        if (isClean) {
+            binding.btnToggleClean.setBackgroundResource(R.drawable.bg_segmented_active)
+            binding.tvToggleClean.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
+            binding.btnToggleAi.setBackgroundResource(android.R.color.transparent)
+            binding.tvToggleAi.setTextColor(Color.parseColor("#64748B"))
+
+            binding.tvHudSource.text = "CAMERA (CLEAN)"
+            binding.viewHudLiveDot.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#00E676"))
+        } else {
+            binding.btnToggleAi.setBackgroundResource(R.drawable.bg_segmented_active)
+            binding.tvToggleAi.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
+            binding.btnToggleClean.setBackgroundResource(android.R.color.transparent)
+            binding.tvToggleClean.setTextColor(Color.parseColor("#64748B"))
+
+            binding.tvHudSource.text = "AI DETECTION HUD"
+            binding.viewHudLiveDot.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#00E5FF"))
+        }
+    }
+
     // ─── Camera Stream Poller ───
 
     private fun startCameraStream() {
@@ -301,10 +368,14 @@ class MonitorFragment : Fragment() {
 
         // 1. High-Performance Frame Poller (Zero-lag real-time camera stream)
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url("$baseUrl/frame.jpg")
+            var lastFeedMode: VideoFeedMode? = null
+            var request = Request.Builder()
+                .url(if (currentFeedMode == VideoFeedMode.CLEAN) "$baseUrl/raw_frame.jpg" else "$baseUrl/frame.jpg")
                 .header("Cache-Control", "no-cache")
                 .build()
+//
+//
+//
             val decodeOptions = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.RGB_565 // 50% faster decode, half memory allocation
             }
@@ -784,6 +855,7 @@ class MonitorFragment : Fragment() {
                 .setTitleText("Select Checkup Time")
                 .setTheme(R.style.ThemeOverlay_PoultrySense_TimePicker)
                 .build()
+//
 
             picker.addOnPositiveButtonClickListener {
                 selectedHour = picker.hour

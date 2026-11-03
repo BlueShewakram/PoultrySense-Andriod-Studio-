@@ -355,6 +355,7 @@ HEALTH_NAMES = {0: "Healthy", 1: "Unhealthy"}
 # --- Global shared state ---
 latest_frame = None
 latest_jpeg_bytes = None
+latest_raw_jpeg_bytes = None
 latest_status = {
     "active": False,
     "fps": 0.0,
@@ -1413,14 +1414,31 @@ flask_app = Flask(__name__)
 
 @flask_app.route('/video_feed')
 def video_feed():
-    """Multipart MJPEG video stream for Android app & web browser."""
+    mode = request.args.get('mode', 'annotated').lower()
     def generate():
         while True:
             with frame_lock:
-                if latest_jpeg_bytes is None:
+                frame_bytes = latest_raw_jpeg_bytes if mode == 'raw' else latest_jpeg_bytes
+                if frame_bytes is None:
+                    frame_bytes = latest_jpeg_bytes or latest_raw_jpeg_bytes
+                if frame_bytes is None:
                     time.sleep(0.01)
                     continue
-                frame_bytes = latest_jpeg_bytes
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            time.sleep(0.02)
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@flask_app.route('/raw_video_feed')
+def raw_video_feed():
+    """Multipart MJPEG clean raw video stream (zero AI overlays, maximum 30 FPS)."""
+    def generate():
+        while True:
+            with frame_lock:
+                frame_bytes = latest_raw_jpeg_bytes or latest_jpeg_bytes
+                if frame_bytes is None:
+                    time.sleep(0.01)
+                    continue
             yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             time.sleep(0.02)
     return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
@@ -1428,11 +1446,25 @@ def video_feed():
 
 @flask_app.route('/frame.jpg')
 def frame_jpg():
-    """Single JPEG snapshot endpoint."""
+    """Single JPEG snapshot endpoint. Supports ?mode=raw or ?mode=annotated."""
+    mode = request.args.get('mode', 'annotated').lower()
     with frame_lock:
-        if latest_jpeg_bytes is None:
+        target_bytes = latest_raw_jpeg_bytes if mode == 'raw' else latest_jpeg_bytes
+        if target_bytes is None:
+            target_bytes = latest_jpeg_bytes or latest_raw_jpeg_bytes
+        if target_bytes is None:
             return "No frame available", 404
-        return Response(latest_jpeg_bytes, mimetype='image/jpeg')
+        return Response(target_bytes, mimetype='image/jpeg')
+
+
+@flask_app.route('/raw_frame.jpg')
+def raw_frame_jpg():
+    """Single clean raw camera frame without boxes (high-FPS, zero lag)."""
+    with frame_lock:
+        target_bytes = latest_raw_jpeg_bytes or latest_jpeg_bytes
+        if target_bytes is None:
+            return "No frame available", 404
+        return Response(target_bytes, mimetype='image/jpeg')
 
 
 @flask_app.route('/flagged_chicken.jpg')
@@ -1752,12 +1784,27 @@ def index():
 
         <div class="nav-actions">
             <a class="btn" href="/video_feed" target="_blank">📺 MJPEG Stream</a>
+            <a class="btn" href="/raw_video_feed" target="_blank">📹 Clean Stream</a>
+            <button class="btn" onclick="toggleFeedMode()" id="btn-toggle-feed">Switch to Clean Feed</button>
             <a class="btn" href="/status" target="_blank">📊 JSON Telemetry</a>
             <button class="btn" onclick="fetch('/reset_ids').then(() => alert('IDs Reset!'));">🔄 Reset Tracking IDs</button>
         </div>
     </div>
 
     <script>
+        let isClean = false;
+        function toggleFeedMode() {
+            isClean = !isClean;
+            const img = document.querySelector('.video-feed');
+            if (isClean) {
+                img.src = '/raw_video_feed';
+                document.getElementById('btn-toggle-feed').innerText = 'Switch to AI Vision';
+            } else {
+                img.src = '/video_feed';
+                document.getElementById('btn-toggle-feed').innerText = 'Switch to Clean Feed';
+            }
+        }
+
         setInterval(() => {
             fetch('/status')
                 .then(res => res.json())
@@ -1776,7 +1823,7 @@ def index():
 
 # --- Main Inference & Camera Loop ---
 def camera_loop():
-    global latest_frame, latest_jpeg_bytes, latest_status
+    global latest_frame, latest_jpeg_bytes, latest_raw_jpeg_bytes, latest_status
 
     print("[INFO] Initializing PoultrySense AI Engine...")
 
@@ -1917,6 +1964,9 @@ def camera_loop():
             inv_gamma = 1.0 / 1.5
             lut = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype("uint8")
             frame = cv2.LUT(frame, lut)
+
+        # Clean frame copy for the Raw Live Stream (zero HUD boxes, maximum 30 FPS clarity)
+        clean_frame = frame.copy()
 
         # High-FPS Stride: Run YOLO inference every 2nd frame (or always if scene is empty)
         # Interleaved frames reuse confirmed tracking positions for silky-smooth 25-30 FPS!
@@ -2432,12 +2482,16 @@ def camera_loop():
             health_index = 100
 
 
-        # Encode Frame with high visual clarity & low-latency compression (quality 70 ensures crisp video)
+        # Encode Clean Frame (zero HUD overlays, silky smooth 30 FPS raw camera)
+        _, clean_jpeg = cv2.imencode('.jpg', clean_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+
+        # Encode Annotated Frame (with bounding boxes, health badges, tracker IDs)
         _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
 
         with frame_lock:
             latest_frame = frame
             latest_jpeg_bytes = jpeg.tobytes()
+            latest_raw_jpeg_bytes = clean_jpeg.tobytes()
             latest_status = {
                 "active": True,
                 "fps": round(fps, 1),
