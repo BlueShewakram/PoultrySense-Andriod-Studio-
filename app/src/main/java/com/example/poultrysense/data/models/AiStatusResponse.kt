@@ -36,6 +36,12 @@ data class DetectionItem(
 data class AiStatusResponse(
     @SerializedName("active") val active: Boolean? = false,
     @SerializedName("fps") val fps: Double? = 0.0,
+    @SerializedName("stream_fps") val streamFps: Double? = 0.0,
+    @SerializedName("detection_fps") val detectionFps: Double? = 0.0,
+    @SerializedName("detection_conf") val detectionConf: Double? = 0.0,
+    @SerializedName("frame_width") val frameWidth: Int? = 640,
+    @SerializedName("frame_height") val frameHeight: Int? = 480,
+    @SerializedName("detection_frame_generation") val detectionFrameGeneration: Long? = 0,
     @SerializedName("flock_count") val flockCount: Int? = 0,
     @SerializedName("person_count") val personCount: Int? = 0,
     @SerializedName("hand_count") val handCount: Int? = 0,
@@ -51,4 +57,13 @@ data class AiStatusResponse(
     @SerializedName("sensor_connected") val sensorConnected: Boolean? = false,
     @SerializedName("detections") val detections: List<DetectionItem>? = emptyList(),
     @SerializedName("alerts") val alerts: List<ChickenAlertItem>? = emptyList()
+)
+
+data class DetectionOverlayResponse(
+    @SerializedName("frame_generation") val frameGeneration: Long? = 0,
+    @SerializedName("updated_at") val updatedAt: Double? = 0.0,
+    @SerializedName("frame_width") val frameWidth: Int? = 640,
+    @SerializedName("frame_height") val frameHeight: Int? = 480,
+    @SerializedName("detection_fps") val detectionFps: Double? = 0.0,
+    @SerializedName("detections") val detections: List<DetectionItem>? = emptyList()
 )

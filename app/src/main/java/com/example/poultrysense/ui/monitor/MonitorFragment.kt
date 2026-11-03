@@ -21,6 +21,7 @@ import com.example.poultrysense.data.ServerPreferences
 import com.example.poultrysense.data.models.AiStatusResponse
 import com.example.poultrysense.data.models.BarnZone
 import com.example.poultrysense.data.models.DetectionItem
+import com.example.poultrysense.data.models.DetectionOverlayResponse
 import com.example.poultrysense.databinding.FragmentMonitorBinding
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -67,6 +68,8 @@ class MonitorFragment : Fragment() {
     private val gson = Gson()
     private var streamJob: Job? = null
     private var statusJob: Job? = null
+    private var detectionsJob: Job? = null
+    @Volatile private var lastOverlayGeneration: Long = -1L
     private var sessionTickerJob: Job? = null
     private var latestAiStatus: AiStatusResponse? = null
     private var liveTemp: Double? = null
@@ -334,6 +337,7 @@ class MonitorFragment : Fragment() {
 
             binding.tvHudSource.text = "STREAMING"
             binding.viewHudLiveDot.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#00E676"))
+            binding.ivDetectionOverlay.clear()
         } else {
             binding.btnToggleAi.setBackgroundResource(R.drawable.bg_segmented_active)
             binding.tvToggleAi.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
@@ -367,10 +371,11 @@ class MonitorFragment : Fragment() {
         val baseUrl = ServerPreferences.getBaseUrl(requireContext())
 
         // 1. High-Performance Frame Poller (Zero-lag real-time camera stream)
+        // Both modes use the clean stream: Detection mode draws AI boxes as a
+        // client-side overlay, so the video never drops to inference frame rate.
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            var lastFeedMode: VideoFeedMode? = null
-            var request = Request.Builder()
-                .url(if (currentFeedMode == VideoFeedMode.STREAMING) "$baseUrl/raw_frame.jpg" else "$baseUrl/frame.jpg")
+            val request = Request.Builder()
+                .url("$baseUrl/raw_frame.jpg")
                 .header("Cache-Control", "no-cache")
                 .build()
 //
@@ -439,7 +444,14 @@ class MonitorFragment : Fragment() {
             }
         }
 
-        // 2. Status Poller
+        // 2. Detection Box Overlay Poller (Detection mode only)
+        if (currentFeedMode == VideoFeedMode.DETECTION) {
+            startDetectionOverlayPolling(baseUrl)
+        } else {
+            binding.ivDetectionOverlay.clear()
+        }
+
+        // 3. Status Poller
         statusJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             val request = Request.Builder().url("$baseUrl/status").build()
             while (isActive) {
@@ -470,10 +482,16 @@ class MonitorFragment : Fragment() {
                                         }
                                     )
                                     binding.tvHudFps.text = String.format("%.1f FPS", displayFps)
+                                    val detectionFps = status.detectionFps ?: 0.0
+                                    binding.tvHudLatency.text = String.format(Locale.getDefault(), "• %.1f AI/s", detectionFps)
                                     binding.tvDetectionCount.text = "$count in View"
                                     binding.tvTelemetryCountVal.text = count.toString()
                                     binding.tvTelemetryPostureVal.text = healthIndex?.let { "$it%" } ?: "--"
-                                    binding.tvTelemetryLatencyVal.text = "--"
+                                    binding.tvTelemetryLatencyVal.text = if (detectionFps > 0.05) {
+                                        String.format(Locale.getDefault(), "%.0f ms", 1000.0 / detectionFps)
+                                    } else {
+                                        "--"
+                                    }
 
                                     // Synchronize the single active-zone card.
                                     if (isStreamReceivingFrames) {
@@ -529,6 +547,49 @@ class MonitorFragment : Fragment() {
                     showOfflineStatus()
                 }
                 delay(1000)
+            }
+        }
+    }
+
+    private fun startDetectionOverlayPolling(baseUrl: String) {
+        detectionsJob?.cancel()
+        lastOverlayGeneration = -1L
+        val request = Request.Builder()
+            .url("$baseUrl/detections")
+            .header("Cache-Control", "no-cache")
+            .build()
+
+        detectionsJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    val response = httpClient.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        val body = response.body?.string()
+                        if (body != null) {
+                            val payload = gson.fromJson(body, DetectionOverlayResponse::class.java)
+                            val generation = payload.frameGeneration ?: 0L
+                            if (generation != lastOverlayGeneration) {
+                                lastOverlayGeneration = generation
+                                val detections = payload.detections ?: emptyList()
+                                val frameWidth = payload.frameWidth ?: 640
+                                val frameHeight = payload.frameHeight ?: 480
+                                withContext(Dispatchers.Main) {
+                                    if (_binding != null &&
+                                        currentFeedMode == VideoFeedMode.DETECTION
+                                    ) {
+                                        binding.ivDetectionOverlay.setDetections(
+                                            detections, frameWidth, frameHeight
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    response.close()
+                } catch (_: Exception) {
+                    // Overlay failures must never interrupt the video preview.
+                }
+                delay(300)
             }
         }
     }
@@ -701,6 +762,9 @@ class MonitorFragment : Fragment() {
         streamJob = null
         statusJob?.cancel()
         statusJob = null
+        detectionsJob?.cancel()
+        detectionsJob = null
+        _binding?.ivDetectionOverlay?.clear()
     }
 
     // ─── AI Checkup Session & Scheduling ───

@@ -438,6 +438,14 @@
                         android:visibility="visible"
                         tools:ignore="ContentDescription" />
 
+                    <!-- AI boxes drawn over the smooth raw preview (Detection mode) -->
+                    <com.example.poultrysense.ui.monitor.DetectionOverlayView
+                        android:id="@+id/ivDetectionOverlay"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:clickable="false"
+                        android:focusable="false" />
+
 
 
                     <!-- Stream Offline State -->
