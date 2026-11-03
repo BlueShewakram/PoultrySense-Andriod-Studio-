@@ -1823,7 +1823,7 @@ def index():
 
 # --- Main Inference & Camera Loop ---
 def camera_loop():
-    global latest_frame, latest_jpeg_bytes, latest_raw_jpeg_bytes, latest_status
+    global latest_frame, latest_jpeg_bytes, latest_raw_jpeg_bytes, latest_status, _last_cooldown_log_time
 
     print("[INFO] Initializing PoultrySense AI Engine...")
 
@@ -2351,24 +2351,27 @@ def camera_loop():
                         print(f"[Vision Engine] Notice saving flagged snapshot: {ex_crop}")
 
                     # 15-minute global timestamp-based cooldown (prevents duplicate queries and SMS when tracker IDs switch)
-                    if is_global_cooldown_active(curr_time):
-                        if curr_time - _last_cooldown_log_time >= 30.0:
-                            _last_cooldown_log_time = curr_time
-                            rem = int(get_global_cooldown_remaining(curr_time))
-                            print(f"[COOLDOWN] Global alert cooldown active ({rem}s remaining / {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s). Skipping Gemini query for Chicken #{display_id}.")
-                    else:
-                        gemini_escalator.request_verdict_async(
-                            track_id=display_id,
-                            stats=stats,
-                            baseline=baseline,
-                            anomaly_info=anomaly_info,
-                            crop=crop,
-                            curr_time=curr_time,
-                            is_isolated=is_isolated,
-                            stationary_sec=stationary_sec,
-                            snapshot_path=snapshot_file,
-                            abnormal_flags=abnormal_triggers
-                        )
+                    try:
+                        if is_global_cooldown_active(curr_time):
+                            if curr_time - _last_cooldown_log_time >= 30.0:
+                                _last_cooldown_log_time = curr_time
+                                rem = int(get_global_cooldown_remaining(curr_time))
+                                print(f"[COOLDOWN] Global alert cooldown active ({rem}s remaining / {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s). Skipping Gemini query for Chicken #{display_id}.")
+                        else:
+                            gemini_escalator.request_verdict_async(
+                                track_id=display_id,
+                                stats=stats,
+                                baseline=baseline,
+                                anomaly_info=anomaly_info,
+                                crop=crop,
+                                curr_time=curr_time,
+                                is_isolated=is_isolated,
+                                stationary_sec=stationary_sec,
+                                snapshot_path=snapshot_file,
+                                abnormal_flags=abnormal_triggers
+                            )
+                    except Exception as ex_cd:
+                        print(f"[COOLDOWN] Warning during alert cooldown check: {ex_cd}")
 
                 # 6. GEMINI VERDICT OVERRIDE — Gemini 3.6 Flash is the DEFINITIVE AUTHORITY
                 gemini_verdict = gemini_escalator.get_verdict(display_id)
