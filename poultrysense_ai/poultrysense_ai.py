@@ -1783,25 +1783,25 @@ def index():
         </div>
 
         <div class="nav-actions">
-            <a class="btn" href="/video_feed" target="_blank">📺 MJPEG Stream</a>
-            <a class="btn" href="/raw_video_feed" target="_blank">📹 Clean Stream</a>
-            <button class="btn" onclick="toggleFeedMode()" id="btn-toggle-feed">Switch to Clean Feed</button>
+            <a class="btn" href="/video_feed" target="_blank">📺 Detection Feed</a>
+            <a class="btn" href="/raw_video_feed" target="_blank">📹 Streaming Feed</a>
+            <button class="btn" onclick="toggleFeedMode()" id="btn-toggle-feed">Switch to Streaming</button>
             <a class="btn" href="/status" target="_blank">📊 JSON Telemetry</a>
             <button class="btn" onclick="fetch('/reset_ids').then(() => alert('IDs Reset!'));">🔄 Reset Tracking IDs</button>
         </div>
     </div>
 
     <script>
-        let isClean = false;
+        let isStreaming = false;
         function toggleFeedMode() {
-            isClean = !isClean;
+            isStreaming = !isStreaming;
             const img = document.querySelector('.video-feed');
-            if (isClean) {
+            if (isStreaming) {
                 img.src = '/raw_video_feed';
-                document.getElementById('btn-toggle-feed').innerText = 'Switch to AI Vision';
+                document.getElementById('btn-toggle-feed').innerText = 'Switch to Detection';
             } else {
                 img.src = '/video_feed';
-                document.getElementById('btn-toggle-feed').innerText = 'Switch to Clean Feed';
+                document.getElementById('btn-toggle-feed').innerText = 'Switch to Streaming';
             }
         }
 

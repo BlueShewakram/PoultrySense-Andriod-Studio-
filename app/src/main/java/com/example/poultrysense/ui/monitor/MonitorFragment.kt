@@ -78,10 +78,10 @@ class MonitorFragment : Fragment() {
     private var isStreamReceivingFrames = false
     private var clientDisplayFps = 0.0
     enum class VideoFeedMode {
-        CLEAN,
-        AI_VISION
+        STREAMING,
+        DETECTION
     }
-    private var currentFeedMode: VideoFeedMode = VideoFeedMode.CLEAN
+    private var currentFeedMode: VideoFeedMode = VideoFeedMode.STREAMING
     private var chickenBobAnimator: ObjectAnimator? = null
 
     private val zoneListener: (BarnZone) -> Unit = { zone ->
@@ -291,18 +291,18 @@ class MonitorFragment : Fragment() {
         updateStreamModeUi()
 
         binding.btnToggleClean.setOnClickListener {
-            if (currentFeedMode != VideoFeedMode.CLEAN) {
+            if (currentFeedMode != VideoFeedMode.STREAMING) {
                 it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                currentFeedMode = VideoFeedMode.CLEAN
+                currentFeedMode = VideoFeedMode.STREAMING
                 updateStreamModeUi()
                 startCameraStream()
             }
         }
 
         binding.btnToggleAi.setOnClickListener {
-            if (currentFeedMode != VideoFeedMode.AI_VISION) {
+            if (currentFeedMode != VideoFeedMode.DETECTION) {
                 it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                currentFeedMode = VideoFeedMode.AI_VISION
+                currentFeedMode = VideoFeedMode.DETECTION
                 updateStreamModeUi()
                 startCameraStream()
             }
@@ -311,10 +311,10 @@ class MonitorFragment : Fragment() {
         // Tapping the HUD pill inside the video viewport also toggles the feed mode
         binding.hudLivePill.setOnClickListener {
             it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-            currentFeedMode = if (currentFeedMode == VideoFeedMode.CLEAN) {
-                VideoFeedMode.AI_VISION
+            currentFeedMode = if (currentFeedMode == VideoFeedMode.STREAMING) {
+                VideoFeedMode.DETECTION
             } else {
-                VideoFeedMode.CLEAN
+                VideoFeedMode.STREAMING
             }
             updateStreamModeUi()
             startCameraStream()
@@ -324,15 +324,15 @@ class MonitorFragment : Fragment() {
     private fun updateStreamModeUi() {
         if (_binding == null) return
         val ctx = context ?: return
-        val isClean = currentFeedMode == VideoFeedMode.CLEAN
+        val isStreaming = currentFeedMode == VideoFeedMode.STREAMING
 
-        if (isClean) {
+        if (isStreaming) {
             binding.btnToggleClean.setBackgroundResource(R.drawable.bg_segmented_active)
             binding.tvToggleClean.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
             binding.btnToggleAi.setBackgroundResource(android.R.color.transparent)
             binding.tvToggleAi.setTextColor(Color.parseColor("#64748B"))
 
-            binding.tvHudSource.text = "CAMERA (CLEAN)"
+            binding.tvHudSource.text = "STREAMING"
             binding.viewHudLiveDot.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#00E676"))
         } else {
             binding.btnToggleAi.setBackgroundResource(R.drawable.bg_segmented_active)
@@ -340,7 +340,7 @@ class MonitorFragment : Fragment() {
             binding.btnToggleClean.setBackgroundResource(android.R.color.transparent)
             binding.tvToggleClean.setTextColor(Color.parseColor("#64748B"))
 
-            binding.tvHudSource.text = "AI DETECTION HUD"
+            binding.tvHudSource.text = "DETECTION"
             binding.viewHudLiveDot.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#00E5FF"))
         }
     }
@@ -370,7 +370,7 @@ class MonitorFragment : Fragment() {
         streamJob = viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
             var lastFeedMode: VideoFeedMode? = null
             var request = Request.Builder()
-                .url(if (currentFeedMode == VideoFeedMode.CLEAN) "$baseUrl/raw_frame.jpg" else "$baseUrl/frame.jpg")
+                .url(if (currentFeedMode == VideoFeedMode.STREAMING) "$baseUrl/raw_frame.jpg" else "$baseUrl/frame.jpg")
                 .header("Cache-Control", "no-cache")
                 .build()
 //
