@@ -325,48 +325,7 @@ class MonitorFragment : Fragment() {
             startCameraStream()
         }
 
-        setupThresholdSlider()
-    }
-
-    private fun setupThresholdSlider() {
-        if (_binding == null) return
-        // Range: progress 0..80 maps to 0.10 .. 0.90 (val = 0.10 + progress * 0.01)
-        binding.seekBarThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                val confVal = 0.10f + (progress * 0.01f)
-                val percent = (confVal * 100).toInt()
-                binding.tvThresholdVal.text = String.format(java.util.Locale.US, "%d%% (%.2f)", percent, confVal)
-            }
-
-            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
-
-            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
-                val progress = seekBar?.progress ?: 20
-                val confVal = 0.10f + (progress * 0.01f)
-                updateRemoteDetectionThreshold(confVal)
-            }
-        })
-    }
-
-    private fun updateRemoteDetectionThreshold(conf: Float) {
-        val ctx = context ?: return
-        val baseUrl = ServerPreferences.getBaseUrl(ctx)
-        val jsonPayload = org.json.JSONObject().apply { put("conf", conf.toDouble()) }.toString()
-        val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-        val requestBody = jsonPayload.toRequestBody(mediaType)
-        val request = okhttp3.Request.Builder()
-            .url("$baseUrl/api/config/detection")
-            .post(requestBody)
-            .build()
-
-        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                httpClient.newCall(request).execute().close()
-            } catch (e: Exception) {
-                // Silently ignore or retry
-            }
         }
-    }
 
     private fun updateStreamModeUi() {
         if (_binding == null) return

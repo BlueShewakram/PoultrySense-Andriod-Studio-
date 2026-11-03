@@ -1529,24 +1529,6 @@ def status():
         return jsonify(latest_status)
 
 
-@flask_app.route('/api/config/detection', methods=['GET', 'POST'])
-def api_config_detection():
-    """Allows dynamic runtime tuning of chicken detection confidence threshold."""
-    global DETECTION_CONF
-    if request.method == 'POST':
-        try:
-            data = request.get_json(silent=True) or request.form
-            if 'conf' in data:
-                new_conf = max(0.05, min(0.95, float(data['conf'])))
-                with frame_lock:
-                    DETECTION_CONF = new_conf
-                    latest_status["detection_conf"] = round(new_conf, 2)
-                print(f"[TUNING] Live Detection Confidence updated to {new_conf:.2f}")
-                return jsonify({"status": "success", "detection_conf": round(new_conf, 2)})
-        except Exception as e:
-            return jsonify({"status": "error", "message": str(e)}), 400
-    return jsonify({"detection_conf": round(DETECTION_CONF, 2)})
-
 @flask_app.route('/detections')
 def detections():
     """Lightweight AI box metadata for client-side overlay on the raw preview.

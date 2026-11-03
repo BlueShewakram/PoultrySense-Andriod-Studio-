@@ -413,56 +413,6 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- Realtime Detection Sensitivity Slider (Tuning / Testing Bar) -->
-            <LinearLayout
-                android:id="@+id/layoutThresholdSliderCard"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:background="@drawable/bg_segmented_container"
-                android:orientation="vertical"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="8dp">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:fontFamily="sans-serif-bold"
-                        android:text="AI Detection Threshold (Testing)"
-                        android:textColor="#334155"
-                        android:textSize="11sp" />
-
-                    <TextView
-                        android:id="@+id/tvThresholdVal"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:background="@drawable/bg_segmented_active"
-                        android:fontFamily="sans-serif-bold"
-                        android:paddingHorizontal="8dp"
-                        android:paddingVertical="2dp"
-                        android:text="30% (0.30)"
-                        android:textColor="@color/primary"
-                        android:textSize="11sp" />
-                </LinearLayout>
-
-                <SeekBar
-                    android:id="@+id/seekBarThreshold"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:max="80"
-                    android:progress="25"
-                    android:progressTint="@color/primary"
-                    android:thumbTint="@color/primary" />
-            </LinearLayout>
-
             <!-- 3. Clean 16:9 Video Viewport -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/cardVideoViewport"
