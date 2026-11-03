@@ -112,7 +112,7 @@ from stream_pipeline import FrameBuffer, RateGate, normalize_motion  # noqa: E40
 DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "3.0"))
 # Confidence threshold for the chicken detector. 0.52 is the branch default;
 # override with POULTRYSENSE_DETECTION_CONF=0.35 for the older, more sensitive setting.
-DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.52"))
+DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.35"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
 # hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
@@ -361,8 +361,8 @@ if not os.path.exists(TRACKER_YAML):
     TRACKER_YAML = "botsort.yaml"
 
 DET_MODELS = [
-    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v4_26n.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
+    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v4_26n.pt"),
 ]
 
 BEHAVIOR_MODELS = [
