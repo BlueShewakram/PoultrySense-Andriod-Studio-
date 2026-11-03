@@ -19,6 +19,27 @@ It streams real-time, low-latency, AI-annotated video (up to 30 FPS) with persis
 
 ---
 
+## ⚡ Latest Updates in Branch `updated-geminiai-and-sms-notification`
+
+### 1. 🤖 Multimodal Gemini AI Diagnostics
+* Automatically crops flagged chickens (`flagged_chicken.jpg`) upon immobility $>45$s, lethargic posture, flock isolation, or thermal stress ($>30^\circ\text{C}$ / $<18^\circ\text{C}$).
+* Sends cropped photo + live sensor data to **Gemini 3.6 Flash** for structured verdicts (`Low`, `Medium`, `High`, `Critical`).
+* Real-time sync to Firebase Realtime Database (`/active_alerts`).
+
+### 2. ⏱️ Synchronized 15-Minute Alert Cooldown
+* Enforces a 15-minute (900s) global cooldown across **both** Gemini AI queries and Twilio SMS dispatches.
+* Completely eliminates repetitive notifications and saves API quota when tracker IDs switch.
+
+### 3. 🎥 Separated Feeds: Streaming vs. Detection
+* **📹 Streaming (`/raw_frame.jpg` & `/raw_video_feed`)**: Pure, crystal-clear 30 FPS camera video with **no bounding boxes** (zero lag).
+* **🎯 Detection (`/frame.jpg` & `/video_feed`)**: Real-time AI vision feed with **YOLO bounding boxes**, tracking IDs (`#1`, `#2`), and health badges.
+
+### 4. 📱 1-Tap Toggle in Android App
+* Added a `[ 📹 Streaming | 🎯 Detection ]` toggle button above the camera viewport in the **Monitor** screen.
+* Instant 1-tap switching between smooth camera video and AI detection overlay.
+
+---
+
 ## 🤖 One-Prompt Setup for AI Agents (Cursor, Antigravity, Claude, Copilot)
 
 If you are cloning this repository and using an AI coding assistant (such as **Antigravity**, **Cursor**, **Claude Code**, or **GitHub Copilot Workspace**), simply copy and paste this single prompt:
