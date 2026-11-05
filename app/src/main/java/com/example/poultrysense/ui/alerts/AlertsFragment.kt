@@ -14,6 +14,7 @@ import com.example.poultrysense.data.ChickenTagHelper
 import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.data.models.ScanSession
+import com.example.poultrysense.data.models.TierLabels
 import com.example.poultrysense.databinding.FragmentAlertsBinding
 import kotlinx.coroutines.launch
 
@@ -147,7 +148,7 @@ class AlertsFragment : Fragment() {
         return FarmAlert(
             id = "scan-${session.id}-chicken-${detail.chickenId}",
             severity = if (critical) AlertSeverity.CRITICAL else AlertSeverity.WARNING,
-            title = "${tag.displayLabel} • ${tier}",
+            title = "${tag.displayLabel} • ${TierLabels.forTier(tier)}",
             description = description,
             timeAgo = session.time,
             timestamp = session.loggedAt,

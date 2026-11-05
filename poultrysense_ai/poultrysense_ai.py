@@ -107,18 +107,6 @@ if SCRIPT_DIR not in sys.path:
 
 from stream_pipeline import FrameBuffer, RateGate, normalize_motion  # noqa: E402
 
-# Detection is capped at 2-3 inferences/second. Inference itself is usually the
-# real limit (~400-500 ms on CPU), so this gate only prevents wasted fast runs.
-DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "3.0"))
-# Confidence threshold for the chicken detector. 0.52 is the branch default;
-# override with POULTRYSENSE_DETECTION_CONF=0.35 for the older, more sensitive setting.
-DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.30"))
-STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
-# Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
-# hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
-STREAM_MAX_FPS = float(os.environ.get("STREAM_MAX_FPS", "30"))
-
-
 # --- Environment Variables (.env) Loader ---
 def load_env_file():
     """Load configuration from .env into os.environ if not already present."""
@@ -142,6 +130,17 @@ def load_env_file():
                 print(f"[ENV] Notice reading {env_path}: {e}")
 
 load_env_file()
+
+# Detection is capped at 10 inferences/second on GPU (3 on CPU). Inference itself
+# is the real limit, so this gate only prevents wasted fast runs.
+DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "10.0"))
+# Confidence threshold for the chicken detector. 0.52 is the branch default;
+# override with POULTRYSENSE_DETECTION_CONF=0.35 for the older, more sensitive setting.
+DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.30"))
+STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
+# Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
+# hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
+STREAM_MAX_FPS = float(os.environ.get("STREAM_MAX_FPS", "30"))
 
 # --- Firebase & Twilio Alert Dispatch Logic ---
 FIREBASE_DATABASE_URL = os.environ.get(
@@ -243,31 +242,25 @@ def get_current_climate():
     else:
         return None, None, "Unavailable"
 
-def send_sms_alert(severity, reason, farmer_action, chicken_id=None, tag_label=None, climate_str=None):
-    """
-    Dispatches a real-time SMS notification via Twilio when Gemini outputs High or Critical severity.
-    Checks Android app notification preferences in Firebase first, falling back to .env configuration.
-    Includes ambient coop climate (DHT22 temperature & humidity) in the alert.
-    Enforces the global cooldown to avoid duplicate SMS alerts caused by tracker ID switches.
-    Wrapped in try-except for fault-tolerant operation.
+def _dispatch_sms(sms_body, enforce_cooldown=True):
+    """Send a single SMS through Twilio.
+
+    Honours the farmer's in-app SMS switch and phone number, falling back to the
+    .env configuration. Returns True only when Twilio accepted the message.
     """
     global _last_global_sms_timestamp
     try:
-        sev_clean = str(severity).strip().capitalize()
-        if sev_clean not in ["High", "Critical"]:
-            return False
-
         if not HAS_TWILIO:
             print("[SMS] Notice: twilio library not available. Skipping SMS.")
             return False
 
-        # Global SMS Cooldown Check (prevent spamming farmer when tracker IDs switch)
         curr_time = time.time()
-        with _global_cooldown_lock:
-            if _last_global_sms_timestamp > 0.0 and (curr_time - _last_global_sms_timestamp) < GLOBAL_ALERT_COOLDOWN_SEC:
-                rem = int(GLOBAL_ALERT_COOLDOWN_SEC - (curr_time - _last_global_sms_timestamp))
-                print(f"[SMS] Global alert cooldown active ({rem}s remaining). Skipping duplicate SMS dispatch.")
-                return False
+        if enforce_cooldown:
+            with _global_cooldown_lock:
+                if _last_global_sms_timestamp > 0.0 and (curr_time - _last_global_sms_timestamp) < GLOBAL_ALERT_COOLDOWN_SEC:
+                    rem = int(GLOBAL_ALERT_COOLDOWN_SEC - (curr_time - _last_global_sms_timestamp))
+                    print(f"[SMS] Global alert cooldown active ({rem}s remaining). Skipping duplicate SMS dispatch.")
+                    return False
 
         account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
         auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
@@ -288,31 +281,6 @@ def send_sms_alert(severity, reason, farmer_action, chicken_id=None, tag_label=N
             print("[SMS] Notice: Twilio credentials or recipient phone number not configured. SMS skipped.")
             return False
 
-        # Format concise SMS body (under 160-300 characters)
-        target = f"Chicken #{chicken_id}" if chicken_id is not None else "Flock"
-        if tag_label:
-            target += f" ({tag_label})"
-
-        if not climate_str:
-            _, _, climate_str = get_current_climate()
-        climate_line = f"Climate: {climate_str}\n" if climate_str and climate_str != "Unavailable" else ""
-
-        clean_reason = (reason or "Health anomaly detected").strip()
-        clean_action = (farmer_action or "Inspect bird immediately").strip()
-        if len(clean_reason) > 90:
-            clean_reason = clean_reason[:87] + "..."
-        if len(clean_action) > 90:
-            clean_action = clean_action[:87] + "..."
-
-        sms_body = (
-            f"[PoultrySense ALERT]\n"
-            f"Severity: {sev_clean.upper()}\n"
-            f"Target: {target}\n"
-            f"{climate_line}"
-            f"Reason: {clean_reason}\n"
-            f"Action: {clean_action}"
-        )
-
         client = TwilioClient(account_sid, auth_token)
         msg = client.messages.create(
             body=sms_body,
@@ -321,11 +289,113 @@ def send_sms_alert(severity, reason, farmer_action, chicken_id=None, tag_label=N
         )
         with _global_cooldown_lock:
             _last_global_sms_timestamp = curr_time
-        print(f"[SMS] ✓ Dispatched {sev_clean.upper()} alert to {to_number} (SID: {msg.sid})")
+        print(f"[SMS] ✓ Dispatched to {to_number} (SID: {msg.sid})")
         return True
     except Exception as e:
         print(f"[SMS] ⚠ Failed to dispatch Twilio SMS: {e}")
         return False
+
+
+# ─── Scan session summary ────────────────────────────────────────────────────
+# One SMS per completed scan. Per-bird messages are no longer sent mid-scan; the
+# farmer gets a single tally when the app reports the scan finished.
+_scan_lock = threading.Lock()
+_scan_state = {
+    "active": False,
+    "started_at": 0.0,
+    "seen_ids": set(),
+    "warning_ids": set(),
+    "alert_ids": set(),
+}
+
+
+def scan_start():
+    """Begin a scan window. Clears the previous tally."""
+    with _scan_lock:
+        _scan_state["active"] = True
+        _scan_state["started_at"] = time.time()
+        _scan_state["seen_ids"] = set()
+        _scan_state["warning_ids"] = set()
+        _scan_state["alert_ids"] = set()
+    print("[SCAN] Session started — SMS will be sent once, when the scan completes.")
+
+
+def scan_record(track_id, anomaly_tier):
+    """Track unique birds seen, and unique birds that reached each flagged tier."""
+    with _scan_lock:
+        if not _scan_state["active"]:
+            return
+        _scan_state["seen_ids"].add(track_id)
+        if anomaly_tier == "Suspicious":
+            _scan_state["warning_ids"].add(track_id)
+        elif anomaly_tier == "High Concern":
+            _scan_state["alert_ids"].add(track_id)
+
+
+def send_scan_summary_sms(barn_name, total, warnings, alerts, duration_sec=0.0):
+    """Single end-of-scan SMS with warning and alert counts."""
+    _, _, climate_str = get_current_climate()
+    climate_line = f"Climate: {climate_str}\n" if climate_str and climate_str != "Unavailable" else ""
+
+    barn = (barn_name or "Barn").strip()
+    mins = int(round(duration_sec / 60.0)) if duration_sec else 0
+    duration_line = f"Duration: {mins} min\n" if mins > 0 else ""
+
+    if alerts > 0:
+        action = "Inspect alert birds now"
+    elif warnings > 0:
+        action = "Review warning birds"
+    else:
+        action = "No action needed"
+
+    sms_body = (
+        f"[PoultrySense SCAN COMPLETE]\n"
+        f"Barn: {barn}\n"
+        f"Birds scanned: {total}\n"
+        f"Warnings: {warnings}\n"
+        f"Alerts: {alerts}\n"
+        f"{duration_line}"
+        f"{climate_line}"
+        f"Action: {action}"
+    )
+    # Scan summaries are user-initiated and bounded, so the 15-minute alert
+    # cooldown does not apply — every completed scan gets its own report.
+    return _dispatch_sms(sms_body, enforce_cooldown=False)
+
+
+def scan_stop(barn_name=""):
+    """End the scan window, send one summary SMS, and return the tally."""
+    with _scan_lock:
+        was_active = _scan_state["active"]
+        total = len(_scan_state["seen_ids"])
+        warnings = len(_scan_state["warning_ids"])
+        alerts = len(_scan_state["alert_ids"])
+        started = _scan_state["started_at"]
+        _scan_state["active"] = False
+        _scan_state["started_at"] = 0.0
+        _scan_state["seen_ids"] = set()
+        _scan_state["warning_ids"] = set()
+        _scan_state["alert_ids"] = set()
+
+    if not was_active:
+        # No /scan/start was seen (older app build) — fall back to the live frame.
+        with frame_lock:
+            total = latest_status.get("flock_count", 0)
+            warnings = latest_status.get("warning_count", 0)
+            alerts = latest_status.get("unhealthy_count", 0)
+
+    duration = max(0.0, time.time() - started) if started else 0.0
+    sent = send_scan_summary_sms(barn_name, total, warnings, alerts, duration)
+    summary = {
+        "total": total,
+        "warnings": warnings,
+        "alerts": alerts,
+        "duration_sec": round(duration, 1),
+        "sms_sent": sent,
+    }
+    print(f"[SCAN] Complete — {total} birds, {warnings} warnings, {alerts} alerts "
+          f"(SMS {'sent' if sent else 'skipped'})")
+    return summary
 
 def sync_verdict_to_firebase(verdict_obj):
     """
@@ -991,20 +1061,8 @@ class GeminiVerdictEngine:
             # 1. Save Gemini's JSON diagnostic verdict directly to Firebase Realtime Database
             sync_verdict_to_firebase(alert_obj)
 
-            # 2. Dispatch Twilio SMS alert if severity is High or Critical (wrapped in try-except)
-            if verdict_severity in ["High", "Critical"]:
-                try:
-                    send_sms_alert(
-                        severity=verdict_severity,
-                        reason=verdict_reason,
-                        farmer_action=verdict_farmer_action,
-                        chicken_id=track_id,
-                        tag_label=tag_info["tag_label"],
-                        climate_str=climate_str
-                    )
-                except Exception as sms_err:
-                    print(f"[SMS] ⚠ Twilio SMS dispatch error block caught: {sms_err}")
-
+            # 2. No per-bird SMS here. The farmer gets one summary SMS when the
+            #    scan completes (see scan_stop), so a noisy minute cannot spam them.
             # 3. Lock global alert cooldown timer for 15 minutes after alert
             record_global_alert(time.time())
 
@@ -1031,7 +1089,7 @@ gemini_escalator = GeminiVerdictEngine()
 
 def classification_worker(beh_model, hlth_model):
     """Background worker that continuously classifies chicken health and behavior
-    on a secondary CPU core without blocking the 30 FPS video tracking loop."""
+    on a secondary core without blocking the video tracking loop."""
     while True:
         try:
             disp_id, crop = classification_queue.get(timeout=1.0)
@@ -1043,14 +1101,14 @@ def classification_worker(beh_model, hlth_model):
 
         if beh_model is not None:
             try:
-                b_res = beh_model.predict(source=crop, imgsz=160, verbose=False)[0]
+                b_res = beh_model.predict(source=crop, imgsz=224, verbose=False)[0]
                 b_label = BEHAVIOR_NAMES.get(int(b_res.probs.top1), "stand")
             except Exception:
                 pass
 
         if hlth_model is not None:
             try:
-                h_res = hlth_model.predict(source=crop, imgsz=160, verbose=False)[0]
+                h_res = hlth_model.predict(source=crop, imgsz=224, verbose=False)[0]
                 # In PoultrySense_HealthClassifier: index 0 is Healthy, index 1 is Unhealthy
                 if h_res.probs is not None and len(h_res.probs.data) >= 2:
                     unhealthy_prob = float(h_res.probs.data[1])
@@ -1166,17 +1224,28 @@ def get_model_path(candidates):
 
 
 def get_execution_device():
-    """Detects available hardware acceleration (NVIDIA CUDA GPU, or CPU with OpenVINO AVX2)."""
+    """Detects available hardware acceleration (NVIDIA CUDA, Intel OpenVINO GPU, or CPU)."""
+    # 1. Try NVIDIA CUDA
     try:
         import torch
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
-            print(f"[AI ENGINE] 🚀 NVIDIA GPU detected! CUDA acceleration active ({gpu_name}).")
+            print(f"[AI ENGINE] NVIDIA GPU detected! CUDA acceleration active ({gpu_name}).")
             return 0
     except Exception:
         pass
 
-    print("[AI ENGINE] ⚡ OpenVINO AVX2 Engine active (AMD Ryzen 5 3500G).")
+    # 2. Try Intel GPU via OpenVINO (works on Intel UHD / Iris integrated graphics)
+    try:
+        import openvino as ov
+        core = ov.Core()
+        if "GPU" in core.available_devices:
+            print("[AI ENGINE] Intel GPU detected! OpenVINO GPU active.")
+            return "intel:gpu"
+    except Exception:
+        pass
+
+    print("[AI ENGINE] OpenVINO AVX2 Engine active (CPU fallback).")
     return "cpu"
 
 
@@ -1432,6 +1501,28 @@ def get_id_color(track_id):
     return ID_COLORS[(track_id - 1) % len(ID_COLORS)]
 
 
+def build_badge_reason(elapsed_obs, behavior_label, stationary_sec, is_isolated,
+                       unhealthy_prob, anomaly_score, anomaly_tier="Normal"):
+    """Short, factual reason for the on-video badge.
+
+    The box colour already encodes the anomaly tier, so the badge text does not
+    repeat the tier name. It says what is actually being observed instead, e.g.
+    "still 91s", "isolated" or "walk". One vocabulary, every surface.
+    """
+    if elapsed_obs < OBSERVATION_WINDOW:
+        return ""
+    if is_isolated and anomaly_score >= 30:
+        return "isolated"
+    if stationary_sec >= 15.0:
+        return f"still {int(stationary_sec)}s"
+    # Never label a bird 'unwell' when the overall anomaly tier is Normal / Healthy
+    if anomaly_tier != "Normal" and unhealthy_prob >= 0.50:
+        return "unwell"
+    if anomaly_score >= 60:
+        return "unusual"
+    return behavior_label or ""
+
+
 def draw_hud_box(img, pt1, pt2, color, thickness=2, line_len=16):
     x1, y1 = max(0, int(pt1[0])), max(0, int(pt1[1]))
     x2, y2 = min(img.shape[1], int(pt2[0])), min(img.shape[0], int(pt2[1]))
@@ -1548,6 +1639,26 @@ def detections():
         }
     return jsonify(payload)
 
+
+
+@flask_app.route('/scan/start', methods=['POST'])
+def scan_start_route():
+    """App signals that a diagnostic scan has begun."""
+    scan_start()
+    return jsonify({"status": "success", "scan_active": True}), 200
+
+
+@flask_app.route('/scan/stop', methods=['POST'])
+def scan_stop_route():
+    """App signals that a scan has finished. Sends one summary SMS."""
+    barn_name = ""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        barn_name = str(data.get("barn_name") or "").strip()
+    except Exception:
+        pass
+    summary = scan_stop(barn_name)
+    return jsonify({"status": "success", **summary}), 200
 
 
 @flask_app.route('/api/alerts')
@@ -1820,7 +1931,7 @@ def index():
                 <div class="logo-icon">🐔</div>
                 <div>
                     <h1>PoultrySense AI Vision</h1>
-                    <div style="font-size: 13px; color: var(--text-muted);">YOLOv8 Chicken Health & Behavior Engine</div>
+                    <div style="font-size: 13px; color: var(--text-muted);">YOLO26n Chicken Health & Behavior Engine</div>
                 </div>
             </div>
             <div class="status-pill">
@@ -1921,10 +2032,10 @@ def index():
                 overlayCtx.lineWidth = 3;
                 overlayCtx.strokeRect(x, y, w, h);
 
-                const label = '#' + (det.track_id || 0) + ' ' +
-                    (tier === 'Normal'
-                        ? String(det.behavior || '').toUpperCase()
-                        : tier.toUpperCase());
+                const reason = String(det.reason || '').trim();
+                const label = '#' + (det.track_id || 0) +
+                    (reason ? ' ' + reason : '') +
+                    (det.gemini_verified ? ' \u2713' : '');
                 overlayCtx.font = 'bold 13px system-ui, sans-serif';
                 const textWidth = overlayCtx.measureText(label).width;
                 const labelY = Math.max(0, y - 20);
@@ -2089,7 +2200,7 @@ def camera_loop():
         beh_path = get_model_path(BEHAVIOR_MODELS)
         if beh_path:
             try:
-                resolved_beh = resolve_accelerated_model(beh_path, imgsz=160)
+                resolved_beh = resolve_accelerated_model(beh_path, imgsz=224)
                 print(f"[INFO] Loading Behavior Model from: {resolved_beh}")
                 try:
                     behavior_model = YOLO(resolved_beh, task='classify')
@@ -2104,7 +2215,7 @@ def camera_loop():
         hlth_path = get_model_path(HEALTH_MODELS)
         if hlth_path:
             try:
-                resolved_hlth = resolve_accelerated_model(hlth_path, imgsz=160)
+                resolved_hlth = resolve_accelerated_model(hlth_path, imgsz=224)
                 print(f"[INFO] Loading Health Classifier Model from: {resolved_hlth}")
                 try:
                     health_model = YOLO(resolved_hlth, task='classify')
@@ -2640,18 +2751,17 @@ def camera_loop():
             # Draw HUD Box
             draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=16)
 
-            # Clean minimal badge with Gemini verification indicator
-            gemini_check = " \u2713" if gemini_verified else ""
-            if elapsed_obs < OBSERVATION_WINDOW:
-                badge_text = f"#{display_id}"
-            elif gemini_verified:
-                badge_text = f"#{display_id} {gemini_severity.upper()}{gemini_check}"
-            elif anomaly_tier == "Normal":
-                badge_text = f"#{display_id} {behavior_label.upper()}"
-            elif anomaly_tier == "Monitor":
-                badge_text = f"#{display_id} WATCH"
-            else:
-                badge_text = f"#{display_id} {anomaly_tier.upper()} {anomaly_score}%"
+            # Clean minimal badge. The box colour already encodes the tier, so the
+            # text stays factual: bird ID + what is actually being observed.
+            badge_reason = build_badge_reason(
+                elapsed_obs, behavior_label, stationary_sec, is_isolated,
+                unhealthy_prob, anomaly_score, anomaly_tier=anomaly_tier
+            )
+            badge_text = f"#{display_id}"
+            if badge_reason:
+                badge_text += f" {badge_reason}"
+            if gemini_verified:
+                badge_text += " \u2713"
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.45
@@ -2684,6 +2794,7 @@ def camera_loop():
                 "severity": gemini_severity if gemini_verified else ("Low" if anomaly_tier == "Normal" else ("Medium" if anomaly_tier == "Monitor" else ("High" if anomaly_tier == "Suspicious" else "Critical"))),
                 "gemini_summary": gemini_summary,
                 "gemini_verified": gemini_verified,
+                "reason": badge_reason,
 
                 "isolated": is_isolated,
                 "motion": round(motion, 1),
@@ -2693,6 +2804,10 @@ def camera_loop():
             })
 
         flock_count = len(detection_list)
+
+        # Tally flagged birds for the end-of-scan SMS summary.
+        for det in detection_list:
+            scan_record(det["track_id"], det["anomaly_tier"])
 
         # Dynamic Health Index
         if flock_count > 0:

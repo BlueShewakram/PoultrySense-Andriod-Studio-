@@ -15,9 +15,19 @@ import kotlin.coroutines.resumeWithException
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.ValueEventListener
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONObject
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 object CheckupSessionManager {
 
@@ -39,6 +49,31 @@ object CheckupSessionManager {
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    private val scanHttpClient = OkHttpClient.Builder()
+        .connectTimeout(2500, TimeUnit.MILLISECONDS)
+        .readTimeout(2500, TimeUnit.MILLISECONDS)
+        .build()
+
+    /**
+     * Fire-and-forget scan lifecycle ping. The server tallies flagged birds while
+     * the scan runs and sends one summary SMS when it receives /scan/stop.
+     */
+    private fun notifyScanEvent(context: Context, path: String, payload: String?) {
+        try {
+            val baseUrl = ServerPreferences.getBaseUrl(context)
+            if (baseUrl.isBlank()) return
+            val body = (payload ?: "{}")
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder().url("$baseUrl$path").post(body).build()
+            scanHttpClient.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {}
+                override fun onResponse(call: Call, response: Response) {
+                    response.close()
+                }
+            })
+        } catch (_: Exception) {}
     }
 
     // ─── Live Session State ───
@@ -75,6 +110,7 @@ object CheckupSessionManager {
             .putString(KEY_ACTIVE_BARN_NAME, targetZone.barnName)
             .putString(KEY_ACTIVE_ZONE_NAME, targetZone.zoneName)
             .apply()
+        notifyScanEvent(context, "/scan/start", null)
     }
 
     fun stopSession(
@@ -109,6 +145,9 @@ object CheckupSessionManager {
                 zoneName = zoneName,
                 chickenDetails = chickenDetails
             )
+            // Server tallied the scan; ask it for the one end-of-scan summary SMS.
+            val payload = JSONObject().put("barn_name", barnName).toString()
+            notifyScanEvent(context, "/scan/stop", payload)
         }
     }
 

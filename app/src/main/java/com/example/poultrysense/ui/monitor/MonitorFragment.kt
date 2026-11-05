@@ -24,6 +24,7 @@ import com.example.poultrysense.data.models.AiStatusResponse
 import com.example.poultrysense.data.models.BarnZone
 import com.example.poultrysense.data.models.DetectionItem
 import com.example.poultrysense.data.models.DetectionOverlayResponse
+import com.example.poultrysense.data.models.TierLabels
 import com.example.poultrysense.databinding.FragmentMonitorBinding
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -592,7 +593,7 @@ class MonitorFragment : Fragment() {
                 } catch (_: Exception) {
                     // Overlay failures must never interrupt the video preview.
                 }
-                delay(300)
+                delay(150)
             }
         }
     }
@@ -678,7 +679,7 @@ class MonitorFragment : Fragment() {
         val geminiVerified = detection.geminiVerified ?: false
 
         val verdictSource = if (geminiVerified) "✓ Gemini" else "Local"
-        tvTitle.text = "Chicken #$trackId [${tagInfo.colorName} Tag] ($verdictSource • $tier)"
+        tvTitle.text = "Chicken #$trackId [${tagInfo.colorName} Tag] ($verdictSource • ${TierLabels.forTier(tier)})"
         tvNum.text = "#$trackId"
 
         // Set the circular badge to the chicken's bright physical tag color
@@ -700,22 +701,22 @@ class MonitorFragment : Fragment() {
             tier == "High Concern" || health.lowercase(Locale.getDefault()) == "high concern" -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_critical_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.critical))
-                tvStatus.text = "CONCERN"
+                tvStatus.text = TierLabels.ALERT.uppercase(Locale.getDefault())
             }
             tier == "Suspicious" || health.lowercase(Locale.getDefault()) in listOf("needs attention", "warning", "needs review") -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
-                tvStatus.text = "ATTENTION"
+                tvStatus.text = TierLabels.ATTENTION.uppercase(Locale.getDefault())
             }
             tier == "Monitor" -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
-                tvStatus.text = "MONITOR"
+                tvStatus.text = TierLabels.WATCH.uppercase(Locale.getDefault())
             }
             else -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_healthy_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
-                tvStatus.text = if (geminiVerified) "✓ HEALTHY" else "NORMAL"
+                tvStatus.text = if (geminiVerified) "✓ HEALTHY" else TierLabels.NORMAL.uppercase(Locale.getDefault())
             }
         }
     }

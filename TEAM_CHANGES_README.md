@@ -14,8 +14,16 @@
 ---
 
 ## ⏱️ 2. Synchronized 15-Minute Alert Cooldown
-* **What it does:** Set a unified **15-minute (900 seconds)** global cooldown across **both** Gemini AI queries and Twilio SMS notifications.
-* **Why it matters:** When chickens walk in and out of frame, ByteTrack assigns new tracker IDs. This 15-minute global cooldown eliminates duplicate alerts, prevents SMS spam, and saves API tokens.
+* **What it does:** Set a unified **15-minute (900 seconds)** global cooldown across **Gemini AI queries**.
+* **Why it matters:** When chickens walk in and out of frame, ByteTrack assigns new tracker IDs. This 15-minute global cooldown eliminates duplicate Gemini calls and saves API tokens.
+
+---
+
+## 💬 2b. One SMS Per Completed Scan
+* **What it does:** Per-bird SMS alerts are gone. The server tallies which birds reached **Warning** (Suspicious) or **Alert** (High Concern) during a scan, and the Android app calls `POST /scan/stop` when the scan finishes.
+* **The message:** `[PoultrySense SCAN COMPLETE]` with barn, birds scanned, **Warnings: N**, **Alerts: N**, duration and climate, plus a one-line action.
+* **Why it matters:** A noisy minute can no longer spam the farmer. One scan = one message.
+* **Endpoints:** `POST /scan/start` begins the tally, `POST /scan/stop` sends the summary and returns the counts.
 
 ---
 
