@@ -593,7 +593,9 @@ class MonitorFragment : Fragment() {
                 } catch (_: Exception) {
                     // Overlay failures must never interrupt the video preview.
                 }
-                delay(150)
+                // Poll slightly faster than the detector's ~9 Hz so the overlay
+                // receives every update; the view interpolates between them.
+                delay(100)
             }
         }
     }

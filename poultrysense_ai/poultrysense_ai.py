@@ -148,52 +148,78 @@ FIREBASE_DATABASE_URL = os.environ.get(
     "https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app"
 ).rstrip("/")
 
-# --- Global Alert Cooldown Configuration (Handling Tracker ID Switches) ---
-# When chickens exit/re-enter camera view, tracker IDs can switch. A global cooldown
-# ensures no new Gemini queries or SMS alerts fire across the entire system until
-# the cooldown window expires after an alert (default: 900 seconds = 15 minutes).
+# --- Gemini Alert Cooldown Configuration ---
+# Each chicken owns its own cooldown window (default 900 s = 15 min), so one
+# flagged bird can no longer silence Gemini for the rest of the flock. A short
+# system-wide gap (default 20 s) still keeps calls from firing simultaneously.
+# SMS is scan-scoped and unaffected: the farmer gets one summary when the scan ends.
 GLOBAL_ALERT_COOLDOWN_SEC = float(os.environ.get("GLOBAL_ALERT_COOLDOWN_SEC", "900.0"))
+GEMINI_MIN_QUERY_GAP_SEC = float(os.environ.get("GEMINI_MIN_QUERY_GAP_SEC", "20.0"))
 DAYTIME_RECUMBENT_THRESHOLD_SEC = float(os.environ.get("DAYTIME_RECUMBENT_THRESHOLD_SEC", os.environ.get("STATIONARY_DURATION_THRESHOLD_SEC", "45.0")))
 
 _last_global_alert_timestamp = 0.0
 _last_global_sms_timestamp = 0.0
+_last_alert_timestamp_by_id = {}   # display_id -> timestamp of that bird's last Gemini query
 _global_cooldown_lock = threading.Lock()
 _last_cooldown_log_time = 0.0
 
 def is_global_cooldown_active(curr_time=None):
-    """Returns True if the global alert cooldown window is active across the system."""
+    """Returns True while the short system-wide gap between Gemini calls is running."""
     global _last_global_alert_timestamp
     if curr_time is None:
         curr_time = time.time()
     with _global_cooldown_lock:
-        return (curr_time - _last_global_alert_timestamp) < GLOBAL_ALERT_COOLDOWN_SEC
+        return (curr_time - _last_global_alert_timestamp) < GEMINI_MIN_QUERY_GAP_SEC
 
 def get_global_cooldown_remaining(curr_time=None):
-    """Returns remaining seconds in the global alert cooldown window."""
+    """Returns remaining seconds in the short system-wide gap between Gemini calls."""
     global _last_global_alert_timestamp
     if curr_time is None:
         curr_time = time.time()
     with _global_cooldown_lock:
         elapsed = curr_time - _last_global_alert_timestamp
-        return max(0.0, GLOBAL_ALERT_COOLDOWN_SEC - elapsed)
+        return max(0.0, GEMINI_MIN_QUERY_GAP_SEC - elapsed)
 
-def record_global_alert(timestamp=None):
-    """Records an alert and locks the system-wide global alert cooldown (900-second / 15-minute window)."""
+def is_track_cooldown_active(track_id, curr_time=None):
+    """Returns True while this specific chicken is still inside its own cooldown window."""
+    if curr_time is None:
+        curr_time = time.time()
+    with _global_cooldown_lock:
+        last = _last_alert_timestamp_by_id.get(track_id, 0.0)
+        return (curr_time - last) < GLOBAL_ALERT_COOLDOWN_SEC
+
+def get_track_cooldown_remaining(track_id, curr_time=None):
+    """Returns seconds left before this chicken may be sent to Gemini again."""
+    if curr_time is None:
+        curr_time = time.time()
+    with _global_cooldown_lock:
+        last = _last_alert_timestamp_by_id.get(track_id, 0.0)
+        return max(0.0, GLOBAL_ALERT_COOLDOWN_SEC - (curr_time - last))
+
+def record_global_alert(timestamp=None, track_id=None):
+    """Stamps the system-wide gap and, when given, this chicken's cooldown window."""
     global _last_global_alert_timestamp
     if timestamp is None:
         timestamp = time.time()
     with _global_cooldown_lock:
         _last_global_alert_timestamp = timestamp
-        print(f"[COOLDOWN] Global alert cooldown active for {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s ({GLOBAL_ALERT_COOLDOWN_SEC/60:.1f} min). "
-              f"All new Gemini queries and SMS texts paused across the entire flock.")
+        if track_id is not None:
+            _last_alert_timestamp_by_id[track_id] = timestamp
+            print(f"[COOLDOWN] Chicken #{track_id} cooling down for {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s "
+                  f"({GLOBAL_ALERT_COOLDOWN_SEC/60:.1f} min). Other chickens are unaffected.")
+
+def record_track_alert(track_id, timestamp=None):
+    """Records a Gemini query for one chicken without touching the other birds."""
+    record_global_alert(timestamp=timestamp, track_id=track_id)
 
 def reset_global_cooldown():
-    """Manually resets the global cooldown timer (e.g. on user reset)."""
+    """Clears every cooldown: the system-wide gap and all per-chicken windows."""
     global _last_global_alert_timestamp, _last_global_sms_timestamp
     with _global_cooldown_lock:
         _last_global_alert_timestamp = 0.0
         _last_global_sms_timestamp = 0.0
-        print("[COOLDOWN] Global alert cooldown reset.")
+        _last_alert_timestamp_by_id.clear()
+        print("[COOLDOWN] All Gemini cooldowns reset.")
 
 def get_cloud_sms_settings():
     """Fetches real-time SMS alert preferences configured by the farmer in the Android app."""
@@ -310,14 +336,24 @@ _scan_state = {
 
 
 def scan_start():
-    """Begin a scan window. Clears the previous tally."""
+    """Begin a scan window. Clears the previous tally and every bird's evidence."""
     with _scan_lock:
         _scan_state["active"] = True
         _scan_state["started_at"] = time.time()
         _scan_state["seen_ids"] = set()
         _scan_state["warning_ids"] = set()
         _scan_state["alert_ids"] = set()
-    print("[SCAN] Session started — SMS will be sent once, when the scan completes.")
+
+    # Fresh evidence for the new scan, but keep each chicken's display ID so
+    # #3 stays #3. Completed scans and Firebase alerts are not touched.
+    behavior_history.records.clear()
+    behavior_history.baselines.clear()
+    track_histories.clear()
+    track_motion_windows.clear()
+    track_stationary_duration.clear()
+    track_classifications.clear()
+
+    print("[SCAN] Session started — per-bird evidence cleared; SMS will be sent once, when the scan completes.")
 
 
 def scan_record(track_id, anomaly_tier):
@@ -448,6 +484,14 @@ HEALTH_MODELS = [
 ]
 
 BEHAVIOR_NAMES = {0: "peck", 1: "stand", 2: "walk"}
+# Human-readable posture wording sent to Gemini. "rest" is assigned by the
+# motion heuristic when a bird has been still for 15 s or more.
+POSTURE_LABELS = {
+    "peck": "Feeding / pecking",
+    "stand": "Standing",
+    "walk": "Walking",
+    "rest": "Resting / recumbent",
+}
 HEALTH_NAMES = {0: "Healthy", 1: "Unhealthy"}
 
 # --- Global shared state ---
@@ -857,16 +901,21 @@ class GeminiVerdictEngine:
                 print("[Gemini 3.6 Flash] Notice: GEMINI_API_KEY not found. Operating in local heuristic-only mode.")
                 print("                  Add key to poultrysense_ai/gemini_config.json to enable Gemini multimodal verdicts.")
 
-    def request_verdict_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec, snapshot_path=None, abnormal_flags=None):
+    def request_verdict_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec, snapshot_path=None, abnormal_flags=None, behavior_label="stand"):
         """
         Triggers asynchronous multimodal analysis with Gemini 3.6 Flash.
-        Enforces 15-minute global timestamp-based cooldown to handle tracker ID switches.
+        Each chicken has its own cooldown; a short system-wide gap keeps calls
+        from firing at the same instant.
         """
-        # 1. Global Alert Cooldown Check (prevents duplicates when chicken changes tracker ID)
+        # 1. Per-chicken cooldown — one bird's alert never silences the flock.
+        if is_track_cooldown_active(track_id, curr_time):
+            return
+
+        # 2. Short system-wide gap between Gemini calls
         if is_global_cooldown_active(curr_time):
             return
 
-        # 2. Prevent concurrent queries
+        # 3. Prevent concurrent queries
         if self._query_in_progress:
             return
 
@@ -881,20 +930,21 @@ class GeminiVerdictEngine:
             except Exception as ex_save:
                 print(f"[Vision Engine] Notice saving flagged snapshot: {ex_save}")
 
-        # Immediately lock global cooldown timer (15 minutes) so subsequent frames and tracker switches cannot trigger
-        record_global_alert(curr_time)
+        # Stamp this bird's window now, so the cooldown starts when we ask,
+        # not when Gemini answers.
+        record_track_alert(track_id, curr_time)
 
         threading.Thread(
             target=self._verdict_worker,
-            args=(track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags),
+            args=(track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label),
             daemon=True
         ).start()
 
-    def _verdict_worker(self, track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags=None):
+    def _verdict_worker(self, track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags=None, behavior_label="stand"):
         """
         Background worker: passes cropped image snapshot and telemetry vectors to Gemini 3.6 Flash,
-        enforces schema, saves verdict to Firebase RTDB, dispatches Twilio SMS on High/Critical,
-        and enforces 15-minute global alert cooldown.
+        enforces schema and saves the verdict to Firebase RTDB. Per-bird SMS is not
+        sent here; the farmer gets one summary when the scan completes.
         """
         try:
             score = anomaly_info.get("anomaly_score", 0)
@@ -933,7 +983,8 @@ class GeminiVerdictEngine:
                         f"[POULTRYSENSE MULTIMODAL TELEMETRY LOG]\n"
                         f"- Target Chicken ID: #{track_id}\n"
                         f"- Flagged Anomaly Triggers: {flags_summary}\n"
-                        f"- Posture State: Recumbent / Stationary\n"
+                        f"- Posture State: {POSTURE_LABELS.get(behavior_label, behavior_label)} "
+                        f"(held {stationary_sec:.1f}s)\n"
                         f"- Stationary Duration: {stationary_sec:.1f}s (Daytime Threshold: {DAYTIME_RECUMBENT_THRESHOLD_SEC:.1f}s)\n"
                         f"- Continuous Inactivity: {stats.get('continuous_inactivity_sec', stationary_sec):.1f}s\n"
                         f"- Total Observed Time: {stats.get('observed_sec', 0.0):.1f}s\n"
@@ -1063,8 +1114,8 @@ class GeminiVerdictEngine:
 
             # 2. No per-bird SMS here. The farmer gets one summary SMS when the
             #    scan completes (see scan_stop), so a noisy minute cannot spam them.
-            # 3. Lock global alert cooldown timer for 15 minutes after alert
-            record_global_alert(time.time())
+            # 3. The cooldown was stamped when the query launched, so the window
+            #    starts at request time rather than at response time.
 
         finally:
             self._query_in_progress = False
@@ -1670,6 +1721,8 @@ def api_alerts():
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "global_cooldown_active": is_global_cooldown_active(),
             "global_cooldown_remaining_sec": int(get_global_cooldown_remaining()),
+            "gemini_min_query_gap_sec": int(GEMINI_MIN_QUERY_GAP_SEC),
+            "gemini_per_bird_cooldown_sec": int(GLOBAL_ALERT_COOLDOWN_SEC),
             "alerts": gemini_escalator.get_active_alerts()
         })
 
@@ -1990,6 +2043,88 @@ def index():
             if (isStreaming) clearOverlay();
         }
 
+        // The server publishes detections at ~9 Hz. Instead of snapping boxes on
+        // each poll, keep the newest target and ease the drawn box toward it on
+        // every animation frame so motion reads as continuous.
+        const trackedBoxes = new Map();
+        let overlayLoopRunning = false;
+
+        function startOverlayLoop() {
+            if (overlayLoopRunning) return;
+            overlayLoopRunning = true;
+            let last = performance.now();
+
+            function frame(now) {
+                const dt = Math.min(0.1, (now - last) / 1000);
+                last = now;
+
+                if (isStreaming) {
+                    overlayCtx.setTransform(1, 0, 0, 1, 0, 0);
+                    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                    trackedBoxes.clear();
+                    overlayLoopRunning = false;
+                    return;
+                }
+
+                const dpr = window.devicePixelRatio || 1;
+                overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+                // Frame-rate independent easing (~110 ms convergence).
+                const posFactor = 1 - Math.exp(-14 * dt);
+                const alphaFactor = 1 - Math.exp(-10 * dt);
+                let stillAnimating = false;
+
+                trackedBoxes.forEach((box, key) => {
+                    box.current.x += (box.target.x - box.current.x) * posFactor;
+                    box.current.y += (box.target.y - box.current.y) * posFactor;
+                    box.current.w += (box.target.w - box.current.w) * posFactor;
+                    box.current.h += (box.target.h - box.current.h) * posFactor;
+                    box.alpha += (box.targetAlpha - box.alpha) * alphaFactor;
+
+                    const posDiff = Math.abs(box.current.x - box.target.x) +
+                                    Math.abs(box.current.y - box.target.y);
+                    if (posDiff > 0.5 || Math.abs(box.alpha - box.targetAlpha) > 0.01) {
+                        stillAnimating = true;
+                    }
+
+                    // Fade out then drop tracks that are no longer detected.
+                    if (!box.alive && box.alpha < 0.03) {
+                        trackedBoxes.delete(key);
+                        return;
+                    }
+                    if (box.alpha <= 0.01) return;
+
+                    const x = box.current.x;
+                    const y = box.current.y;
+                    const w = box.current.w;
+                    const h = box.current.h;
+
+                    overlayCtx.globalAlpha = box.alpha;
+                    overlayCtx.strokeStyle = box.color;
+                    overlayCtx.lineWidth = 3;
+                    overlayCtx.strokeRect(x, y, w, h);
+
+                    overlayCtx.font = 'bold 13px system-ui, sans-serif';
+                    const textWidth = overlayCtx.measureText(box.label).width;
+                    const labelY = Math.max(0, y - 20);
+                    overlayCtx.fillStyle = 'rgba(15,23,42,0.82)';
+                    overlayCtx.fillRect(x, labelY, textWidth + 12, 20);
+                    overlayCtx.fillStyle = box.color;
+                    overlayCtx.fillText(box.label, x + 6, labelY + 14);
+                    overlayCtx.globalAlpha = 1;
+                });
+
+                if (trackedBoxes.size > 0 || stillAnimating) {
+                    requestAnimationFrame(frame);
+                } else {
+                    overlayLoopRunning = false;
+                }
+            }
+
+            requestAnimationFrame(frame);
+        }
+
         function drawDetections(payload) {
             if (isStreaming) return;
 
@@ -2015,43 +2150,73 @@ def index():
             const offsetX = (viewW - srcW * scale) / 2;
             const offsetY = (viewH - srcH * scale) / 2;
 
-            (payload.detections || []).forEach(det => {
+            const seen = new Set();
+            (payload.detections || []).forEach((det, index) => {
                 const bbox = det.bbox;
                 if (!bbox || bbox.length < 4) return;
 
-                const x = bbox[0] * scale + offsetX;
-                const y = bbox[1] * scale + offsetY;
-                const w = (bbox[2] - bbox[0]) * scale;
-                const h = (bbox[3] - bbox[1]) * scale;
+                const trackId = det.track_id || 0;
+                const key = trackId > 0 ? trackId : -(index + 1000);
+                seen.add(key);
+
                 const tier = det.anomaly_tier || 'Normal';
                 const color = tier === 'High Concern' ? '#ff4646'
                     : tier === 'Suspicious' ? '#ff8c00'
                     : tier === 'Monitor' ? '#00d7ff' : '#00e676';
 
-                overlayCtx.strokeStyle = color;
-                overlayCtx.lineWidth = 3;
-                overlayCtx.strokeRect(x, y, w, h);
-
                 const reason = String(det.reason || '').trim();
-                const label = '#' + (det.track_id || 0) +
+                const label = '#' + trackId +
                     (reason ? ' ' + reason : '') +
                     (det.gemini_verified ? ' \u2713' : '');
-                overlayCtx.font = 'bold 13px system-ui, sans-serif';
-                const textWidth = overlayCtx.measureText(label).width;
-                const labelY = Math.max(0, y - 20);
-                overlayCtx.fillStyle = 'rgba(15,23,42,0.82)';
-                overlayCtx.fillRect(x, labelY, textWidth + 12, 20);
-                overlayCtx.fillStyle = color;
-                overlayCtx.fillText(label, x + 6, labelY + 14);
+
+                const target = {
+                    x: bbox[0] * scale + offsetX,
+                    y: bbox[1] * scale + offsetY,
+                    w: (bbox[2] - bbox[0]) * scale,
+                    h: (bbox[3] - bbox[1]) * scale
+                };
+
+                const existing = trackedBoxes.get(key);
+                if (existing) {
+                    existing.target = target;
+                    existing.color = color;
+                    existing.label = label;
+                    existing.targetAlpha = 1;
+                    existing.alive = true;
+                } else {
+                    // New bird: fade in where it was detected instead of flying in.
+                    trackedBoxes.set(key, {
+                        current: { ...target },
+                        target: target,
+                        color: color,
+                        label: label,
+                        alpha: 0,
+                        targetAlpha: 1,
+                        alive: true
+                    });
+                }
             });
+
+            trackedBoxes.forEach((box, key) => {
+                if (!seen.has(key)) {
+                    box.targetAlpha = 0;
+                    box.alive = false;
+                }
+            });
+
+            startOverlayLoop();
         }
 
+        let detectionsFetchInFlight = false;
         setInterval(() => {
+            if (detectionsFetchInFlight) return;
+            detectionsFetchInFlight = true;
             fetch('/detections')
                 .then(res => res.json())
                 .then(drawDetections)
-                .catch(() => {});
-        }, 300);
+                .catch(() => {})
+                .finally(() => { detectionsFetchInFlight = false; });
+        }, 100);
 
         setInterval(() => {
             fetch('/status')
@@ -2677,13 +2842,15 @@ def camera_loop():
                     except Exception as ex_crop:
                         print(f"[Vision Engine] Notice saving flagged snapshot: {ex_crop}")
 
-                    # 15-minute global timestamp-based cooldown (prevents duplicate queries and SMS when tracker IDs switch)
+                    # Per-chicken cooldown: one bird's alert never blocks the flock.
                     try:
-                        if is_global_cooldown_active(curr_time):
+                        if is_track_cooldown_active(display_id, curr_time):
                             if curr_time - _last_cooldown_log_time >= 30.0:
                                 _last_cooldown_log_time = curr_time
-                                rem = int(get_global_cooldown_remaining(curr_time))
-                                print(f"[COOLDOWN] Global alert cooldown active ({rem}s remaining / {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s). Skipping Gemini query for Chicken #{display_id}.")
+                                rem = int(get_track_cooldown_remaining(display_id, curr_time))
+                                print(f"[COOLDOWN] Chicken #{display_id} cooling down ({rem}s remaining / {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s). Skipping Gemini query.")
+                        elif is_global_cooldown_active(curr_time):
+                            pass  # short system-wide gap between calls; retry on a later frame
                         else:
                             gemini_escalator.request_verdict_async(
                                 track_id=display_id,
@@ -2695,7 +2862,8 @@ def camera_loop():
                                 is_isolated=is_isolated,
                                 stationary_sec=stationary_sec,
                                 snapshot_path=snapshot_file,
-                                abnormal_flags=abnormal_triggers
+                                abnormal_flags=abnormal_triggers,
+                                behavior_label=behavior_label
                             )
                     except Exception as ex_cd:
                         print(f"[COOLDOWN] Warning during alert cooldown check: {ex_cd}")
@@ -2847,6 +3015,8 @@ def camera_loop():
                 "humidity": latest_sensor_data.get("humidity") if (time.time() - latest_sensor_data.get("last_updated", 0) < 30.0) else None,
                 "global_cooldown_active": is_global_cooldown_active(),
                 "global_cooldown_remaining_sec": int(get_global_cooldown_remaining()),
+                "gemini_min_query_gap_sec": int(GEMINI_MIN_QUERY_GAP_SEC),
+                "gemini_per_bird_cooldown_sec": int(GLOBAL_ALERT_COOLDOWN_SEC),
                 "detections": detection_list,
                 "alerts": gemini_escalator.get_active_alerts()
             })
