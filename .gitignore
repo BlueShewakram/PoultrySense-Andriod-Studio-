@@ -40,6 +40,9 @@ poultrysense_ai/yolo26n-reid.onnx
 # Old 160px OpenVINO IR backups (kept locally for rollback, not tracked)
 poultrysense_ai/models/*_160bak/
 
+# ONNX detector exports (auto-generated from the tracked .pt on first run)
+poultrysense_ai/models/*.onnx
+
 # Gemini API key & Twilio secrets — NEVER commit the real ones (use .env.example as template)
 poultrysense_ai/gemini_config.json
 poultrysense_ai/.env

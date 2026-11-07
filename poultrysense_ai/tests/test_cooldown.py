@@ -68,6 +68,14 @@ class ScanStartResetTests(unittest.TestCase):
         ps.track_classifications.clear()
         ps.track_first_seen.clear()
         ps.track_display_ids.clear()
+        ps._scan_observation_epoch = 0.0
+        ps._scan_state["active"] = False
+        ps._scan_state["started_at"] = 0.0
+
+    def tearDown(self):
+        ps._scan_observation_epoch = 0.0
+        ps._scan_state["active"] = False
+        ps._scan_state["started_at"] = 0.0
 
     def test_scan_start_clears_evidence_but_keeps_identity(self):
         ps.track_first_seen[3] = 111.0
@@ -92,6 +100,23 @@ class ScanStartResetTests(unittest.TestCase):
         self.assertEqual(len(ps.track_motion_windows[3]), 0)
         self.assertNotIn(3, ps.track_stationary_duration)
         self.assertNotIn(3, ps.track_classifications)
+
+    def test_scan_start_restarts_observation_window_without_losing_identity(self):
+        ps.track_first_seen[3] = 111.0
+        ps._scan_observation_epoch = 0.0
+
+        ps.scan_start()
+
+        # Identity survives, but the observation clock restarts at scan start.
+        self.assertEqual(ps.track_first_seen.get(3), 111.0)
+        self.assertGreater(ps._scan_observation_epoch, 111.0)
+        self.assertAlmostEqual(
+            ps.get_observed_seconds(3, ps._scan_observation_epoch + 5.0), 5.0, places=3
+        )
+        # A bird first seen after the scan started also begins at zero.
+        self.assertEqual(
+            ps.get_observed_seconds(4, ps._scan_observation_epoch + 5.0), 0.0
+        )
 
 
 if __name__ == "__main__":

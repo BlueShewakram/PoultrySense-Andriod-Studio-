@@ -334,6 +334,16 @@ _scan_state = {
     "alert_ids": set(),
 }
 
+# Observation clock for the current scan. Kept separate from track_first_seen so
+# display IDs survive a scan while every bird still gets a fresh 15 s calibration.
+_scan_observation_epoch = 0.0
+
+
+def get_observed_seconds(display_id, curr_time):
+    """Seconds this bird has been observed in the current scan window."""
+    first_seen = track_first_seen.get(display_id, curr_time)
+    return max(0.0, curr_time - max(first_seen, _scan_observation_epoch))
+
 
 def scan_start():
     """Begin a scan window. Clears the previous tally and every bird's evidence."""
@@ -346,6 +356,9 @@ def scan_start():
 
     # Fresh evidence for the new scan, but keep each chicken's display ID so
     # #3 stays #3. Completed scans and Firebase alerts are not touched.
+    global _scan_observation_epoch
+    _scan_observation_epoch = time.time()
+
     behavior_history.records.clear()
     behavior_history.baselines.clear()
     track_histories.clear()
@@ -546,6 +559,10 @@ track_frozen_streaks = defaultdict(int)     # raw_id -> consecutive pixel-identi
 # CHURN_MAX_FROZEN consecutive frozen observations veto a confirmation hit.
 CHURN_EPS = 2.0
 CHURN_MAX_FROZEN = 2
+# Hold the last known box for up to ~0.5 s of missed detections so a brief
+# detector dropout does not blank a chicken's box on the video overlay.
+COAST_MAX_FRAMES = 5
+DEBUG_TRACK = os.environ.get("POULTRYSENSE_DEBUG_TRACK", "").strip().lower() in {"1", "true", "yes"}
 classification_queue = queue.Queue(maxsize=6)
 classification_lock = threading.Lock()
 
@@ -1274,30 +1291,144 @@ def get_model_path(candidates):
     return None
 
 
-def get_execution_device():
-    """Detects available hardware acceleration (NVIDIA CUDA, Intel OpenVINO GPU, or CPU)."""
-    # 1. Try NVIDIA CUDA
+_GPU_NAMES_CACHE = None
+
+
+def get_gpu_names():
+    """Return display-adapter names on Windows (best effort, cached, never fatal)."""
+    global _GPU_NAMES_CACHE
+    if _GPU_NAMES_CACHE is not None:
+        return _GPU_NAMES_CACHE
+
+    names = []
+    if os.name == "nt":
+        try:
+            import subprocess
+            result = subprocess.run(
+                [
+                    "powershell", "-NoProfile", "-NonInteractive", "-Command",
+                    "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        except Exception:
+            names = []
+
+    _GPU_NAMES_CACHE = names
+    return names
+
+
+def has_directml():
+    """True when the installed ONNX Runtime build exposes the DirectML provider."""
+    try:
+        import onnxruntime as ort
+        return "DmlExecutionProvider" in ort.get_available_providers()
+    except Exception:
+        return False
+
+
+def get_inference_backend():
+    """Pick the best detector backend automatically.
+
+    Order: NVIDIA CUDA -> AMD DirectML -> Intel OpenVINO GPU -> DirectML -> CPU.
+    Set POULTRYSENSE_BACKEND to force one of: cuda, directml, openvino, cpu.
+
+    Returns:
+        (backend, device, model_format)
+    """
+    forced = os.environ.get("POULTRYSENSE_BACKEND", "").strip().lower()
+    if forced in {"cuda", "nvidia"}:
+        return "cuda", 0, "pt"
+    if forced in {"directml", "dml", "onnx", "amd"}:
+        return "directml", "cpu", "onnx"
+    if forced in {"openvino", "intel"}:
+        return "openvino", "intel:gpu", "openvino"
+    if forced in {"cpu"}:
+        return "cpu", "cpu", "openvino"
+
+    # 1. NVIDIA CUDA (PyTorch)
     try:
         import torch
         if torch.cuda.is_available():
             gpu_name = torch.cuda.get_device_name(0)
             print(f"[AI ENGINE] NVIDIA GPU detected! CUDA acceleration active ({gpu_name}).")
-            return 0
+            return "cuda", 0, "pt"
     except Exception:
         pass
 
-    # 2. Try Intel GPU via OpenVINO (works on Intel UHD / Iris integrated graphics)
+    # 2. AMD Radeon via DirectML (Windows, ONNX Runtime DirectML build)
+    dml = has_directml()
+    if dml:
+        names = get_gpu_names()
+        amd = any(("amd" in n.lower() or "radeon" in n.lower()) for n in names)
+        if amd:
+            print(f"[AI ENGINE] AMD GPU detected ({', '.join(names)})! DirectML active.")
+            return "directml", "cpu", "onnx"
+
+    # 3. Intel GPU via OpenVINO (Intel UHD / Iris / Arc)
     try:
         import openvino as ov
         core = ov.Core()
         if "GPU" in core.available_devices:
             print("[AI ENGINE] Intel GPU detected! OpenVINO GPU active.")
-            return "intel:gpu"
+            return "openvino", "intel:gpu", "openvino"
     except Exception:
         pass
 
+    # 4. Any other DirectX 12 GPU
+    if dml:
+        print("[AI ENGINE] DirectML GPU active.")
+        return "directml", "cpu", "onnx"
+
     print("[AI ENGINE] OpenVINO AVX2 Engine active (CPU fallback).")
-    return "cpu"
+    return "cpu", "cpu", "openvino"
+
+
+def get_execution_device():
+    """Backward-compatible wrapper: returns only the device for the chosen backend."""
+    return get_inference_backend()[1]
+
+
+def enable_directml_providers():
+    """Teach Ultralytics' ONNX backend to run on the DirectML execution provider.
+
+    Ultralytics only selects CUDA/CoreML/CPU, so without this the RX 580 would
+    silently run the ONNX detector on the CPU. Safe no-op when DirectML is absent.
+    """
+    try:
+        import onnxruntime as ort
+        from ultralytics.nn.autobackend import ONNXBackend
+    except Exception as e:
+        print(f"[AI ENGINE] DirectML unavailable ({e}); ONNX will run on CPU.")
+        return False
+
+    if "DmlExecutionProvider" not in ort.get_available_providers():
+        print("[AI ENGINE] DirectML provider not installed; ONNX will run on CPU.")
+        return False
+    if getattr(ONNXBackend, "_poultrysense_dml", False):
+        return True
+
+    original_load_model = ONNXBackend.load_model
+
+    def load_model_with_dml(self, weight):
+        original_load_model(self, weight)
+        try:
+            self.session = ort.InferenceSession(
+                str(weight),
+                providers=["DmlExecutionProvider", "CPUExecutionProvider"],
+            )
+            self.output_names = [x.name for x in self.session.get_outputs()]
+            print("[AI ENGINE] DirectML provider active for ONNX inference.")
+        except Exception as e:
+            print(f"[AI ENGINE] DirectML session failed ({e}); using CPU.")
+
+    ONNXBackend.load_model = load_model_with_dml
+    ONNXBackend._poultrysense_dml = True
+    return True
 
 
 def resolve_accelerated_model(pt_path, imgsz=640):
@@ -1345,6 +1476,33 @@ def resolve_openvino(pt_path, imgsz=640):
             return beside
     except Exception as e:
         print(f"[AI ENGINE] OpenVINO notice ({e}); using native PyTorch .pt engine.")
+    return pt_path
+
+
+def resolve_onnx(pt_path, imgsz=640):
+    """Resolve an ONNX detector beside the .pt weights, exporting once if missing.
+
+    DirectML needs an ONNX graph; PyTorch has no AMD GPU path on Windows.
+    """
+    if not pt_path or not pt_path.endswith(".pt"):
+        return pt_path
+
+    onnx_path = os.path.splitext(pt_path)[0] + ".onnx"
+    if os.path.exists(onnx_path):
+        return onnx_path
+
+    try:
+        from ultralytics import YOLO
+        print(f"[ONNX] Exporting {os.path.basename(pt_path)} (imgsz={imgsz})...")
+        exported = YOLO(pt_path).export(
+            format="onnx", imgsz=imgsz, dynamic=False, simplify=True, opset=12
+        )
+        exported = str(exported)
+        if os.path.exists(exported):
+            print(f"[ONNX] Export ready: {exported}")
+            return exported
+    except Exception as e:
+        print(f"[AI ENGINE] ONNX export notice ({e}); using native PyTorch .pt engine.")
     return pt_path
 
 
@@ -2300,7 +2458,10 @@ def camera_loop():
 
     print("[INFO] Initializing PoultrySense AI Engine...")
 
-    exec_device = get_execution_device()
+    backend, exec_device, model_format = get_inference_backend()
+    print(f"[AI ENGINE] Backend={backend} device={exec_device} format={model_format}")
+    if backend == "directml":
+        enable_directml_providers()
 
     det_model = None
     behavior_model = None
@@ -2312,7 +2473,12 @@ def camera_loop():
         det_path = get_model_path(DET_MODELS)
         if det_path:
             try:
-                resolved_det = resolve_accelerated_model(det_path, imgsz=640)
+                if model_format == "onnx":
+                    resolved_det = resolve_onnx(det_path, imgsz=640)
+                elif model_format == "openvino":
+                    resolved_det = resolve_accelerated_model(det_path, imgsz=640)
+                else:
+                    resolved_det = det_path
                 print(f"[INFO] Loading Detection Model from: {resolved_det}")
                 try:
                     det_model = YOLO(resolved_det, task='detect')
@@ -2433,6 +2599,9 @@ def camera_loop():
     last_generation = 0
     prev_det_time = time.time()
     smooth_det_fps = 0.0
+    _last_trackdbg_print = 0.0
+    _prev_raw_id_set = set()
+    _raw_id_switches = 0
 
     while True:
         # Pace detection to 2-3 Hz, then consume only the newest camera frame.
@@ -2480,6 +2649,13 @@ def camera_loop():
             active_raw_ids = []
             raw_boxes = []
             raw_confs = []
+            raw_seen = 0
+            person_vetoed = 0
+            size_dropped = 0
+            no_slot_dropped = 0
+            lowconf_dropped = 0
+            frozen_dropped = 0
+            unconfirmed_dropped = 0
 
             try:
                 tracker_cfg = TRACKER_YAML if os.path.exists(TRACKER_YAML) else "botsort.yaml"
@@ -2497,7 +2673,10 @@ def camera_loop():
                 )[0]
 
                 boxes = results.boxes
+                det_boxes = 0 if boxes is None else len(boxes)
+                tracked_boxes = 0
                 if boxes is not None and len(boxes) > 0 and boxes.id is not None:
+                    tracked_boxes = len(boxes.id)
                     xyxys = boxes.xyxy.cpu().numpy()
                     confs = boxes.conf.cpu().numpy()
                     ids = boxes.id.cpu().numpy()
@@ -2506,29 +2685,36 @@ def camera_loop():
                     for box, conf, raw_id, c_id in zip(xyxys, confs, ids, cls_ids):
                         if int(c_id) not in chicken_classes:
                             continue
+                        raw_seen += 1
 
-                        # 1. Human / Person Veto: Reject if center is inside or overlaps a detected person/body
+                        # 1. Human / Person Veto: reject only hand-sized blobs that sit
+                        # deep inside a person box. A real chicken — or a printed photo
+                        # held up for the camera — is large relative to the body and must
+                        # survive; the old rule vetoed anything whose centre fell inside
+                        # the person box, which deleted held-up photos and nearby birds.
                         bx1, by1, bx2, by2 = box
                         bcx = (bx1 + bx2) / 2.0
                         bcy = (by1 + by2) / 2.0
                         is_human = False
+                        chicken_area = max(1.0, (bx2 - bx1) * (by2 - by1))
                         for pbox in person_boxes:
                             px1, py1, px2, py2 = pbox
-                            if (px1 <= bcx <= px2 and py1 <= bcy <= py2):
-                                is_human = True
-                                break
-                            # Also check IoU / overlap ratio with human bounding box
+                            person_area = max(1.0, (px2 - px1) * (py2 - py1))
+                            if chicken_area > 0.10 * person_area:
+                                continue
+                            if not (px1 <= bcx <= px2 and py1 <= bcy <= py2):
+                                continue
                             ix1 = max(bx1, px1)
                             iy1 = max(by1, py1)
                             ix2 = min(bx2, px2)
                             iy2 = min(by2, py2)
                             if ix2 > ix1 and iy2 > iy1:
                                 inter_area = (ix2 - ix1) * (iy2 - iy1)
-                                chicken_area = max(1.0, (bx2 - bx1) * (by2 - by1))
-                                if (inter_area / chicken_area) > 0.30:
+                                if (inter_area / chicken_area) > 0.60:
                                     is_human = True
                                     break
                         if is_human:
+                            person_vetoed += 1
                             continue
 
                         # 2. Minimum Box Dimensions & Plump Aspect Ratio Filter (rejects fingers, cords, and specks)
@@ -2536,6 +2722,7 @@ def camera_loop():
                         box_h = abs(by2 - by1)
                         aspect = box_w / max(1.0, box_h)
                         if box_w < 45 or box_h < 45 or aspect < 0.28 or aspect > 3.2:
+                            size_dropped += 1
                             continue
 
                         raw_boxes.append(box)
@@ -2557,6 +2744,7 @@ def camera_loop():
                 # 1. Spatial/Motion-Predictive Display ID allocation (instant handoff for running chickens)
                 display_id = assign_display_id(raw_id, cx=cx, cy=cy, box=box)
                 if display_id is None:
+                    no_slot_dropped += 1
                     continue
 
                 # 2. Debounce & Frozen Crop Check (filters out hands, furniture, and room artifacts)
@@ -2565,6 +2753,7 @@ def camera_loop():
                         if _crop_is_frozen(frame, box, raw_id):
                             track_frozen_streaks[raw_id] += 1
                             if track_frozen_streaks[raw_id] >= CHURN_MAX_FROZEN:
+                                frozen_dropped += 1
                                 continue
                         else:
                             track_frozen_streaks[raw_id] = 0
@@ -2573,8 +2762,10 @@ def camera_loop():
                         if track_hit_streaks[raw_id] >= required_hits:
                             track_confirmed_raw_ids.add(raw_id)
                         else:
+                            unconfirmed_dropped += 1
                             continue
                     else:
+                        lowconf_dropped += 1
                         continue
 
                 # 3. EMA Box Position Smoothing (stabilizes bounding boxes on fast-running chickens)
@@ -2609,7 +2800,7 @@ def camera_loop():
                 if disp_id not in seen_display_ids:
                     c_info = display_coasting_boxes[disp_id]
                     c_info["missed"] += 1
-                    if c_info["missed"] <= 2:
+                    if c_info["missed"] <= COAST_MAX_FRAMES:
                         vx, vy = track_velocities.get(disp_id, (0.0, 0.0))
                         # Extrapolate box position along running velocity vector
                         shift_x = float(vx * dt)
@@ -2638,6 +2829,25 @@ def camera_loop():
                         del display_coasting_boxes[disp_id]
 
             cached_display_items = display_items
+
+            if DEBUG_TRACK:
+                _new_raw_id_set = set(active_raw_ids)
+                if _new_raw_id_set != _prev_raw_id_set:
+                    _raw_id_switches += 1
+                _prev_raw_id_set = _new_raw_id_set
+                if curr_time - _last_trackdbg_print >= 1.0:
+                    _last_trackdbg_print = curr_time
+                    print(
+                        f"[TRACKDBG] det={det_boxes} tracked={tracked_boxes} "
+                        f"raw={raw_seen} veto={person_vetoed} "
+                        f"size={size_dropped} noslot={no_slot_dropped} "
+                        f"lowconf={lowconf_dropped} frozen={frozen_dropped} "
+                        f"unconf={unconfirmed_dropped} shown={len(display_items)} "
+                        f"id_switches/s={_raw_id_switches} "
+                        f"raw_ids={active_raw_ids} "
+                        f"disp_ids={[d['display_id'] for d in display_items]}"
+                    )
+                    _raw_id_switches = 0
 
         detection_list = []
         healthy_count = 0
@@ -2701,8 +2911,7 @@ def camera_loop():
             else:
                 track_stationary_duration[display_id] = max(0.0, track_stationary_duration.get(display_id, 0.0) - (dt * 2.0))
 
-            first_seen = track_first_seen.get(display_id, curr_time)
-            elapsed_obs = curr_time - first_seen
+            elapsed_obs = get_observed_seconds(display_id, curr_time)
             stationary_sec = track_stationary_duration.get(display_id, 0.0)
 
             # Crop for Behavior & Health Classification

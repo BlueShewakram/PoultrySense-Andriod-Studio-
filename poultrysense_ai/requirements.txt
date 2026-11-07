@@ -27,6 +27,9 @@ networkx
 numpy>=1.26.0,<2.0.0
 nvidia-ml-py
 onnx==1.16.2
+# CPU/Intel build. On an AMD Radeon PC replace this line with:
+#   onnxruntime-directml
+# (the two packages cannot coexist; DirectML is Windows-only)
 onnxruntime
 openvino>=2024.6.0
 opencv-contrib-python>=4.8.0,<4.11.0
