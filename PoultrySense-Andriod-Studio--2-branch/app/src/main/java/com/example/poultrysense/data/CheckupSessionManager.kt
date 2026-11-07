@@ -15,11 +15,45 @@ import kotlin.coroutines.resumeWithException
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.ValueEventListener
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.TimeUnit
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 
 object CheckupSessionManager {
+
+    private val scanHttpClient = OkHttpClient.Builder()
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * Fire-and-forget scan lifecycle ping. Signals the server to reset all Gemini
+     * alert cooldowns and begin the observation epoch when a scan starts.
+     */
+    fun notifyScanEvent(context: Context, path: String, payload: String? = null) {
+        try {
+            val baseUrl = ServerPreferences.getBaseUrl(context)
+            if (baseUrl.isBlank()) return
+            val body = (payload ?: "{}")
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder().url("$baseUrl$path").post(body).build()
+            scanHttpClient.newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {}
+                override fun onResponse(call: Call, response: Response) {
+                    response.close()
+                }
+            })
+        } catch (_: Exception) {}
+    }
 
     private const val PREFS_NAME = "poultrysense_checkup_prefs"
     private const val KEY_IS_ACTIVE = "key_is_active"
@@ -39,6 +73,26 @@ object CheckupSessionManager {
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    val activeChickenMap = mutableMapOf<Int, ChickenSessionDetail>()
+
+    fun recordSessionDetection(detail: ChickenSessionDetail) {
+        val existing = activeChickenMap[detail.chickenId]
+        val score = detail.anomalyScore
+        val tier = detail.anomalyTier.orEmpty()
+        val summary = detail.geminiSummary.orEmpty()
+        if (existing == null || score >= existing.anomalyScore || summary.isNotBlank()) {
+            activeChickenMap[detail.chickenId] = ChickenSessionDetail(
+                chickenId = detail.chickenId,
+                anomalyScore = maxOf(score, existing?.anomalyScore ?: 0),
+                anomalyTier = if (tier == "High Concern" || existing?.anomalyTier == "High Concern") "High Concern"
+                              else if (tier == "Suspicious" || existing?.anomalyTier == "Suspicious") "Suspicious"
+                              else tier,
+                behavior = if (!detail.behavior.isNullOrBlank()) detail.behavior else existing?.behavior ?: "stand",
+                geminiSummary = if (summary.isNotBlank()) summary else existing?.geminiSummary.orEmpty()
+            )
+        }
     }
 
     // ─── Live Session State ───
@@ -66,6 +120,7 @@ object CheckupSessionManager {
         durationMinutes: Int = 30,
         barnZone: BarnZone? = null
     ) {
+        activeChickenMap.clear()
         val targetZone = barnZone ?: FarmZoneManager.getActiveZone(context)
         getPrefs(context).edit()
             .putBoolean(KEY_IS_ACTIVE, true)
@@ -75,6 +130,7 @@ object CheckupSessionManager {
             .putString(KEY_ACTIVE_BARN_NAME, targetZone.barnName)
             .putString(KEY_ACTIVE_ZONE_NAME, targetZone.zoneName)
             .apply()
+        notifyScanEvent(context, "/scan/start", null)
     }
 
     fun stopSession(
@@ -99,16 +155,33 @@ object CheckupSessionManager {
             .apply()
 
         if (wasActive) {
+            val payload = """{"barn_name":"$barnName"}"""
+            notifyScanEvent(context, "/scan/stop", payload)
+
+            val effectiveDetails = if (chickenDetails.isNotEmpty()) {
+                chickenDetails
+            } else {
+                activeChickenMap.values.toList()
+            }
+            val effectiveTotal = if (totalFlock > 0) totalFlock else effectiveDetails.size
+            val flaggedCount = effectiveDetails.count {
+                val t = it.anomalyTier.orEmpty()
+                (t.isNotBlank() && t != "Normal") || it.anomalyScore >= 40
+            }
+            val effectiveIll = if (illCount > 0) illCount else flaggedCount
+            val effectiveHealthy = if (healthyCount > 0) healthyCount else (effectiveTotal - effectiveIll).coerceAtLeast(0)
+
             recordCompletedSession(
                 context = context,
-                totalFlock = totalFlock,
-                healthyCount = healthyCount,
-                illCount = illCount,
+                totalFlock = effectiveTotal,
+                healthyCount = effectiveHealthy,
+                illCount = effectiveIll,
                 barnId = barnId,
                 barnName = barnName,
                 zoneName = zoneName,
-                chickenDetails = chickenDetails
+                chickenDetails = effectiveDetails
             )
+            activeChickenMap.clear()
         }
     }
 
@@ -169,17 +242,17 @@ object CheckupSessionManager {
         val json = Gson().toJson(trimmed)
         prefs.edit().putString(KEY_SESSION_HISTORY, json).apply()
 
-        // Sync to the signed-in farmer's cloud history so it can be restored on
-        // another device. Unauthenticated installs fall back to the legacy farm node.
+        // Sync to the signed-in farmer's cloud history and shared farm history
+        // so it can be restored on another device or reinstall.
         try {
             val uid = UserPreferences.getCachedUser(context)?.uid
             val db = FirebaseConfig.database()
-            val historyRef = if (uid.isNullOrBlank()) {
-                db.getReference("farms").child("scan_history")
-            } else {
+            if (!uid.isNullOrBlank()) {
                 db.getReference("users").child(uid).child("scan_history")
+                    .child("session-$counter").setValue(newSession)
             }
-            historyRef.child("session-$counter").setValue(newSession)
+            db.getReference("farms").child("scan_history")
+                .child("session-$counter").setValue(newSession)
         } catch (_: Exception) {}
     }
 
@@ -235,46 +308,20 @@ object CheckupSessionManager {
     suspend fun refreshFromCloud(context: Context): List<ScanSession> {
         val local = getCompletedSessions(context)
         val uid = UserPreferences.getCachedUser(context)?.uid
-        if (uid.isNullOrBlank()) return local
 
-        val snapshot = try {
-            withTimeoutOrNull(8_000L) {
-                suspendCancellableCoroutine<DataSnapshot> { cont ->
-                    val ref = FirebaseConfig.database()
-                        .getReference("users").child(uid).child("scan_history")
-                    val listener = object : ValueEventListener {
-                        override fun onDataChange(snapshot: DataSnapshot) {
-                            if (cont.isActive) cont.resume(snapshot)
-                        }
+        val cloudSessions = mutableListOf<ScanSession>()
 
-                        override fun onCancelled(error: DatabaseError) {
-                            if (cont.isActive) cont.resumeWithException(error.toException())
-                        }
-                    }
-                    ref.addListenerForSingleValueEvent(listener)
-                    cont.invokeOnCancellation {
-                        ref.removeEventListener(listener)
-                    }
-                }
-            }
-        } catch (_: Exception) {
-            null
-        } ?: return local
+        if (!uid.isNullOrBlank()) {
+            val userSessions = fetchSessionsFromRef(FirebaseConfig.database().getReference("users").child(uid).child("scan_history"))
+            cloudSessions.addAll(userSessions)
+        }
 
-        if (!snapshot.exists()) return local
+        val farmSessions = fetchSessionsFromRef(FirebaseConfig.database().getReference("farms").child("scan_history"))
+        cloudSessions.addAll(farmSessions)
 
-        val cloud = snapshot.children.mapNotNull { child ->
-            try {
-                Gson().fromJson(Gson().toJson(child.value), ScanSession::class.java)
-            } catch (_: Exception) {
-                null
-            }
-        }.filterNot { isLegacyDemoSession(it) }
-            .map { normalizeLegacySession(context, it) }
+        if (cloudSessions.isEmpty()) return local
 
-        if (cloud.isEmpty()) return local
-
-        val merged = (cloud + local)
+        val merged = (cloudSessions + local)
             .filterNot { isLegacyDemoSession(it) }
             .associateBy { it.id }
             .values
@@ -288,6 +335,35 @@ object CheckupSessionManager {
             .putInt(KEY_SESSION_COUNTER, maxOf(prefs.getInt(KEY_SESSION_COUNTER, 0), highestCounter))
             .apply()
         return merged
+    }
+
+    private suspend fun fetchSessionsFromRef(ref: com.google.firebase.database.DatabaseReference): List<ScanSession> {
+        return try {
+            withTimeoutOrNull(6_000L) {
+                suspendCancellableCoroutine<List<ScanSession>> { cont ->
+                    val listener = object : ValueEventListener {
+                        override fun onDataChange(snapshot: DataSnapshot) {
+                            val list = snapshot.children.mapNotNull { child ->
+                                try {
+                                    Gson().fromJson(Gson().toJson(child.value), ScanSession::class.java)
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+                            if (cont.isActive) cont.resume(list)
+                        }
+
+                        override fun onCancelled(error: DatabaseError) {
+                            if (cont.isActive) cont.resume(emptyList())
+                        }
+                    }
+                    ref.addListenerForSingleValueEvent(listener)
+                    cont.invokeOnCancellation { ref.removeEventListener(listener) }
+                }
+            } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun sessionCounter(session: ScanSession): Long {

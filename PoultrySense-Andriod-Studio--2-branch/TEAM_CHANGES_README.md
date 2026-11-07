@@ -108,7 +108,7 @@ When running on AMD Ryzen 5 3500 + AMD Radeon RX 580, the HUD and telemetry prev
 4. **Over-Strict Debounce Gate:** The detection loop required 3 consecutive hits before showing a box for any chicken under 0.50 confidence. At 2.3 Hz, this caused a 1.3-second delay, causing fast-moving chickens to drop tracking before boxes appeared.
 
 ### Solution Applied (Full AMD-Native Transition):
-1. **Integrated Microsoft DirectML (DirectX 12 Compute):** Added `onnxruntime-directml` and automatic ONNX FP16 model export. Benchmarked at **71.8 FPS** raw detection and **62.9 FPS** tracking on the AMD Radeon RX 580.
+1. **Integrated Microsoft DirectML (DirectX 12 Compute):** Added ` onnxruntime-directml` and automatic ONNX FP16 model export. Benchmarked at **71.8 FPS** raw detection and **62.9 FPS** tracking on the AMD Radeon RX 580.
 2. **Dual Acceleration Backend Support:** Added `AI_ACCELERATION_BACKEND` in `.env` supporting `DIRECTML` (fastest on AMD GPU), `OPENVINO` (fallback/Intel compatibility), and `CPU`.
 3. **Migrated to Tuned ByteTrack:** Integrated `pipeline/bytetrack.yaml` with two-stage association ($0.15 \le \text{conf} \le 0.30$) to maintain track continuity when chickens peck or become occluded.
 4. **Unlocked Detection Rate to 12.0 Hz:** Configured `DETECTION_MAX_RATE_HZ=12.0` in `.env`, producing smooth, responsive bounding box rendering.

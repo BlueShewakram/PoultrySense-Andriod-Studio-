@@ -136,7 +136,7 @@ load_env_file()
 # Default 12.0 Hz delivers smooth, responsive AI box tracking on AMD Radeon RX 580 (DirectML / OpenVINO).
 DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "12.0"))
 # Confidence threshold for the chicken detector.
-DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.30"))
+DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.25"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
 # hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
@@ -149,52 +149,78 @@ FIREBASE_DATABASE_URL = os.environ.get(
     "https://poultrysense-app-default-rtdb.asia-southeast1.firebasedatabase.app"
 ).rstrip("/")
 
-# --- Global Alert Cooldown Configuration (Handling Tracker ID Switches) ---
-# When chickens exit/re-enter camera view, tracker IDs can switch. A global cooldown
-# ensures no new Gemini queries or SMS alerts fire across the entire system until
-# the cooldown window expires after an alert (default: 900 seconds = 15 minutes).
+# --- Gemini Alert Cooldown Configuration ---
+# Each chicken owns its own cooldown window (default 900 s = 15 min), so one
+# flagged bird can no longer silence Gemini for the rest of the flock. A short
+# system-wide gap (default 20 s) still keeps calls from firing simultaneously.
+# SMS is scan-scoped and unaffected: the farmer gets one summary when the scan ends.
 GLOBAL_ALERT_COOLDOWN_SEC = float(os.environ.get("GLOBAL_ALERT_COOLDOWN_SEC", "900.0"))
+GEMINI_MIN_QUERY_GAP_SEC = float(os.environ.get("GEMINI_MIN_QUERY_GAP_SEC", "20.0"))
 DAYTIME_RECUMBENT_THRESHOLD_SEC = float(os.environ.get("DAYTIME_RECUMBENT_THRESHOLD_SEC", os.environ.get("STATIONARY_DURATION_THRESHOLD_SEC", "45.0")))
 
 _last_global_alert_timestamp = 0.0
 _last_global_sms_timestamp = 0.0
+_last_alert_timestamp_by_id = {}   # display_id -> timestamp of that bird's last Gemini query
 _global_cooldown_lock = threading.Lock()
 _last_cooldown_log_time = 0.0
 
 def is_global_cooldown_active(curr_time=None):
-    """Returns True if the global alert cooldown window is active across the system."""
+    """Returns True while the short system-wide gap between Gemini calls is running."""
     global _last_global_alert_timestamp
     if curr_time is None:
         curr_time = time.time()
     with _global_cooldown_lock:
-        return (curr_time - _last_global_alert_timestamp) < GLOBAL_ALERT_COOLDOWN_SEC
+        return (curr_time - _last_global_alert_timestamp) < GEMINI_MIN_QUERY_GAP_SEC
 
 def get_global_cooldown_remaining(curr_time=None):
-    """Returns remaining seconds in the global alert cooldown window."""
+    """Returns remaining seconds in the short system-wide gap between Gemini calls."""
     global _last_global_alert_timestamp
     if curr_time is None:
         curr_time = time.time()
     with _global_cooldown_lock:
         elapsed = curr_time - _last_global_alert_timestamp
-        return max(0.0, GLOBAL_ALERT_COOLDOWN_SEC - elapsed)
+        return max(0.0, GEMINI_MIN_QUERY_GAP_SEC - elapsed)
 
-def record_global_alert(timestamp=None):
-    """Records an alert and locks the system-wide global alert cooldown (900-second / 15-minute window)."""
+def is_track_cooldown_active(track_id, curr_time=None):
+    """Returns True while this specific chicken is still inside its own cooldown window."""
+    if curr_time is None:
+        curr_time = time.time()
+    with _global_cooldown_lock:
+        last = _last_alert_timestamp_by_id.get(track_id, 0.0)
+        return (curr_time - last) < GLOBAL_ALERT_COOLDOWN_SEC
+
+def get_track_cooldown_remaining(track_id, curr_time=None):
+    """Returns seconds left before this chicken may be sent to Gemini again."""
+    if curr_time is None:
+        curr_time = time.time()
+    with _global_cooldown_lock:
+        last = _last_alert_timestamp_by_id.get(track_id, 0.0)
+        return max(0.0, GLOBAL_ALERT_COOLDOWN_SEC - (curr_time - last))
+
+def record_global_alert(timestamp=None, track_id=None):
+    """Stamps the system-wide gap and, when given, this chicken's cooldown window."""
     global _last_global_alert_timestamp
     if timestamp is None:
         timestamp = time.time()
     with _global_cooldown_lock:
         _last_global_alert_timestamp = timestamp
-        print(f"[COOLDOWN] Global alert cooldown active for {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s ({GLOBAL_ALERT_COOLDOWN_SEC/60:.1f} min). "
-              f"All new Gemini queries and SMS texts paused across the entire flock.")
+        if track_id is not None:
+            _last_alert_timestamp_by_id[track_id] = timestamp
+            print(f"[COOLDOWN] Chicken #{track_id} cooling down for {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s "
+                  f"({GLOBAL_ALERT_COOLDOWN_SEC/60:.1f} min). Other chickens are unaffected.")
+
+def record_track_alert(track_id, timestamp=None):
+    """Records a Gemini query for one chicken without touching the other birds."""
+    record_global_alert(timestamp=timestamp, track_id=track_id)
 
 def reset_global_cooldown():
-    """Manually resets the global cooldown timer (e.g. on user reset)."""
+    """Clears every cooldown: the system-wide gap and all per-chicken windows."""
     global _last_global_alert_timestamp, _last_global_sms_timestamp
     with _global_cooldown_lock:
         _last_global_alert_timestamp = 0.0
         _last_global_sms_timestamp = 0.0
-        print("[COOLDOWN] Global alert cooldown reset.")
+        _last_alert_timestamp_by_id.clear()
+        print("[COOLDOWN] All Gemini cooldowns reset.")
 
 def get_cloud_sms_settings():
     """Fetches real-time SMS alert preferences configured by the farmer in the Android app."""
@@ -326,6 +352,123 @@ def send_sms_alert(severity, reason, farmer_action, chicken_id=None, tag_label=N
     except Exception as e:
         print(f"[SMS] ⚠ Failed to dispatch Twilio SMS: {e}")
         return False
+
+
+# ─── Scan session summary & On-Demand Lifecycle ──────────────────────────────
+_scan_lock = threading.Lock()
+_scan_state = {
+    "active": False,
+    "started_at": 0.0,
+    "seen_ids": set(),
+    "warning_ids": set(),
+    "alert_ids": set(),
+}
+_scan_observation_epoch = 0.0
+
+def get_observed_seconds(display_id, curr_time):
+    """Seconds this bird has been observed in the current scan window."""
+    first_seen = track_first_seen.get(display_id, curr_time)
+    return max(0.0, curr_time - max(first_seen, _scan_observation_epoch))
+
+def scan_start():
+    """Begin a scan window. Clears the previous tally, every bird's evidence, and all alert cooldowns."""
+    with _scan_lock:
+        _scan_state["active"] = True
+        _scan_state["started_at"] = time.time()
+        _scan_state["seen_ids"] = set()
+        _scan_state["warning_ids"] = set()
+        _scan_state["alert_ids"] = set()
+
+    global _scan_observation_epoch
+    _scan_observation_epoch = time.time()
+
+    reset_global_cooldown()
+
+    behavior_history.records.clear()
+    behavior_history.baselines.clear()
+    track_histories.clear()
+    track_motion_windows.clear()
+    track_stationary_duration.clear()
+    track_classifications.clear()
+
+    print("[SCAN] Session started — per-bird evidence and alert cooldowns cleared.")
+
+def scan_record(track_id, anomaly_tier):
+    """Track unique birds seen, and unique birds that reached each flagged tier."""
+    with _scan_lock:
+        if not _scan_state["active"]:
+            return
+        _scan_state["seen_ids"].add(track_id)
+        if anomaly_tier == "Suspicious":
+            _scan_state["warning_ids"].add(track_id)
+        elif anomaly_tier == "High Concern":
+            _scan_state["alert_ids"].add(track_id)
+
+def send_scan_summary_sms(barn_name, total, warnings, alerts, duration_sec=0.0):
+    """Single end-of-scan SMS with warning and alert counts."""
+    _, _, climate_str = get_current_climate()
+    climate_line = f"Climate: {climate_str}\n" if climate_str and climate_str != "Unavailable" else ""
+
+    barn = (barn_name or "Barn").strip()
+    mins = int(round(duration_sec / 60.0)) if duration_sec else 0
+    duration_line = f"Duration: {mins} min\n" if mins > 0 else ""
+
+    if alerts > 0:
+        action = "Inspect alert birds now"
+    elif warnings > 0:
+        action = "Review warning birds"
+    else:
+        action = "No action needed"
+
+    sms_body = (
+        f"[PoultrySense SCAN COMPLETE]\n"
+        f"Barn: {barn}\n"
+        f"Birds scanned: {total}\n"
+        f"Warnings: {warnings}\n"
+        f"Alerts: {alerts}\n"
+        f"{duration_line}"
+        f"{climate_line}"
+        f"Action: {action}"
+    )
+    return send_sms_alert("High", sms_body, action) if (warnings > 0 or alerts > 0) else False
+
+def scan_stop(barn_name=""):
+    """End a scan window and send a summary SMS."""
+    started = 0.0
+    total = 0
+    warnings = 0
+    alerts = 0
+    was_active = False
+
+    with _scan_lock:
+        was_active = _scan_state["active"]
+        started = _scan_state["started_at"]
+        total = len(_scan_state["seen_ids"])
+        warnings = len(_scan_state["warning_ids"])
+        alerts = len(_scan_state["alert_ids"])
+        _scan_state["active"] = False
+        _scan_state["started_at"] = 0.0
+        _scan_state["seen_ids"] = set()
+        _scan_state["warning_ids"] = set()
+        _scan_state["alert_ids"] = set()
+
+    if not was_active:
+        with frame_lock:
+            total = latest_status.get("flock_count", 0)
+            warnings = latest_status.get("warning_count", 0)
+            alerts = latest_status.get("unhealthy_count", 0)
+
+    duration = max(0.0, time.time() - started) if started else 0.0
+    sent = send_scan_summary_sms(barn_name, total, warnings, alerts, duration)
+    summary = {
+        "total": total,
+        "warnings": warnings,
+        "alerts": alerts,
+        "duration_sec": round(duration, 1),
+        "sms_sent": sent,
+    }
+    print(f"[SCAN] Complete — {total} birds, {warnings} warnings, {alerts} alerts (SMS {'sent' if sent else 'skipped'})")
+    return summary
 
 def sync_verdict_to_firebase(verdict_obj):
     """
@@ -796,13 +939,18 @@ class GeminiVerdictEngine:
     def request_verdict_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec, snapshot_path=None, abnormal_flags=None):
         """
         Triggers asynchronous multimodal analysis with Gemini 3.6 Flash.
-        Enforces 15-minute global timestamp-based cooldown to handle tracker ID switches.
+        Each chicken has its own cooldown; a short system-wide gap keeps calls
+        from firing at the same instant.
         """
-        # 1. Global Alert Cooldown Check (prevents duplicates when chicken changes tracker ID)
+        # 1. Per-chicken cooldown — one bird's alert never silences the flock.
+        if is_track_cooldown_active(track_id, curr_time):
+            return
+
+        # 2. Short system-wide gap between Gemini calls
         if is_global_cooldown_active(curr_time):
             return
 
-        # 2. Prevent concurrent queries
+        # 3. Prevent concurrent queries
         if self._query_in_progress:
             return
 
@@ -817,8 +965,9 @@ class GeminiVerdictEngine:
             except Exception as ex_save:
                 print(f"[Vision Engine] Notice saving flagged snapshot: {ex_save}")
 
-        # Immediately lock global cooldown timer (15 minutes) so subsequent frames and tracker switches cannot trigger
-        record_global_alert(curr_time)
+        # Stamp this bird's window now, so the cooldown starts when we ask,
+        # not when Gemini answers.
+        record_track_alert(track_id, curr_time)
 
         threading.Thread(
             target=self._verdict_worker,
@@ -1011,8 +1160,8 @@ class GeminiVerdictEngine:
                 except Exception as sms_err:
                     print(f"[SMS] ⚠ Twilio SMS dispatch error block caught: {sms_err}")
 
-            # 3. Lock global alert cooldown timer for 15 minutes after alert
-            record_global_alert(time.time())
+            # 3. The cooldown was stamped when the query launched, so the window
+            #    starts at request time rather than at response time.
 
         finally:
             self._query_in_progress = False
@@ -1744,6 +1893,33 @@ def reset_ids():
     return jsonify({"status": "success", "message": "Chicken tracking IDs, histories, and alert cooldown reset successfully."})
 
 
+@flask_app.route('/reset_cooldown', methods=['GET', 'POST'])
+def reset_cooldown_route():
+    """Manually resets the global and per-chicken Gemini alert cooldowns."""
+    reset_global_cooldown()
+    return jsonify({"status": "success", "message": "All Gemini alert cooldowns reset."}), 200
+
+
+@flask_app.route('/scan/start', methods=['GET', 'POST'])
+def scan_start_route():
+    """App signals that a diagnostic scan has begun (e.g. Run On-Demand Scan pressed)."""
+    scan_start()
+    return jsonify({"status": "success", "message": "Scan started; cooldowns and evidence reset.", "scan_active": True}), 200
+
+
+@flask_app.route('/scan/stop', methods=['GET', 'POST'])
+def scan_stop_route():
+    """App signals that a scan has finished. Sends one summary SMS."""
+    barn_name = ""
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        barn_name = str(data.get("barn_name") or "").strip()
+    except Exception:
+        pass
+    summary = scan_stop(barn_name)
+    return jsonify({"status": "success", "summary": summary}), 200
+
+
 @flask_app.route('/')
 def index():
     return """<!DOCTYPE html>
@@ -2371,7 +2547,7 @@ def camera_loop():
                             if ix2 > ix1 and iy2 > iy1:
                                 inter_area = (ix2 - ix1) * (iy2 - iy1)
                                 chicken_area = max(1.0, (bx2 - bx1) * (by2 - by1))
-                                if (inter_area / chicken_area) > 0.30:
+                                if (inter_area / chicken_area) > 0.25:
                                     is_human = True
                                     break
                         if is_human:
@@ -2632,6 +2808,7 @@ def camera_loop():
                 )
                 anomaly_score = anomaly_info["anomaly_score"]
                 anomaly_tier = anomaly_info["anomaly_tier"]
+                scan_record(display_id, anomaly_tier)
 
                 # 4. Map to 4-tier decision hierarchy (LOCAL PRELIMINARY — Gemini overrides below)
                 if anomaly_tier == "Normal":
@@ -2710,13 +2887,15 @@ def camera_loop():
                     except Exception as ex_crop:
                         print(f"[Vision Engine] Notice saving flagged snapshot: {ex_crop}")
 
-                    # 15-minute global timestamp-based cooldown (prevents duplicate queries and SMS when tracker IDs switch)
+                    # Per-chicken alert cooldown with system-wide min gap
                     try:
-                        if is_global_cooldown_active(curr_time):
-                            if curr_time - _last_cooldown_log_time >= 30.0:
+                        if is_track_cooldown_active(display_id, curr_time):
+                            pass
+                        elif is_global_cooldown_active(curr_time):
+                            if curr_time - _last_cooldown_log_time >= 15.0:
                                 _last_cooldown_log_time = curr_time
                                 rem = int(get_global_cooldown_remaining(curr_time))
-                                print(f"[COOLDOWN] Global alert cooldown active ({rem}s remaining / {GLOBAL_ALERT_COOLDOWN_SEC:.0f}s). Skipping Gemini query for Chicken #{display_id}.")
+                                print(f"[COOLDOWN] Gemini gap active ({rem}s remaining). Waiting to query Chicken #{display_id}.")
                         else:
                             gemini_escalator.request_verdict_async(
                                 track_id=display_id,

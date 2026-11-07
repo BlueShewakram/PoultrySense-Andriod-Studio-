@@ -465,6 +465,26 @@ class MonitorFragment : Fragment() {
                         if (body != null) {
                             val status = gson.fromJson(body, AiStatusResponse::class.java)
                             latestAiStatus = status
+
+                            // Accumulate per-chicken evidence for active checkup session
+                            val c = context
+                            if (c != null && CheckupSessionManager.isSessionActive(c)) {
+                                status.detections?.forEach { det ->
+                                    val tid = det.trackId ?: return@forEach
+                                    if (tid > 0) {
+                                        CheckupSessionManager.recordSessionDetection(
+                                            ChickenSessionDetail(
+                                                chickenId = tid,
+                                                anomalyScore = det.anomalyScore ?: 0,
+                                                anomalyTier = det.anomalyTier ?: "Normal",
+                                                behavior = det.behavior ?: "stand",
+                                                geminiSummary = det.geminiSummary.orEmpty()
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+
                             withContext(Dispatchers.Main) {
                                 if (_binding != null) {
                                     val isConnected = status.active == true
@@ -782,11 +802,18 @@ class MonitorFragment : Fragment() {
             val isRunning = CheckupSessionManager.isSessionActive(ctx)
             if (isRunning) {
                 val status = latestAiStatus
-                val detectedCount = status?.flockCount ?: (binding.tvTelemetryCountVal.text.toString().toIntOrNull() ?: 0)
-                val healthyCount = status?.healthyCount ?: detectedCount
-                val illCount = (status?.unhealthyCount ?: 0) + (status?.warningCount ?: 0)
-                val chickenDetails = (status?.detections ?: emptyList())
-                    .mapNotNull { detection ->
+                val currentAccumulated = CheckupSessionManager.activeChickenMap.values.toList()
+                val detectedCount = if (currentAccumulated.isNotEmpty()) currentAccumulated.size else (status?.flockCount ?: (binding.tvTelemetryCountVal.text.toString().toIntOrNull() ?: 0))
+                val flaggedCount = currentAccumulated.count {
+                    val t = it.anomalyTier.orEmpty()
+                    (t.isNotBlank() && t != "Normal") || it.anomalyScore >= 40
+                }
+                val illCount = if (currentAccumulated.isNotEmpty()) flaggedCount else ((status?.unhealthyCount ?: 0) + (status?.warningCount ?: 0))
+                val healthyCount = (detectedCount - illCount).coerceAtLeast(0)
+                val chickenDetails = if (currentAccumulated.isNotEmpty()) {
+                    currentAccumulated
+                } else {
+                    (status?.detections ?: emptyList()).mapNotNull { detection ->
                         val trackId = detection.trackId ?: return@mapNotNull null
                         if (trackId <= 0) return@mapNotNull null
                         ChickenSessionDetail(
@@ -797,6 +824,7 @@ class MonitorFragment : Fragment() {
                             geminiSummary = detection.geminiSummary.orEmpty()
                         )
                     }
+                }
                 CheckupSessionManager.stopSession(
                     ctx,
                     totalFlock = detectedCount,
