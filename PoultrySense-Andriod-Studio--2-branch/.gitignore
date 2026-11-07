@@ -1,0 +1,61 @@
+# Android / Gradle
+*.iml
+.gradle/
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+app/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.aab
+
+# Firebase — DO NOT commit your real google-services.json
+# Users must supply their own from Firebase Console
+# Uncomment the line below if you want to protect it (not recommended for open-source setup guides)
+# google-services.json
+
+# Python AI Server
+poultrysense_ai/venv/
+poultrysense_ai/__pycache__/
+poultrysense_ai/*.pyc
+poultrysense_ai/*.log
+poultrysense_ai/out.log
+poultrysense_ai/err.log
+
+# YOLO model weights (large binary — users download separately)
+# poultrysense_ai/yolo11n.pt
+
+# Gemini API key & Twilio secrets — NEVER commit the real ones (use .env.example as template)
+poultrysense_ai/gemini_config.json
+poultrysense_ai/.env
+.env
+
+# Friend-shared datasets & training runs (large, machine-local only — see poultrysense_ai/datasets/README.md)
+poultrysense_ai/datasets/
+poultrysense_ai/training/
+*.zip
+
+# OpenVINO export cache (regenerated locally on first run — delete to roll back to torch)
+*_openvino_model/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Android Studio AGP internal dirs
+8.4/
+vcs-1/
+buildOutputCleanup/
+file-system.probe
+
+# AGY / Antigravity IDE
+.agents/

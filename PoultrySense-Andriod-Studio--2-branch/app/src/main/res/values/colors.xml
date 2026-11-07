@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Brand Farm Greens -->
+    <color name="primary">#0E5924</color>
+    <color name="primary_dark">#063914</color>
+    <color name="primary_light">#238636</color>
+    <color name="on_primary">#FFFFFF</color>
+
+    <color name="accent_green">#00E676</color>
+    <color name="accent_mint">#E3F9E9</color>
+
+    <!-- Farm Canvas & Card Surfaces -->
+    <color name="background">#F5F8F5</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_container">#EDF3ED</color>
+
+    <color name="splash_golden_bg">#E0F2FE</color>
+    <color name="splash_bg">#BAE6FD</color>
+    <color name="text_primary">#142417</color>
+    <color name="text_secondary">#435447</color>
+    <color name="text_muted">#7C8E80</color>
+
+    <!-- Borders & Dividers -->
+    <color name="border_color">#DCE8DC</color>
+    <color name="border_light">#EAF2EA</color>
+
+    <!-- Status Tones -->
+    <color name="critical">#D32F2F</color>
+    <color name="critical_container">#FFEBEE</color>
+    <color name="critical_stroke">#33D32F2F</color>
+
+    <color name="warning">#E65100</color>
+    <color name="warning_container">#FFF3E0</color>
+    <color name="warning_stroke">#33E65100</color>
+
+    <color name="healthy">#2E7D32</color>
+    <color name="healthy_container">#E8F5E9</color>
+    <color name="healthy_stroke">#332E7D32</color>
+
+    <!-- Basic -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="transparent">#00000000</color>
+
+    <!-- Bright Physical Chicken Tag Colors (Leg & Wing Bands) -->
+    <color name="tag_red">#FF1744</color>
+    <color name="tag_red_light">#FFF1F2</color>
+    <color name="tag_blue">#0091EA</color>
+    <color name="tag_blue_light">#F0F9FF</color>
+    <color name="tag_yellow">#FFD600</color>
+    <color name="tag_yellow_light">#FEFCE8</color>
+    <color name="tag_green">#00E676</color>
+    <color name="tag_green_light">#F0FDF4</color>
+    <color name="tag_orange">#FF6D00</color>
+    <color name="tag_orange_light">#FFF7ED</color>
+    <color name="tag_purple">#AA00FF</color>
+    <color name="tag_purple_light">#FAF5FF</color>
+    <color name="tag_pink">#FF4081</color>
+    <color name="tag_pink_light">#FDF2F8</color>
+    <color name="tag_cyan">#00E5FF</color>
+    <color name="tag_cyan_light">#ECFEFF</color>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Auto Backup rules.
+   The authoritative profile lives in Firebase, but including the local cache and
+   avatar gives an extra recovery path when a device is restored after a reinstall.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="poultrysense_user_prefs.xml" />
+    <include domain="file" path="profile_avatar.jpg" />
+</full-backup-content>

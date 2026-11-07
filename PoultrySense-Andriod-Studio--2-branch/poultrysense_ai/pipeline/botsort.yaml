@@ -1,0 +1,19 @@
+# PoultrySense tracker config for BoT-SORT (chicken tracking)
+# Optimized for fast-running chickens & occlusion recovery
+tracker_type: botsort
+track_high_thresh: 0.45
+track_low_thresh: 0.25
+new_track_thresh: 0.48
+track_buffer: 30
+match_thresh: 0.75
+fuse_score: true
+
+# BoT-SORT specifics
+gmc_method: none  # static USB coop camera: GMC burns CPU for zero gain
+
+# ReID: appearance memory per track (disabled for real-time 30 FPS tracking without CPU bottleneck)
+proximity_thresh: 0.6
+appearance_thresh: 0.70
+with_reid: false
+model: auto
+

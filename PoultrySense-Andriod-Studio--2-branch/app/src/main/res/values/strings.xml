@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">PoultrySense</string>
+    <string name="title_home">Home</string>
+    <string name="title_monitor">Monitor</string>
+    <string name="title_alerts">Alerts</string>
+    <string name="title_history">History</string>
+    <string name="title_profile">Profile</string>
+
+    <string name="mark_all_read">Mark All Read</string>
+    <string name="history_title">Scan History Log</string>
+
+    <string name="profile_name">Your Profile</string>
+    <string name="profile_role">Farm profile</string>
+    <string name="test_connection">Test Connection</string>
+    <string name="ai_server_ip_hint">e.g. 192.168.1.100 or poultryhub.local</string>
+    <string name="connection_ok">Connected — server is reachable</string>
+    <string name="connection_failed">Cannot reach server — check IP and WiFi</string>
+    <string name="save">Save</string>
+    <string name="sign_out">Sign Out</string>
+
+    <!-- Auth Strings -->
+    <string name="first_name">First Name</string>
+    <string name="last_name">Last Name</string>
+    <string name="email_address">Email Address</string>
+    <string name="password">Password</string>
+    <string name="confirm_password">Confirm Password</string>
+    <string name="farm_name">Farm / Facility Name</string>
+    <string name="forgot_password">Forgot Password?</string>
+    <string name="sign_in_btn">Sign In</string>
+    <string name="create_account_btn">Create Account</string>
+    <string name="already_have_account">Already have an account? </string>
+    <string name="sign_in_link">Sign In</string>
+    <string name="terms_agreement">I agree to the Terms of Service &amp; Privacy Policy</string>
+    <string name="reset_password_instructions">Enter your registered email address to receive password reset instructions.</string>
+    <string name="send_reset_link">Send Reset Link</string>
+    <string name="cancel">Cancel</string>
+</resources>

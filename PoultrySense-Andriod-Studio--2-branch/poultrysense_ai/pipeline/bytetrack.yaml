@@ -1,0 +1,8 @@
+# PoultrySense Tuned ByteTrack Configuration for Crowded Poultry Barns
+tracker_type: bytetrack
+track_high_thresh: 0.30   # First-round matching for clear chickens
+track_low_thresh: 0.15    # Second-round recovery for pecking/partially occluded chickens
+new_track_thresh: 0.28    # Minimum score to initialize a new chicken track
+track_buffer: 60          # Keep track alive for ~5 seconds of occlusion (at 12 AI/s)
+match_thresh: 0.70        # Spatial IoU association threshold
+fuse_score: true

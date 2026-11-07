@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "sensor_data": {
+      ".read": "auth != null",
+      ".write": true
+    },
+    "system_control": {
+      ".read": true,
+      ".write": true
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "farms": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}

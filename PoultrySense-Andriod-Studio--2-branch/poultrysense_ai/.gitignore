@@ -1,0 +1,26 @@
+# Environment variables / API secrets
+.env
+*.env
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Model downloads / weights
+*.pt
+*.onnx
+*.tflite
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
