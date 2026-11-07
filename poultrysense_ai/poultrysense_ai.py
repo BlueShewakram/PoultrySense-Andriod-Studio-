@@ -3042,7 +3042,12 @@ def camera_loop():
                 if anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60:
                     abnormal_triggers.append(f"High anomaly score ({anomaly_tier} {anomaly_score}%)")
 
-                is_abnormal_flagged = len(abnormal_triggers) > 0
+                # Gemini fires only on the chicken's overall anomaly score / tier, not on
+                # secondary cues (immobility, isolation, thermal stress, posture) that
+                # fire on printed photos, selfies, or static frames.
+                is_abnormal_flagged = (
+                    anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60
+                )
 
                 if is_abnormal_flagged and crop.size > 0 and crop.shape[0] >= 20 and crop.shape[1] >= 20:
                     snapshot_file = os.path.join(SCRIPT_DIR, "flagged_chicken.jpg")
