@@ -12,7 +12,10 @@ fuse_score: true
 gmc_method: none # static USB coop camera: GMC burns CPU for zero gain
 
 # ReID: appearance memory per track
-proximity_thresh: 0.6
-appearance_thresh: 0.70
+# Dedicated ReID encoder (512-d embeddings, CPU/ONNX) instead of the "auto"
+# fallback, which silently swaps to yolo26n-cls.pt on OpenVINO detectors.
+# Downloaded automatically by Ultralytics on first run.
+proximity_thresh: 0.55
+appearance_thresh: 0.65
 with_reid: true
-model: auto
+model: yolo26n-reid.onnx
