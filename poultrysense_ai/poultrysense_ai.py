@@ -134,9 +134,9 @@ load_env_file()
 # Detection is capped at 10 inferences/second on GPU (3 on CPU). Inference itself
 # is the real limit, so this gate only prevents wasted fast runs.
 DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "10.0"))
-# Confidence threshold for the chicken detector. 0.52 is the branch default;
-# override with POULTRYSENSE_DETECTION_CONF=0.35 for the older, more sensitive setting.
-DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.30"))
+# Confidence threshold for the chicken detector. 0.25 is the current setting;
+# override with POULTRYSENSE_DETECTION_CONF=0.30 to restore the previous value.
+DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.25"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
 # hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
