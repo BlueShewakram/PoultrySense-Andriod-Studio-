@@ -9,6 +9,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.example.poultrysense.data.ChickenTagHelper
 import com.example.poultrysense.data.models.ScanSession
 import com.example.poultrysense.databinding.ItemHistoryBinding
+import com.example.poultrysense.R
 import com.google.android.material.chip.Chip
 
 class HistoryAdapter(private var sessions: List<ScanSession>) :
@@ -60,53 +61,56 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
                 }
             }
 
-            // Populate Chicken Tag Chips
+            // Populate Chicken Tag Chips safely
             chipGroupFlagged.removeAllViews()
             chipGroupNormal.removeAllViews()
 
-            val flaggedBirds = details.filter { (it.anomalyTier ?: "Normal") != "Normal" || it.anomalyScore >= 40 }
-            val normalBirds = details.filter { (it.anomalyTier ?: "Normal") == "Normal" && it.anomalyScore < 40 }
+            try {
+                val flaggedBirds = details.filter { (it.anomalyTier ?: "Normal") != "Normal" || it.anomalyScore >= 40 }
+                val normalBirds = details.filter { (it.anomalyTier ?: "Normal") == "Normal" && it.anomalyScore < 40 }
 
-            if (flaggedBirds.isNotEmpty()) {
-                tvFlaggedSectionHeader.visibility = View.VISIBLE
-                chipGroupFlagged.visibility = View.VISIBLE
-                for (bird in flaggedBirds) {
-                    val tag = ChickenTagHelper.getTagInfo(bird.chickenId)
-                    val chip = Chip(holder.binding.root.context).apply {
-                        text = "${tag.emoji} ${tag.shortLabel} • FLAGGED"
-                        chipBackgroundColor = ColorStateList.valueOf(Color.parseColor(tag.chipBgHex))
-                        chipStrokeColor = ColorStateList.valueOf(Color.parseColor("#E65100"))
-                        chipStrokeWidth = 2.5f
-                        setTextColor(Color.parseColor(tag.chipTextHex))
-                        textSize = 11.5f
-                        isCheckable = false
-                        isClickable = false
+                if (flaggedBirds.isNotEmpty()) {
+                    tvFlaggedSectionHeader.visibility = View.VISIBLE
+                    chipGroupFlagged.visibility = View.VISIBLE
+                    for (bird in flaggedBirds) {
+                        val tag = ChickenTagHelper.getTagInfo(bird.chickenId)
+                        val chip = createChickenChip(
+                            parent = chipGroupFlagged,
+                            label = "${tag.emoji} ${tag.shortLabel} • FLAGGED",
+                            bgHex = tag.chipBgHex,
+                            strokeHex = "#E65100",
+                            textHex = tag.chipTextHex,
+                            strokeW = 2.5f
+                        )
+                        chipGroupFlagged.addView(chip)
                     }
-                    chipGroupFlagged.addView(chip)
+                } else {
+                    tvFlaggedSectionHeader.visibility = View.GONE
+                    chipGroupFlagged.visibility = View.GONE
                 }
-            } else {
+
+                if (normalBirds.isNotEmpty()) {
+                    tvNormalSectionHeader.visibility = View.VISIBLE
+                    chipGroupNormal.visibility = View.VISIBLE
+                    for (bird in normalBirds) {
+                        val tag = ChickenTagHelper.getTagInfo(bird.chickenId)
+                        val chip = createChickenChip(
+                            parent = chipGroupNormal,
+                            label = "${tag.emoji} ${tag.shortLabel} • Normal",
+                            bgHex = tag.chipBgHex,
+                            strokeHex = tag.chipBorderHex,
+                            textHex = tag.chipTextHex,
+                            strokeW = 1.5f
+                        )
+                        chipGroupNormal.addView(chip)
+                    }
+                } else {
+                    tvNormalSectionHeader.visibility = View.GONE
+                    chipGroupNormal.visibility = View.GONE
+                }
+            } catch (e: Exception) {
                 tvFlaggedSectionHeader.visibility = View.GONE
                 chipGroupFlagged.visibility = View.GONE
-            }
-
-            if (normalBirds.isNotEmpty()) {
-                tvNormalSectionHeader.visibility = View.VISIBLE
-                chipGroupNormal.visibility = View.VISIBLE
-                for (bird in normalBirds) {
-                    val tag = ChickenTagHelper.getTagInfo(bird.chickenId)
-                    val chip = Chip(holder.binding.root.context).apply {
-                        text = "${tag.emoji} ${tag.shortLabel} • Normal"
-                        chipBackgroundColor = ColorStateList.valueOf(Color.parseColor(tag.chipBgHex))
-                        chipStrokeColor = ColorStateList.valueOf(Color.parseColor(tag.chipBorderHex))
-                        chipStrokeWidth = 1.5f
-                        setTextColor(Color.parseColor(tag.chipTextHex))
-                        textSize = 11.5f
-                        isCheckable = false
-                        isClickable = false
-                    }
-                    chipGroupNormal.addView(chip)
-                }
-            } else {
                 tvNormalSectionHeader.visibility = View.GONE
                 chipGroupNormal.visibility = View.GONE
             }
@@ -122,6 +126,27 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
                     notifyItemChanged(pos)
                 }
             }
+
+            // Tap the scan card to acknowledge it in the database. The record is
+            // marked reviewed in Firebase but stays visible in History and Alerts.
+            holder.itemView.setOnClickListener {
+                val ctx = holder.itemView.context
+                val uid = com.example.poultrysense.data.UserPreferences.getCachedUser(ctx)?.uid
+                if (!uid.isNullOrBlank()) {
+                    try {
+                        com.example.poultrysense.data.FirebaseConfig.database()
+                            .getReference("users").child(uid).child("scan_history").child(session.id)
+                            .updateChildren(mapOf("reviewed" to true))
+                    } catch (_: Exception) { }
+                } else {
+                    try {
+                        com.example.poultrysense.data.FirebaseConfig.database()
+                            .getReference("farms").child("scan_history").child(session.id)
+                            .updateChildren(mapOf("reviewed" to true))
+                    } catch (_: Exception) { }
+                }
+                android.widget.Toast.makeText(ctx, "Scan marked as reviewed", android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
 
         holder.itemView.alpha = 0f
@@ -136,4 +161,27 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
     }
 
     override fun getItemCount(): Int = sessions.size
+
+    /** Inflate a Material3-themed Chip from the XML layout to avoid the crash
+     *  caused by programmatic `Chip(context)` which requires Theme.MaterialComponents. */
+    private fun createChickenChip(
+        parent: ViewGroup,
+        label: String,
+        bgHex: String,
+        strokeHex: String,
+        textHex: String,
+        strokeW: Float
+    ): Chip {
+        val chip = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_filter_chip, parent, false) as Chip
+        chip.text = label
+        chip.chipBackgroundColor = ColorStateList.valueOf(Color.parseColor(bgHex))
+        chip.chipStrokeColor = ColorStateList.valueOf(Color.parseColor(strokeHex))
+        chip.chipStrokeWidth = strokeW
+        chip.setTextColor(Color.parseColor(textHex))
+        chip.textSize = 11.5f
+        chip.isCheckable = false
+        chip.isClickable = false
+        return chip
+    }
 }

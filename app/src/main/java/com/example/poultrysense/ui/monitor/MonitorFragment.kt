@@ -806,8 +806,11 @@ class MonitorFragment : Fragment() {
                     healthyCount = healthyCount,
                     illCount = illCount,
                     chickenDetails = chickenDetails
-                )
-                Toast.makeText(ctx, "Checkup session saved to History", Toast.LENGTH_SHORT).show()
+                ) {
+                    activity?.runOnUiThread {
+                        Toast.makeText(ctx, "Checkup session saved to History", Toast.LENGTH_SHORT).show()
+                    }
+                }
                 updateSessionUI()
             } else {
                 // Interactive Barn Selection: Ask the user which barn camera to scan

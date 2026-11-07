@@ -84,17 +84,17 @@ class DetectionOverlayView @JvmOverloads constructor(
             seenKeys.add(key)
 
             val tier = item.anomalyTier ?: "Normal"
-            // Colour carries the tier; the text carries identity + the reason.
             val label = buildString {
                 if (trackId > 0) append('#').append(trackId) else append("CHICKEN")
-                val rawReason = item.reason?.takeIf { it.isNotBlank() }
-                // Suppress "unwell" on the overlay if the chicken is categorized as Normal / Healthy
-                val reason = if (tier.equals("Normal", ignoreCase = true) && rawReason.equals("unwell", ignoreCase = true)) {
-                    item.behavior?.takeIf { it.isNotBlank() }
-                } else {
-                    rawReason ?: item.behavior?.takeIf { it.isNotBlank() }
+                when {
+                    item.behavior?.equals("recumbent", ignoreCase = true) == true -> append(" RECUMBENT")
+                    tier.equals("High Concern", ignoreCase = true) -> append(" ALERT")
+                    tier.equals("Suspicious", ignoreCase = true) -> append(" ATTENTION")
+                    tier.equals("Monitor", ignoreCase = true) -> append(" WATCH")
+                    else -> item.behavior?.takeIf { it.isNotBlank() }?.let {
+                        append(' ').append(it.uppercase(java.util.Locale.getDefault()))
+                    }
                 }
-                reason?.let { append(' ').append(it) }
                 if (item.geminiVerified == true) append(" \u2713")
             }
             val color = colorForTier(tier)

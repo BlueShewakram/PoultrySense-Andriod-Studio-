@@ -16,7 +16,7 @@ TRACKER_CFG = {
     "track_high_thresh": 0.5,
     "track_low_thresh": 0.1,
     "new_track_thresh": 0.6,
-    "track_buffer": 30,
+    "track_buffer": 40,
     "match_thresh": 0.8,
     "fuse_score": True,
 }

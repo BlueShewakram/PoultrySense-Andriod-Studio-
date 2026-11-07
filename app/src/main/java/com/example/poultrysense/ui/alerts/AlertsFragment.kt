@@ -11,23 +11,30 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.poultrysense.R
 import com.example.poultrysense.data.CheckupSessionManager
 import com.example.poultrysense.data.ChickenTagHelper
+import com.example.poultrysense.data.FirebaseConfig
 import com.example.poultrysense.data.models.AlertSeverity
 import com.example.poultrysense.data.models.FarmAlert
 import com.example.poultrysense.data.models.ScanSession
 import com.example.poultrysense.data.models.TierLabels
 import com.example.poultrysense.databinding.FragmentAlertsBinding
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.ValueEventListener
 import kotlinx.coroutines.launch
 
 /**
- * Alerts are strictly scan-based: every card is a flagged chicken recorded in a
- * completed AI checkup. Live camera/climate notifications are intentionally not
- * shown here.
+ * Alerts are scan-based (completed AI checkups) PLUS live AI verdicts pushed by
+ * the Python vision engine to Firebase `active_alerts`. Both sources are merged
+ * so the farmer sees live flagged birds even before a scan completes.
  */
 class AlertsFragment : Fragment() {
 
     private var _binding: FragmentAlertsBinding? = null
     private val binding get() = _binding!!
     private lateinit var alertsAdapter: AlertGroupAdapter
+
+    private var liveAlertListener: ValueEventListener? = null
+    private val liveAlerts = mutableListOf<FarmAlert>()
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -40,7 +47,16 @@ class AlertsFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        alertsAdapter = AlertGroupAdapter(emptyList(), null)
+        alertsAdapter = AlertGroupAdapter(emptyList()) { alertToResolve ->
+            val cid = alertToResolve.chickenId
+            if (!cid.isNullOrBlank()) {
+                try {
+                    FirebaseConfig.database().getReference("active_alerts")
+                        .child("chicken_$cid")
+                        .removeValue()
+                } catch (_: Exception) {}
+            }
+        }
         binding.rvAlerts.apply {
             layoutManager = LinearLayoutManager(context)
             adapter = alertsAdapter
@@ -52,12 +68,79 @@ class AlertsFragment : Fragment() {
                 _binding?.swipeRefreshLayout?.let { it.isRefreshing = false }
             }, 500)
         }
+        attachLiveAlertsListener()
         refreshAndRender()
     }
 
     override fun onResume() {
         super.onResume()
         if (_binding != null) refreshAndRender()
+    }
+
+    private fun attachLiveAlertsListener() {
+        try {
+            val ref = FirebaseConfig.database().getReference("active_alerts")
+            val listener = object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val parsed = mutableListOf<FarmAlert>()
+                    for (child in snapshot.children) {
+                        val verdict = child.value as? Map<*, *> ?: continue
+                        val cid = (verdict["chicken_id"] as? Number)?.toInt()
+                            ?: verdict["chicken_id"]?.toString()?.toIntOrNull()
+                            ?: child.key?.substringAfter("chicken_")?.toIntOrNull()
+                            ?: continue
+                        val tier = verdict["anomaly_tier"]?.toString()
+                            ?: verdict["tier"]?.toString().orEmpty()
+                        val severity = verdict["severity"]?.toString().orEmpty()
+                        val summary = verdict["gemini_summary"]?.toString()
+                            ?: verdict["reason"]?.toString().orEmpty()
+                        val reason = verdict["reason"]?.toString()
+                            ?: summary
+                        val score = (verdict["anomaly_score"] as? Number)?.toInt()
+                            ?: verdict["anomaly_score"]?.toString()?.toIntOrNull()
+                            ?: 0
+                        val behavior = verdict["behavior"]?.toString().orEmpty()
+                        val timestamp = verdict["timestamp"]?.toString().orEmpty()
+                        val tag = ChickenTagHelper.getTagInfo(cid)
+                        val critical = severity.equals("Critical", ignoreCase = true) ||
+                            tier.equals("High Concern", ignoreCase = true) ||
+                            score >= 70
+                        val description = buildString {
+                            if (behavior.isNotBlank()) append("${behavior.replaceFirstChar { it.uppercase() }} • ")
+                            append("Anomaly score $score/100")
+                            if (summary.isNotBlank()) append("\n$summary")
+                            else if (reason.isNotBlank()) append("\n$reason")
+                        }
+                        parsed.add(
+                            FarmAlert(
+                                id = "live-${child.key}",
+                                severity = if (critical) AlertSeverity.CRITICAL else AlertSeverity.WARNING,
+                                title = "${tag.displayLabel} • ${TierLabels.forTier(tier.ifBlank { "Needs Attention" })}",
+                                description = description,
+                                timeAgo = "Live",
+                                timestamp = timestamp,
+                                read = false,
+                                isResolved = false,
+                                chickenId = cid.toString(),
+                                location = null,
+                                tagColorName = tag.colorName,
+                                tagColorHex = tag.colorHex,
+                                tagNumber = tag.tagNumber,
+                                isHistorical = false,
+                                scanId = null
+                            )
+                        )
+                    }
+                    liveAlerts.clear()
+                    liveAlerts.addAll(parsed)
+                    if (_binding != null) render()
+                }
+
+                override fun onCancelled(error: DatabaseError) { /* ignore */ }
+            }
+            ref.addValueEventListener(listener)
+            liveAlertListener = listener
+        } catch (_: Exception) { }
     }
 
     private fun refreshAndRender() {
@@ -72,11 +155,28 @@ class AlertsFragment : Fragment() {
         val ctx = context ?: return
         val scanGroups = CheckupSessionManager.getCompletedSessions(ctx)
             .mapNotNull { buildScanGroup(it) }
+            .toMutableList()
+
+        // Prepend a live AI alerts group when the vision engine has flagged birds.
+        if (liveAlerts.isNotEmpty()) {
+            val liveGroup = AlertGroup(
+                id = "live-ai-alerts",
+                title = "Live AI Alerts",
+                subtitle = "Flagged by the vision engine (not yet in a completed scan)",
+                countLabel = "${liveAlerts.size} flagged",
+                stats = null,
+                alerts = liveAlerts.toList(),
+                emptyMessage = "No live alerts.",
+                accentColor = Color.parseColor("#E53935"),
+                isScan = false
+            )
+            scanGroups.add(0, liveGroup)
+        }
 
         binding.tvAlertSummary.text = when {
             scanGroups.isEmpty() -> "No flagged birds in completed scans"
-            scanGroups.size == 1 -> "1 scan with flagged birds"
-            else -> "${scanGroups.size} scans with flagged birds"
+            scanGroups.size == 1 && liveAlerts.isEmpty() -> "1 scan with flagged birds"
+            else -> "${scanGroups.size} alert group(s)"
         }
 
         val hasContent = scanGroups.isNotEmpty()
@@ -166,6 +266,10 @@ class AlertsFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        liveAlertListener?.let {
+            try { FirebaseConfig.database().getReference("active_alerts").removeEventListener(it) } catch (_: Exception) { }
+        }
+        liveAlertListener = null
         _binding = null
     }
 }

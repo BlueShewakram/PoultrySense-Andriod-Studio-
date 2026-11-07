@@ -7,7 +7,7 @@ tracker_type: botsort
 track_high_thresh: 0.35
 track_low_thresh: 0.25
 new_track_thresh: 0.35
-track_buffer: 100
+track_buffer: 40
 match_thresh: 0.70
 fuse_score: true
 

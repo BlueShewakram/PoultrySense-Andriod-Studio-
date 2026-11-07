@@ -33,7 +33,9 @@ data class ScanSession(
     val zoneName: String = "",
     val chickenDetails: List<ChickenSessionDetail>? = emptyList(),
     /** Epoch millis when the scan was saved. 0 for sessions recorded by older builds. */
-    val timestamp: Long = 0L
+    val timestamp: Long = 0L,
+    /** True once the farmer has acknowledged/reviewed this scan (set on tap). */
+    val reviewed: Boolean = false
 ) {
     val safeChickenDetails: List<ChickenSessionDetail>
         get() = chickenDetails ?: emptyList()

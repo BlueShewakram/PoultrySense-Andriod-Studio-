@@ -136,7 +136,7 @@ load_env_file()
 DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "10.0"))
 # Confidence threshold for the chicken detector. 0.25 is the current setting;
 # override with POULTRYSENSE_DETECTION_CONF=0.30 to restore the previous value.
-DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.25"))
+DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.30"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
 # hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
@@ -332,6 +332,7 @@ _scan_state = {
     "seen_ids": set(),
     "warning_ids": set(),
     "alert_ids": set(),
+    "chickens": {},  # {track_id: {chicken_id, anomaly_score, anomaly_tier, behavior, gemini_summary}}
 }
 
 # Observation clock for the current scan. Kept separate from track_first_seen so
@@ -346,16 +347,17 @@ def get_observed_seconds(display_id, curr_time):
 
 
 def scan_start():
-    """Begin a scan window. Clears the previous tally and every bird's evidence."""
+    """Begin a scan window. Clears the previous tally, bird evidence, and resets active_alerts in DB."""
     with _scan_lock:
         _scan_state["active"] = True
         _scan_state["started_at"] = time.time()
         _scan_state["seen_ids"] = set()
         _scan_state["warning_ids"] = set()
         _scan_state["alert_ids"] = set()
+        _scan_state["chickens"] = {}
 
     # Fresh evidence for the new scan, but keep each chicken's display ID so
-    # #3 stays #3. Completed scans and Firebase alerts are not touched.
+    # #3 stays #3. Completed scans in scan_history are never touched.
     global _scan_observation_epoch
     _scan_observation_epoch = time.time()
 
@@ -366,19 +368,53 @@ def scan_start():
     track_stationary_duration.clear()
     track_classifications.clear()
 
-    print("[SCAN] Session started — per-bird evidence cleared; SMS will be sent once, when the scan completes.")
+    # Reset active_alerts in Firebase Realtime Database for the new scan session
+    if requests is not None:
+        try:
+            requests.delete(f"{FIREBASE_DATABASE_URL}/active_alerts.json", timeout=3)
+            print("[Firebase] ✓ Cleared active_alerts node for fresh scan.")
+        except Exception as e:
+            print(f"[Firebase] Notice clearing active_alerts: {e}")
+
+    print("[SCAN] Session started — per-bird evidence cleared; cumulative details active.")
 
 
-def scan_record(track_id, anomaly_tier):
-    """Track unique birds seen, and unique birds that reached each flagged tier."""
+def scan_record(det):
+    """Track unique birds seen, and maintain cumulative details for each bird during this scan."""
     with _scan_lock:
         if not _scan_state["active"]:
             return
+        track_id = det["track_id"]
+        tier = det.get("anomaly_tier", "Normal")
         _scan_state["seen_ids"].add(track_id)
-        if anomaly_tier == "Suspicious":
+        if tier == "Suspicious":
             _scan_state["warning_ids"].add(track_id)
-        elif anomaly_tier == "High Concern":
+        elif tier == "High Concern":
             _scan_state["alert_ids"].add(track_id)
+
+        tier_weights = {"Normal": 0, "Monitor": 1, "Suspicious": 2, "High Concern": 3}
+        existing = _scan_state["chickens"].get(track_id)
+        curr_score = det.get("anomaly_score", 0)
+        curr_summary = det.get("gemini_summary", "")
+        curr_behavior = det.get("behavior", "")
+
+        if existing is None:
+            _scan_state["chickens"][track_id] = {
+                "chicken_id": track_id,
+                "anomaly_score": curr_score,
+                "anomaly_tier": tier,
+                "behavior": curr_behavior,
+                "gemini_summary": curr_summary
+            }
+        else:
+            if curr_score > existing.get("anomaly_score", 0):
+                existing["anomaly_score"] = curr_score
+            if tier_weights.get(tier, 0) > tier_weights.get(existing.get("anomaly_tier", "Normal"), 0):
+                existing["anomaly_tier"] = tier
+            if curr_summary and not existing.get("gemini_summary"):
+                existing["gemini_summary"] = curr_summary
+            if curr_behavior:
+                existing["behavior"] = curr_behavior
 
 
 def send_scan_summary_sms(barn_name, total, warnings, alerts, duration_sec=0.0):
@@ -413,18 +449,20 @@ def send_scan_summary_sms(barn_name, total, warnings, alerts, duration_sec=0.0):
 
 
 def scan_stop(barn_name=""):
-    """End the scan window, send one summary SMS, and return the tally."""
+    """End the scan window, send one summary SMS, and return the tally with per-chicken details."""
     with _scan_lock:
         was_active = _scan_state["active"]
         total = len(_scan_state["seen_ids"])
         warnings = len(_scan_state["warning_ids"])
         alerts = len(_scan_state["alert_ids"])
         started = _scan_state["started_at"]
+        chickens_copy = list(_scan_state["chickens"].values())
         _scan_state["active"] = False
         _scan_state["started_at"] = 0.0
         _scan_state["seen_ids"] = set()
         _scan_state["warning_ids"] = set()
         _scan_state["alert_ids"] = set()
+        _scan_state["chickens"] = {}
 
     if not was_active:
         # No /scan/start was seen (older app build) — fall back to the live frame.
@@ -432,56 +470,109 @@ def scan_stop(barn_name=""):
             total = latest_status.get("flock_count", 0)
             warnings = latest_status.get("warning_count", 0)
             alerts = latest_status.get("unhealthy_count", 0)
+            chickens_copy = [
+                {
+                    "chicken_id": d["track_id"],
+                    "anomaly_score": d.get("anomaly_score", 0),
+                    "anomaly_tier": d.get("anomaly_tier", "Normal"),
+                    "behavior": d.get("behavior", ""),
+                    "gemini_summary": d.get("gemini_summary", "")
+                }
+                for d in latest_status.get("detections", [])
+            ]
 
     duration = max(0.0, time.time() - started) if started else 0.0
-    sent = send_scan_summary_sms(barn_name, total, warnings, alerts, duration)
+
+    # Dispatch summary SMS in a background thread so the HTTP /scan/stop response is instantaneous
+    def _async_sms():
+        try:
+            send_scan_summary_sms(barn_name, total, warnings, alerts, duration)
+        except Exception as e:
+            print(f"[SMS] Notice in async summary SMS: {e}")
+
+    threading.Thread(target=_async_sms, daemon=True).start()
+
+    ill_count = warnings + alerts
+    healthy_count = max(0, total - ill_count)
     summary = {
         "total": total,
         "warnings": warnings,
         "alerts": alerts,
+        "healthy": healthy_count,
+        "illCount": ill_count,
         "duration_sec": round(duration, 1),
-        "sms_sent": sent,
+        "sms_sent": True,
+        "chicken_details": chickens_copy
     }
-    print(f"[SCAN] Complete — {total} birds, {warnings} warnings, {alerts} alerts "
-          f"(SMS {'sent' if sent else 'skipped'})")
+    print(f"[SCAN] Complete — {total} birds, {warnings} warnings, {alerts} alerts, "
+          f"{len(chickens_copy)} detailed bird records")
     return summary
+
 
 def sync_verdict_to_firebase(verdict_obj):
     """
-    Writes Gemini's JSON diagnostic verdict directly to Firebase Realtime Database via REST.
+    Writes JSON diagnostic alert directly to Firebase Realtime Database via REST.
     Stores under active_alerts/chicken_{id}.json and diagnostic_verdicts/latest.json.
+    Ensures both 'tier'/'anomaly_tier' and 'reason'/'gemini_summary' are populated for app compatibility.
     """
     if requests is None:
         return False
-    cid = verdict_obj.get("chicken_id", "unknown")
+    payload = dict(verdict_obj)
+    cid = payload.get("chicken_id", "unknown")
+
+    # Bridge field names between server and app
+    if "anomaly_tier" in payload and "tier" not in payload:
+        payload["tier"] = payload["anomaly_tier"]
+    elif "tier" in payload and "anomaly_tier" not in payload:
+        payload["anomaly_tier"] = payload["tier"]
+
+    if "reason" in payload and "gemini_summary" not in payload:
+        payload["gemini_summary"] = payload["reason"]
+    elif "gemini_summary" in payload and "reason" not in payload:
+        payload["reason"] = payload["gemini_summary"]
+
     try:
         # 1. Update active alerts node for live alerts view
         url_alert = f"{FIREBASE_DATABASE_URL}/active_alerts/chicken_{cid}.json"
-        requests.put(url_alert, json=verdict_obj, timeout=5)
+        requests.put(url_alert, json=payload, timeout=5)
 
         # 2. Update diagnostic verdicts node
         url_diag = f"{FIREBASE_DATABASE_URL}/diagnostic_verdicts/chicken_{cid}.json"
-        requests.put(url_diag, json=verdict_obj, timeout=5)
+        requests.put(url_diag, json=payload, timeout=5)
 
         # 3. Update latest verdict reference
         url_latest = f"{FIREBASE_DATABASE_URL}/diagnostic_verdicts/latest.json"
-        requests.put(url_latest, json=verdict_obj, timeout=5)
-        print(f"[Firebase] ✓ Synced diagnostic verdict to RTDB for Chicken #{cid} ({verdict_obj.get('severity')})")
+        requests.put(url_latest, json=payload, timeout=5)
+        is_gemini = payload.get("gemini_evaluated", False) or "Gemini:" in str(payload.get("gemini_summary", ""))
+        source_label = "Gemini Cloud Verdict" if is_gemini else "Local Edge Tracker"
+        print(f"[Firebase] ✓ Synced active alert ({source_label}) for Chicken #{cid} [{payload.get('anomaly_tier', payload.get('severity'))}]")
         return True
     except Exception as e:
-        print(f"[Firebase] ⚠ Failed to sync diagnostic verdict to RTDB: {e}")
+        print(f"[Firebase] ⚠ Failed to sync alert to RTDB: {e}")
         return False
 
 # Backward compatibility alias
 sync_alert_to_firebase = sync_verdict_to_firebase
+
+_last_live_alert_sync = {}
+def sync_live_alert_debounced(cid, payload):
+    """Syncs live suspicious/alert chickens to Firebase active_alerts at most once every 5 seconds per chicken."""
+    now = time.time()
+    last_sync = _last_live_alert_sync.get(cid, 0.0)
+    if now - last_sync >= 5.0:
+        _last_live_alert_sync[cid] = now
+        def _bg():
+            sync_verdict_to_firebase(payload)
+        threading.Thread(target=_bg, daemon=True).start()
 
 TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", "botsort.yaml")
 if not os.path.exists(TRACKER_YAML):
     TRACKER_YAML = "botsort.yaml"
 
 DET_MODELS = [
-    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
+    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v5_26n.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v4_26n.pt"),
+    os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
 ]
 
 BEHAVIOR_MODELS = [
@@ -504,6 +595,7 @@ POSTURE_LABELS = {
     "stand": "Standing",
     "walk": "Walking",
     "rest": "Resting / recumbent",
+    "recumbent": "Recumbent / down / unable to stand",
 }
 HEALTH_NAMES = {0: "Healthy", 1: "Unhealthy"}
 
@@ -622,7 +714,7 @@ class ChickenBehaviorHistory:
         walk_cnt = sum(1 for _, b, _, _, _ in q if b == "walk")
         feed_cnt = sum(1 for _, b, _, _, _ in q if b == "peck")
         drink_cnt = sum(1 for _, b, _, _, _ in q if b == "drink")
-        rest_cnt = sum(1 for _, b, _, _, _ in q if b in ("stand", "sit", "rest", "sleep"))
+        rest_cnt = sum(1 for _, b, _, _, _ in q if b in ("stand", "sit", "rest", "sleep", "recumbent"))
         iso_cnt = sum(1 for _, _, _, iso, _ in q if iso)
         avg_motion = float(np.mean([m for _, _, m, _, _ in q]))
 
@@ -741,7 +833,13 @@ class AnomalyDetectionEngine:
         # Healthy chickens spend up to 60% of their time resting/sleeping with zero optical motion.
         # If the bird is resting alongside the flock (not isolated) and shows healthy visual traits
         # (unhealthy_prob < 0.35), prolonged immobility is normal resting/sleep, NOT sickness!
-        is_social_rest = (not is_isolated) and (stats.get("isolation_pct", 0.0) < 35.0)
+        # BUT: if stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC (45s), the immobility is too
+        # prolonged — even social resting should not clamp the score, so Gemini can evaluate.
+        is_social_rest = (
+            (not is_isolated)
+            and (stats.get("isolation_pct", 0.0) < 35.0)
+            and (stationary_sec < DAYTIME_RECUMBENT_THRESHOLD_SEC)
+        )
         is_visually_healthy = (unhealthy_prob < 0.35)
 
         if is_social_rest and is_visually_healthy:
@@ -757,11 +855,26 @@ class AnomalyDetectionEngine:
             0.10 * iso_score +
             0.20 * posture_score
         )
+
+        # Ethological Locomotion Reality Check (Weeks et al. 2000, Dawkins et al. 2012):
+        # A chicken that is actively moving / foraging (avg_motion >= 2.5 or stationary_sec < 5.0)
+        # cannot be in pathological recumbency or paralyzed distress.
+        # Clinical Visual Override applies when the chicken is stationary / low-activity (stationary_sec >= 10.0 or motion < 2.0).
+        is_actively_moving = (stationary_sec < 5.0 and stats.get("avg_motion", 0.0) >= 2.0)
+        if not is_actively_moving:
+            if unhealthy_prob >= 0.65:
+                raw_score = max(raw_score, 70.0 + (unhealthy_prob - 0.65) * 80.0)
+            elif unhealthy_prob >= 0.45:
+                raw_score = max(raw_score, 45.0 + (unhealthy_prob - 0.45) * 60.0)
+        else:
+            # Active foraging / locomotion dampens visual noise from unfamiliar outdoor backdrops
+            raw_score = min(raw_score, 25.0)
+
         total_score = int(round(min(100.0, max(0.0, raw_score))))
 
-        # Cold-Start Dampener: During first 25s of tracking, cap score at 25 (Normal/Healthy)
-        # Prevents newly detected birds from false alarms before sufficient behavioral data is collected.
-        if observed_sec < 25.0:
+        # Cold-Start Dampener: During first 25s of tracking, cap score at 25 ONLY for visually healthy birds.
+        # A bird that is visibly paralyzed or down must NEVER be clamped to "Healthy"!
+        if observed_sec < 25.0 and unhealthy_prob < 0.40:
             total_score = min(total_score, 25)
 
         if total_score < 30:
@@ -2908,10 +3021,13 @@ def camera_loop():
             # Track continuous stationary duration (seconds with motion < 1.6)
             if motion < 1.6:
                 track_stationary_duration[display_id] = track_stationary_duration.get(display_id, 0.0) + dt
+            elif motion >= 2.5:
+                track_stationary_duration[display_id] = 0.0
             else:
-                track_stationary_duration[display_id] = max(0.0, track_stationary_duration.get(display_id, 0.0) - (dt * 2.0))
+                track_stationary_duration[display_id] = max(0.0, track_stationary_duration.get(display_id, 0.0) - (dt * 3.0))
 
-            elapsed_obs = get_observed_seconds(display_id, curr_time)
+            first_seen = track_first_seen.get(display_id, curr_time)
+            elapsed_obs = curr_time - first_seen
             stationary_sec = track_stationary_duration.get(display_id, 0.0)
 
             # Crop for Behavior & Health Classification
@@ -2937,13 +3053,20 @@ def camera_loop():
                     except Exception:
                         pass
 
-            # Real-time Motion fusion heuristic (instant 30 FPS response on main thread!)
+            # Real-time Motion fusion heuristic:
+            # Active locomotion / foraging requires optical motion. A motionless chicken cannot be walking or pecking.
             if motion > 4.5:
                 behavior_label = "walk"
-            elif motion > 2.5 and behavior_label == "peck":
+            elif motion > 2.2 and behavior_label == "peck":
                 behavior_label = "peck"
-            elif stationary_sec >= 15.0 and behavior_label == "stand":
-                behavior_label = "rest"
+            elif motion < 1.6:
+                # Chicken is motionless / stationary on the litter
+                if unhealthy_prob >= 0.45:
+                    behavior_label = "recumbent"  # Down / paralyzed / unable to stand
+                elif stationary_sec >= 15.0:
+                    behavior_label = "rest"
+                elif behavior_label not in ("rest", "stand"):
+                    behavior_label = "stand"
 
             # 1. Update ChickenBehaviorHistory
             cx = int((x1 + x2) / 2)
@@ -2989,7 +3112,9 @@ def camera_loop():
                     healthy_count += 1
                 elif anomaly_tier == "Monitor":
                     health_label = "Monitor"
-                    if is_isolated:
+                    if unhealthy_prob >= 0.45 or behavior_label == "recumbent":
+                        health_detail = f"Recumbent / Low Activity ({int(unhealthy_prob * 100)}% visual severity)"
+                    elif is_isolated:
                         health_detail = "Flock Edge / Moderate Separation"
                     elif stationary_sec >= 25.0:
                         health_detail = f"Extended Resting Pause ({stationary_sec:.0f}s)"
@@ -2999,7 +3124,9 @@ def camera_loop():
                     observing_count += 1
                 elif anomaly_tier == "Suspicious":
                     health_label = "Needs Attention"
-                    if is_isolated and stats["isolation_pct"] >= 50.0:
+                    if unhealthy_prob >= 0.45 or behavior_label == "recumbent":
+                        health_detail = f"Recumbent / Lethargic Posture ({int(unhealthy_prob * 100)}% visual severity)"
+                    elif is_isolated and stats["isolation_pct"] >= 50.0:
                         health_detail = "Persistent Isolation & Inactivity"
                     elif stationary_sec >= 45.0:
                         health_detail = f"Prolonged Immobility ({stationary_sec:.0f}s)"
@@ -3009,7 +3136,10 @@ def camera_loop():
                     warning_count += 1
                 else:  # High Concern (>= 80)
                     health_label = "High Concern"
-                    health_detail = f"Severe Lethargy Marker ({stationary_sec:.0f}s immobile)"
+                    if unhealthy_prob >= 0.45 or behavior_label == "recumbent":
+                        health_detail = f"Severe Recumbency / Paralyzed Posture ({int(unhealthy_prob * 100)}%)"
+                    else:
+                        health_detail = f"Severe Lethargy Marker ({stationary_sec:.0f}s immobile)"
                     color = (70, 70, 255)  # Vivid Alert Red
                     unhealthy_count += 1
 
@@ -3021,9 +3151,12 @@ def camera_loop():
                 # - Thermal stress (ambient temperature > 30°C or < 18°C from ESP32 DHT22)
                 # - Composite anomaly tier (Suspicious / High Concern)
                 abnormal_triggers = []
+                if behavior_label == "recumbent" or unhealthy_prob >= 0.45:
+                    abnormal_triggers.append(f"Abnormal recumbent posture / unable to stand ({unhealthy_prob:.2f})")
+
                 if stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC:
                     abnormal_triggers.append(f"Prolonged immobility ({stationary_sec:.0f}s >= {DAYTIME_RECUMBENT_THRESHOLD_SEC:.0f}s threshold)")
-                elif stationary_sec >= 25.0 and behavior_label in ("rest", "stand", "sit"):
+                elif stationary_sec >= 25.0 and behavior_label in ("rest", "stand", "sit", "recumbent"):
                     abnormal_triggers.append(f"Extended stationary resting ({stationary_sec:.0f}s)")
 
                 if unhealthy_prob >= 0.40 or anomaly_info.get("sub_scores", {}).get("posture", 0) >= 40.0:
@@ -3042,11 +3175,27 @@ def camera_loop():
                 if anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60:
                     abnormal_triggers.append(f"High anomaly score ({anomaly_tier} {anomaly_score}%)")
 
-                # Gemini fires only on the chicken's overall anomaly score / tier, not on
-                # secondary cues (immobility, isolation, thermal stress, posture) that
-                # fire on printed photos, selfies, or static frames.
+                # Sustained observation gate: Gemini evaluates ONLY when abnormal behavior is sustained,
+                # never on immediate single-frame transients or newly appeared chickens still calibrating.
+                is_sustained_recumbency = (
+                    (behavior_label == "recumbent" or unhealthy_prob >= 0.45)
+                    and stationary_sec >= 20.0
+                    and elapsed_obs >= OBSERVATION_WINDOW
+                )
+                is_prolonged_immobility = (
+                    stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC
+                    and elapsed_obs >= OBSERVATION_WINDOW
+                )
+                is_sustained_anomaly = (
+                    (anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60)
+                    and stationary_sec >= 20.0
+                    and elapsed_obs >= OBSERVATION_WINDOW
+                )
+
                 is_abnormal_flagged = (
-                    anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60
+                    is_sustained_recumbency
+                    or is_prolonged_immobility
+                    or is_sustained_anomaly
                 )
 
                 if is_abnormal_flagged and crop.size > 0 and crop.shape[0] >= 20 and crop.shape[1] >= 20:
@@ -3133,17 +3282,20 @@ def camera_loop():
             # Draw HUD Box
             draw_hud_box(frame, (x1, y1), (x2, y2), color, thickness=2, line_len=16)
 
-            # Clean minimal badge. The box colour already encodes the tier, so the
-            # text stays factual: bird ID + what is actually being observed.
-            badge_reason = build_badge_reason(
-                elapsed_obs, behavior_label, stationary_sec, is_isolated,
-                unhealthy_prob, anomaly_score, anomaly_tier=anomaly_tier
-            )
-            badge_text = f"#{display_id}"
-            if badge_reason:
-                badge_text += f" {badge_reason}"
-            if gemini_verified:
-                badge_text += " \u2713"
+            # Clean minimal badge with Gemini verification indicator
+            gemini_check = " \u2713" if gemini_verified else ""
+            if elapsed_obs < OBSERVATION_WINDOW and unhealthy_prob < 0.45:
+                badge_text = f"#{display_id}"
+            elif gemini_verified:
+                badge_text = f"#{display_id} {gemini_severity.upper()}{gemini_check}"
+            elif behavior_label == "recumbent":
+                badge_text = f"#{display_id} RECUMBENT"
+            elif anomaly_tier == "Normal":
+                badge_text = f"#{display_id} {behavior_label.upper()}"
+            elif anomaly_tier == "Monitor":
+                badge_text = f"#{display_id} WATCH"
+            else:
+                badge_text = f"#{display_id} {anomaly_tier.upper()} {anomaly_score}%"
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.45
@@ -3176,7 +3328,7 @@ def camera_loop():
                 "severity": gemini_severity if gemini_verified else ("Low" if anomaly_tier == "Normal" else ("Medium" if anomaly_tier == "Monitor" else ("High" if anomaly_tier == "Suspicious" else "Critical"))),
                 "gemini_summary": gemini_summary,
                 "gemini_verified": gemini_verified,
-                "reason": badge_reason,
+                "reason": behavior_label.upper() if anomaly_tier == "Normal" else anomaly_tier,
 
                 "isolated": is_isolated,
                 "motion": round(motion, 1),
@@ -3187,9 +3339,32 @@ def camera_loop():
 
         flock_count = len(detection_list)
 
-        # Tally flagged birds for the end-of-scan SMS summary.
+        # Tally flagged birds and maintain cumulative details for the scan session.
         for det in detection_list:
-            scan_record(det["track_id"], det["anomaly_tier"])
+            scan_record(det)
+            # Live Alert sync (RRL Gated): Only sync confirmed anomalies to Firebase once the chicken
+            # has passed the baseline observation calibration window (OBSERVATION_WINDOW = 15s)
+            # and is verified or sustained, preventing transient first-frame alerts.
+            if det.get("anomaly_tier") in ["Suspicious", "High Concern"] and det.get("observed_sec", 0.0) >= OBSERVATION_WINDOW:
+                cid = det["track_id"]
+                tag_info = get_poultry_tag_info(cid)
+                live_alert_payload = {
+                    "chicken_id": cid,
+                    "tag_number": tag_info["tag_number"],
+                    "tag_color": tag_info["tag_color"],
+                    "tag_color_hex": tag_info["tag_color_hex"],
+                    "tag_label": tag_info["tag_label"],
+                    "status": f"{det['anomaly_tier']} • {tag_info['tag_label']}",
+                    "severity": det.get("severity", "Medium"),
+                    "tier": det["anomaly_tier"],
+                    "anomaly_tier": det["anomaly_tier"],
+                    "reason": det.get("reason") or det.get("behavior", ""),
+                    "gemini_summary": det.get("gemini_summary", ""),
+                    "anomaly_score": det.get("anomaly_score", 0),
+                    "behavior": det.get("behavior", ""),
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                }
+                sync_live_alert_debounced(cid, live_alert_payload)
 
         # Dynamic Health Index
         if flock_count > 0:

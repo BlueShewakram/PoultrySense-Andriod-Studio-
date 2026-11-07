@@ -119,7 +119,8 @@ object CheckupSessionManager {
         healthyCount: Int = 0,
         illCount: Int = 0,
         barnZone: BarnZone? = null,
-        chickenDetails: List<ChickenSessionDetail> = emptyList()
+        chickenDetails: List<ChickenSessionDetail> = emptyList(),
+        onComplete: ((ScanSession) -> Unit)? = null
     ) {
         val prefs = getPrefs(context)
         val wasActive = prefs.getBoolean(KEY_IS_ACTIVE, false)
@@ -135,19 +136,106 @@ object CheckupSessionManager {
             .apply()
 
         if (wasActive) {
-            recordCompletedSession(
-                context = context,
-                totalFlock = totalFlock,
-                healthyCount = healthyCount,
-                illCount = illCount,
-                barnId = barnId,
-                barnName = barnName,
-                zoneName = zoneName,
-                chickenDetails = chickenDetails
-            )
-            // Server tallied the scan; ask it for the one end-of-scan summary SMS.
             val payload = JSONObject().put("barn_name", barnName).toString()
-            notifyScanEvent(context, "/scan/stop", payload)
+            val baseUrl = ServerPreferences.getBaseUrl(context)
+
+            if (baseUrl.isNotBlank()) {
+                val body = payload.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder().url("$baseUrl/scan/stop").post(body).build()
+                scanHttpClient.newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        // Fall back to app's local detections
+                        val session = recordCompletedSession(
+                            context = context,
+                            totalFlock = totalFlock,
+                            healthyCount = healthyCount,
+                            illCount = illCount,
+                            barnId = barnId,
+                            barnName = barnName,
+                            zoneName = zoneName,
+                            chickenDetails = chickenDetails
+                        )
+                        onComplete?.invoke(session)
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        var effTotal = totalFlock
+                        var effHealthy = healthyCount
+                        var effIll = illCount
+                        var effDetails = chickenDetails
+
+                        try {
+                            if (response.isSuccessful) {
+                                val respBody = response.body?.string().orEmpty()
+                                if (respBody.isNotBlank()) {
+                                    val json = JSONObject(respBody)
+                                    val srvTotal = json.optInt("total", -1)
+                                    val srvIll = json.optInt("illCount", -1)
+                                    val srvWarnings = json.optInt("warnings", 0)
+                                    val srvAlerts = json.optInt("alerts", 0)
+                                    val srvHealthy = json.optInt("healthy", -1)
+                                    val effectiveIll = if (srvIll >= 0) srvIll else (srvWarnings + srvAlerts)
+
+                                    val srvArray = json.optJSONArray("chicken_details")
+                                    val srvDetails = mutableListOf<ChickenSessionDetail>()
+                                    if (srvArray != null) {
+                                        for (i in 0 until srvArray.length()) {
+                                            val item = srvArray.getJSONObject(i)
+                                            val cid = item.optInt("chicken_id", 0)
+                                            if (cid > 0) {
+                                                srvDetails.add(
+                                                    ChickenSessionDetail(
+                                                        chickenId = cid,
+                                                        anomalyScore = item.optInt("anomaly_score", 0),
+                                                        anomalyTier = item.optString("anomaly_tier", "Normal"),
+                                                        behavior = item.optString("behavior", ""),
+                                                        geminiSummary = item.optString("gemini_summary", "")
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (srvTotal >= 0) {
+                                        effTotal = srvTotal
+                                        effIll = effectiveIll
+                                        effHealthy = if (srvHealthy >= 0) srvHealthy else (effTotal - effIll).coerceAtLeast(0)
+                                    }
+                                    if (srvDetails.isNotEmpty()) {
+                                        effDetails = srvDetails
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {} finally {
+                            response.close()
+                        }
+
+                        val session = recordCompletedSession(
+                            context = context,
+                            totalFlock = effTotal,
+                            healthyCount = effHealthy,
+                            illCount = effIll,
+                            barnId = barnId,
+                            barnName = barnName,
+                            zoneName = zoneName,
+                            chickenDetails = effDetails
+                        )
+                        onComplete?.invoke(session)
+                    }
+                })
+            } else {
+                val session = recordCompletedSession(
+                    context = context,
+                    totalFlock = totalFlock,
+                    healthyCount = healthyCount,
+                    illCount = illCount,
+                    barnId = barnId,
+                    barnName = barnName,
+                    zoneName = zoneName,
+                    chickenDetails = chickenDetails
+                )
+                onComplete?.invoke(session)
+            }
         }
     }
 
@@ -160,7 +248,7 @@ object CheckupSessionManager {
         barnName: String = "",
         zoneName: String = "",
         chickenDetails: List<ChickenSessionDetail> = emptyList()
-    ) {
+    ): ScanSession {
         val activeZone = FarmZoneManager.getActiveZone(context)
         val effectiveBarnId = barnId.ifBlank { activeZone.id }
         val effectiveBarnName = barnName.ifBlank { activeZone.barnName }
@@ -220,6 +308,8 @@ object CheckupSessionManager {
             }
             historyRef.child("session-$counter").setValue(newSession)
         } catch (_: Exception) {}
+
+        return newSession
     }
 
     fun getCompletedSessions(context: Context): List<ScanSession> {
