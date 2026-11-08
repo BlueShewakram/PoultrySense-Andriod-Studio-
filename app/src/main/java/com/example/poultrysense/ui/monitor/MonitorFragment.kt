@@ -854,11 +854,6 @@ class MonitorFragment : Fragment() {
                 dialog.show(parentFragmentManager, "SELECT_SCAN_BARN_DIALOG")
             }
         }
-
-        // 3. Open Schedule Dialog
-        binding.btnOpenScheduleDialog.setOnClickListener {
-            showScheduleCheckupDialog()
-        }
     }
 
     private fun updateSessionUI() {
@@ -866,26 +861,19 @@ class MonitorFragment : Fragment() {
         if (_binding == null) return
         val isActive = CheckupSessionManager.isSessionActive(ctx)
 
-        val scheduleDescription = CheckupSessionManager.getScheduleDescription(ctx)
-        binding.tvScheduledRunInfo.text = if (CheckupSessionManager.isScheduleEnabled(ctx)) {
-            "Next: $scheduleDescription"
-        } else {
-            scheduleDescription
-        }
-
         if (isActive) {
             binding.tvSessionTitle.text = "Diagnostic Scan Active"
             binding.tvSessionSubtitle.text = "Analyzing flock behavior & logging telemetry"
             binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.accent_green)
-            binding.btnToggleSession.text = "Stop Scan"
+            binding.btnToggleSession.text = "Stop Anomaly Scan"
             binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.critical)
             binding.layoutActiveSessionBanner.visibility = View.VISIBLE
             startSessionTicker()
         } else {
-            binding.tvSessionTitle.text = "AI Health Checkup"
-            binding.tvSessionSubtitle.text = "Continuous 24/7 AI Health Monitoring"
+            binding.tvSessionTitle.text = "Ai Anomaly Checkup"
+            binding.tvSessionSubtitle.text = "Continuous 24/7 AI Anomaly Monitoring"
             binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.text_muted)
-            binding.btnToggleSession.text = "Run On-Demand Scan"
+            binding.btnToggleSession.text = "Run Anomaly Scan"
             binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.primary)
             binding.layoutActiveSessionBanner.visibility = View.GONE
             stopSessionTicker()
@@ -899,7 +887,7 @@ class MonitorFragment : Fragment() {
                 val ctx = context ?: break
                 if (!CheckupSessionManager.isSessionActive(ctx)) {
                     updateSessionUI()
-                    Toast.makeText(ctx, "AI Flock Checkup Completed", Toast.LENGTH_LONG).show()
+                    Toast.makeText(ctx, "Ai Anomaly Checkup Completed", Toast.LENGTH_LONG).show()
                     break
                 }
                 val remainingSec = CheckupSessionManager.getRemainingSeconds(ctx)
