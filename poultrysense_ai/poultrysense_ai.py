@@ -1697,6 +1697,74 @@ def update_track_velocity(disp_id, cx, cy, curr_time):
     display_id_last_positions[disp_id] = (cx, cy, curr_time)
 
 
+def purge_display_id_data(disp_id):
+    """Completely scrubs all historical tracking, behavioral stats, Gemini verdicts,
+    and cooldowns for a specific display ID so a new bird never inherits stale data."""
+    track_first_seen.pop(disp_id, None)
+    track_stationary_duration.pop(disp_id, None)
+    track_histories.pop(disp_id, None)
+    track_motion_windows.pop(disp_id, None)
+    track_classifications.pop(disp_id, None)
+    track_velocities.pop(disp_id, None)
+    display_id_last_positions.pop(disp_id, None)
+    display_coasting_boxes.pop(disp_id, None)
+    if disp_id in behavior_history.records:
+        del behavior_history.records[disp_id]
+    if disp_id in behavior_history.baselines:
+        del behavior_history.baselines[disp_id]
+    gemini_escalator.verdicts.pop(disp_id, None)
+    gemini_escalator.chicken_summaries.pop(disp_id, None)
+    gemini_escalator.active_alerts.pop(disp_id, None)
+    with _global_cooldown_lock:
+        _last_alert_timestamp_by_id.pop(disp_id, None)
+    with _scan_lock:
+        _scan_state["chickens"].pop(disp_id, None)
+        _scan_state["seen_ids"].discard(disp_id)
+        _scan_state["warning_ids"].discard(disp_id)
+        _scan_state["alert_ids"].discard(disp_id)
+    if requests is not None:
+        try:
+            requests.delete(f"{FIREBASE_DATABASE_URL}/active_alerts/chicken_{disp_id}.json", timeout=1)
+        except Exception:
+            pass
+
+
+def reset_all_tracking_state():
+    """Wipes all tracking state, histories, baselines, Gemini verdicts, and active alerts."""
+    track_display_ids.clear()
+    track_missed_counts.clear()
+    track_histories.clear()
+    track_first_seen.clear()
+    track_stationary_duration.clear()
+    track_classifications.clear()
+    track_last_positions.clear()
+    track_motion_windows.clear()
+    inactive_tracks.clear()
+    track_velocities.clear()
+    display_id_last_positions.clear()
+    track_hit_streaks.clear()
+    track_confirmed_raw_ids.clear()
+    display_coasting_boxes.clear()
+    track_crop_sig.clear()
+    track_frozen_streaks.clear()
+    behavior_history.records.clear()
+    behavior_history.baselines.clear()
+    gemini_escalator.verdicts.clear()
+    gemini_escalator.chicken_summaries.clear()
+    gemini_escalator.active_alerts.clear()
+    reset_global_cooldown()
+    with _scan_lock:
+        _scan_state["seen_ids"].clear()
+        _scan_state["warning_ids"].clear()
+        _scan_state["alert_ids"].clear()
+        _scan_state["chickens"].clear()
+    if requests is not None:
+        try:
+            requests.delete(f"{FIREBASE_DATABASE_URL}/active_alerts.json", timeout=2)
+        except Exception:
+            pass
+
+
 def assign_display_id(raw_id, cx=None, cy=None, box=None):
     """Guarantees consistent Chicken IDs (#1 to #10) even when chickens run fast or change direction.
     Uses linear motion prediction (velocity vectors) and dynamic search radii to match running chickens."""
@@ -1738,7 +1806,9 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
 
         for disp_id, last_cx, last_cy, last_t, old_raw_id in all_candidates:
             elapsed = curr_time - last_t
-            if elapsed > 6.0:
+            # Tighten re-ID window: max 2.5s for inactive tracks, max 4.0s for active missed tracks
+            max_reid_elapsed = 2.5 if old_raw_id is None else 4.0
+            if elapsed > max_reid_elapsed:
                 continue
 
             # Linear motion extrapolation: predict where running chicken moved to
@@ -1747,8 +1817,12 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
             pred_cy = last_cy + vy * elapsed
             speed = float(np.hypot(vx, vy))
 
-            # Dynamic velocity-expanded matching radius (allows up to 240px to securely re-identify running/foraging chickens)
-            dynamic_radius = min(240.0, max(75.0, 60.0 + (speed * 0.35) + (25.0 * elapsed)))
+            # Dynamic velocity-expanded matching radius
+            # For inactive tracks, limit search radius to 90px so panning the camera doesn't steal the ID!
+            if old_raw_id is None:
+                dynamic_radius = min(90.0, 60.0 + (speed * 0.25))
+            else:
+                dynamic_radius = min(180.0, max(70.0, 50.0 + (speed * 0.35) + (20.0 * elapsed)))
 
             # Distance to predicted location and last known location
             dist_pred = float(np.hypot(cx - pred_cx, cy - pred_cy))
@@ -1787,22 +1861,23 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
     active_display_ids = set(track_display_ids.values())
     for cand in range(1, MAX_TRACKED_CHICKENS + 1):
         if cand not in active_display_ids:
+            # Purge any previous history/verdicts for this slot so new chicken starts completely fresh!
+            purge_display_id_data(cand)
             track_display_ids[raw_id] = cand
             track_missed_counts[raw_id] = 0
             if cx is not None and cy is not None:
                 track_last_positions[raw_id] = (cx, cy, curr_time)
                 update_track_velocity(cand, cx, cy, curr_time)
-            if cand not in track_first_seen:
-                track_first_seen[cand] = curr_time
-                track_stationary_duration[cand] = 0.0
+            track_first_seen[cand] = curr_time
+            track_stationary_duration[cand] = 0.0
             return cand
 
     # All slots (1..MAX_TRACKED_CHICKENS) occupied.
     return None
 
 
-def cleanup_stale_ids(active_raw_ids, max_missed=120):
-    """Keeps tracks alive through brief occlusions / fast movement (120 frames = 4 seconds)
+def cleanup_stale_ids(active_raw_ids, max_missed=45):
+    """Keeps tracks alive through brief occlusions / fast movement (45 frames = 1.5 seconds)
     and archives inactive chickens for seamless spatial re-identification."""
     curr_time = time.time()
 
@@ -1830,17 +1905,11 @@ def cleanup_stale_ids(active_raw_ids, max_missed=120):
                 track_frozen_streaks.pop(raw_id, None)
                 track_confirmed_raw_ids.discard(raw_id)
 
-    # Clean up inactive tracks older than 6.0 seconds (persists identity through occlusions and head-turns)
+    # Clean up inactive tracks older than 2.5 seconds (persists identity through occlusions and head-turns)
     for disp_id in list(inactive_tracks.keys()):
-        if curr_time - inactive_tracks[disp_id]["time"] > 6.0:
+        if curr_time - inactive_tracks[disp_id]["time"] > 2.5:
             del inactive_tracks[disp_id]
-            track_histories.pop(disp_id, None)
-            track_motion_windows.pop(disp_id, None)
-            track_first_seen.pop(disp_id, None)
-            track_stationary_duration.pop(disp_id, None)
-            track_classifications.pop(disp_id, None)
-            track_velocities.pop(disp_id, None)
-            display_id_last_positions.pop(disp_id, None)
+            purge_display_id_data(disp_id)
 
 
 
@@ -2095,23 +2164,9 @@ def handle_sensor():
 
 @flask_app.route('/reset_ids')
 def reset_ids():
-    """Reset persistent chicken IDs, track histories, and global alert cooldown."""
-    track_display_ids.clear()
-    track_missed_counts.clear()
-    track_histories.clear()
-    track_first_seen.clear()
-    track_stationary_duration.clear()
-    track_classifications.clear()
-    track_last_positions.clear()
-    track_motion_windows.clear()
-    inactive_tracks.clear()
-    track_velocities.clear()
-    display_id_last_positions.clear()
-    track_hit_streaks.clear()
-    track_confirmed_raw_ids.clear()
-    display_coasting_boxes.clear()
-    reset_global_cooldown()
-    return jsonify({"status": "success", "message": "Chicken tracking IDs, histories, and alert cooldown reset successfully."})
+    """Reset persistent chicken IDs, track histories, baselines, Gemini verdicts, and alert cooldown."""
+    reset_all_tracking_state()
+    return jsonify({"status": "success", "message": "Chicken tracking IDs, histories, verdicts, and alert cooldown reset successfully."})
 
 
 @flask_app.route('/')
@@ -2742,8 +2797,10 @@ def camera_loop():
     )
 
     rate_gate = RateGate(DETECTION_MAX_RATE_HZ)
-    # Keep tracks alive for ~5 seconds of wall-clock time regardless of det rate.
-    max_missed_detections = max(3, int(round(5.0 * DETECTION_MAX_RATE_HZ)))
+    # Keep tracks alive for ~1.5 seconds of wall-clock time so brief dropout doesn't flicker,
+    # but panning the camera drops stale tracks promptly.
+    max_missed_detections = max(3, int(round(1.5 * DETECTION_MAX_RATE_HZ)))
+    consecutive_empty_frames = 0
 
     cached_display_items = []
     cached_person_boxes = []
@@ -3413,8 +3470,13 @@ def camera_loop():
         # Dynamic Health Index
         if flock_count > 0:
             health_index = max(10, int(100 - (unhealthy_count * 25) - (warning_count * 10) - (isolated_count * 5)))
+            consecutive_empty_frames = 0
         else:
             health_index = 100
+            consecutive_empty_frames += 1
+            if consecutive_empty_frames == 40:  # ~1.3 seconds with 0 birds (panning to another pen/chicken)
+                print("[AI Vision] Camera panned or scene empty for 1.3s — clearing stale tracks.")
+                reset_all_tracking_state()
 
 
         # Encode only the annotated frame. The clean preview is encoded by the

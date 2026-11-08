@@ -361,55 +361,84 @@
                     android:textColor="#0F172A"
                     android:textSize="17sp" />
 
-                <!-- 1-Tap Stream Mode Selector: Clean Stream vs AI Vision -->
+                <!-- Mode Selector and Target Reset Controls -->
                 <LinearLayout
-                    android:id="@+id/layoutStreamModeToggle"
                     android:layout_width="wrap_content"
-                    android:layout_height="32dp"
-                    android:background="@drawable/bg_segmented_container"
+                    android:layout_height="wrap_content"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="2dp">
+                    android:orientation="horizontal">
 
+                    <!-- 1-Tap Stream Mode Selector: Clean Stream vs AI Vision -->
                     <LinearLayout
-                        android:id="@+id/btnToggleClean"
+                        android:id="@+id/layoutStreamModeToggle"
                         android:layout_width="wrap_content"
-                        android:layout_height="match_parent"
-                        android:background="@drawable/bg_segmented_active"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:gravity="center"
-                        android:paddingHorizontal="10dp">
+                        android:layout_height="32dp"
+                        android:background="@drawable/bg_segmented_container"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:padding="2dp">
 
-                        <TextView
-                            android:id="@+id/tvToggleClean"
+                        <LinearLayout
+                            android:id="@+id/btnToggleClean"
                             android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:fontFamily="sans-serif-bold"
-                            android:text="📹 Streaming"
-                            android:textColor="@color/primary"
-                            android:textSize="11.5sp" />
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_segmented_active"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:paddingHorizontal="10dp">
+
+                            <TextView
+                                android:id="@+id/tvToggleClean"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="📹 Streaming"
+                                android:textColor="@color/primary"
+                                android:textSize="11.5sp" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:id="@+id/btnToggleAi"
+                            android:layout_width="wrap_content"
+                            android:layout_height="match_parent"
+                            android:background="@android:color/transparent"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center"
+                            android:paddingHorizontal="10dp">
+
+                            <TextView
+                                android:id="@+id/tvToggleAi"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="🎯 Detection"
+                                android:textColor="#64748B"
+                                android:textSize="11.5sp" />
+                        </LinearLayout>
                     </LinearLayout>
 
-                    <LinearLayout
-                        android:id="@+id/btnToggleAi"
+                    <!-- Quick Target Reset Button: wipes old verdicts when pointing at another chicken -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnResetTarget"
+                        style="?attr/materialButtonOutlinedStyle"
                         android:layout_width="wrap_content"
-                        android:layout_height="match_parent"
-                        android:background="@android:color/transparent"
-                        android:clickable="true"
-                        android:focusable="true"
-                        android:gravity="center"
-                        android:paddingHorizontal="10dp">
-
-                        <TextView
-                            android:id="@+id/tvToggleAi"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:fontFamily="sans-serif-bold"
-                            android:text="🎯 Detection"
-                            android:textColor="#64748B"
-                            android:textSize="11.5sp" />
-                    </LinearLayout>
+                        android:layout_height="32dp"
+                        android:layout_marginStart="8dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:text="New Target"
+                        android:textAllCaps="false"
+                        android:textColor="#475569"
+                        android:textSize="11.5sp"
+                        app:cornerRadius="16dp"
+                        app:icon="@drawable/ic_refresh"
+                        app:iconSize="13dp"
+                        app:iconTint="#475569"
+                        app:strokeColor="#CBD5E1"
+                        app:strokeWidth="1dp" />
                 </LinearLayout>
             </LinearLayout>
 

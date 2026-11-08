@@ -326,7 +326,27 @@ class MonitorFragment : Fragment() {
             startCameraStream()
         }
 
+        // Quick target reset button: immediately wipes server tracking and Gemini verdicts for a fresh chicken
+        binding.btnResetTarget.setOnClickListener {
+            it.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            resetTargetChicken()
         }
+    }
+
+    private fun resetTargetChicken() {
+        val ctx = context ?: return
+        binding.ivDetectionOverlay.clear()
+        val baseUrl = ServerPreferences.getBaseUrl(ctx)
+        val url = "$baseUrl/reset_ids"
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val req = Request.Builder().url(url).build()
+                httpClient.newCall(req).execute().close()
+            } catch (_: Exception) {
+            }
+        }
+        Toast.makeText(ctx, "Target reset • Observing new chicken", Toast.LENGTH_SHORT).show()
+    }
 
     private fun updateStreamModeUi() {
         if (_binding == null) return
