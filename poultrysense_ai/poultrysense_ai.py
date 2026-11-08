@@ -594,9 +594,9 @@ if not os.path.exists(TRACKER_YAML):
     TRACKER_YAML = "botsort.yaml"
 
 DET_MODELS = [
-    os.path.join(MODELS_DIR, "healthyChicken detector V5.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v5_26n.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v4_26n.pt"),
+    os.path.join(MODELS_DIR, "healthyChicken detector V5.pt"),
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v3_26n.pt"),
 ]
 

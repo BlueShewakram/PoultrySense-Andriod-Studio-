@@ -357,6 +357,7 @@
                     android:layout_weight="1"
                     android:fontFamily="sans-serif-black"
                     android:letterSpacing="-0.02"
+                    android:singleLine="true"
                     android:maxLines="1"
                     android:ellipsize="end"
                     android:text="Camera Viewport"
