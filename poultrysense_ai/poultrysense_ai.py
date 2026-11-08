@@ -2908,7 +2908,7 @@ def camera_loop():
                         else:
                             track_frozen_streaks[raw_id] = 0
                         track_hit_streaks[raw_id] += 1
-                        required_hits = 2 if conf >= 0.50 else 3
+                        required_hits = 1  # Immediate 1st-frame appearance — zero confirmation lag
                         if track_hit_streaks[raw_id] >= required_hits:
                             track_confirmed_raw_ids.add(raw_id)
                         else:
@@ -2918,10 +2918,10 @@ def camera_loop():
                         lowconf_dropped += 1
                         continue
 
-                # 3. EMA Box Position Smoothing (stabilizes bounding boxes on fast-running chickens)
+                # 3. High-responsiveness box tracking (95% current detection for immediate tracking)
                 if display_id in display_coasting_boxes:
                     prev_box = display_coasting_boxes[display_id]["box"]
-                    alpha = 0.70  # 70% current detection, 30% previous frame box
+                    alpha = 0.95  # Near-instantaneous response for fast-moving chickens
                     box = alpha * box + (1.0 - alpha) * prev_box
                     cx = (box[0] + box[2]) / 2.0
                     cy = (box[1] + box[3]) / 2.0

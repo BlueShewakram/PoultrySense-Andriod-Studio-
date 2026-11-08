@@ -102,27 +102,30 @@ class DetectionOverlayView @JvmOverloads constructor(
 
             val existing = activeTracks[key]
             if (existing != null) {
+                // Instant zero-lag lock to detected position
+                existing.currentRect.set(newTarget)
                 existing.targetRect.set(newTarget)
                 existing.label = label
                 existing.color = color
                 existing.targetAlpha = 1f
+                existing.currentAlpha = 1f
                 existing.isAlive = true
             } else {
-                // New detection: smooth fade in from initial position
+                // New detection appears instantly with full opacity (no fade delay)
                 activeTracks[key] = TrackedBox(
                     key = key,
                     currentRect = RectF(newTarget),
-                    targetRect = newTarget,
+                    targetRect = RectF(newTarget),
                     label = label,
                     color = color,
-                    currentAlpha = 0f,
+                    currentAlpha = 1f,
                     targetAlpha = 1f,
                     isAlive = true
                 )
             }
         }
 
-        // Mark missing tracks to fade out smoothly
+        // Mark missing tracks to fade out quickly
         activeTracks.values.forEach { track ->
             if (track.key !in seenKeys) {
                 track.targetAlpha = 0f
@@ -156,17 +159,7 @@ class DetectionOverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (activeTracks.isEmpty() || width == 0 || height == 0) return
 
-        val now = SystemClock.uptimeMillis()
-        val dtSec = if (lastFrameTimeMs > 0L) {
-            ((now - lastFrameTimeMs).coerceIn(1L, 100L)) / 1000f
-        } else {
-            0.016f
-        }
-        lastFrameTimeMs = now
-
-        // High-responsiveness exponential convergence (~24 / sec) for instant real-time box alignment
-        val posLerpFactor = (1.0f - Math.exp((-24.0 * dtSec).toDouble())).toFloat().coerceIn(0.25f, 0.85f)
-        val alphaLerpFactor = (1.0f - Math.exp((-16.0 * dtSec).toDouble())).toFloat().coerceIn(0.20f, 0.75f)
+        lastFrameTimeMs = SystemClock.uptimeMillis()
 
         // Center-crop projection transform matching ImageView
         val scale = maxOf(width.toFloat() / sourceWidth, height.toFloat() / sourceHeight)
@@ -181,27 +174,22 @@ class DetectionOverlayView @JvmOverloads constructor(
         while (iterator.hasNext()) {
             val track = iterator.next()
 
-            // Smooth position interpolation
-            track.currentRect.left = lerp(track.currentRect.left, track.targetRect.left, posLerpFactor)
-            track.currentRect.top = lerp(track.currentRect.top, track.targetRect.top, posLerpFactor)
-            track.currentRect.right = lerp(track.currentRect.right, track.targetRect.right, posLerpFactor)
-            track.currentRect.bottom = lerp(track.currentRect.bottom, track.targetRect.bottom, posLerpFactor)
-
-            // Smooth opacity interpolation
-            track.currentAlpha = lerp(track.currentAlpha, track.targetAlpha, alphaLerpFactor)
+            // Zero-lag tracking: active tracks lock directly to detected box coordinates
+            if (track.isAlive) {
+                track.currentRect.set(track.targetRect)
+                track.currentAlpha = 1f
+            } else {
+                // Smooth fast fade-out for occluded/departed tracks
+                track.currentAlpha = lerp(track.currentAlpha, 0f, 0.40f)
+                if (track.currentAlpha > 0.03f) {
+                    needsAnotherFrame = true
+                }
+            }
 
             // Prune dead tracks once fully faded out
             if (!track.isAlive && track.currentAlpha < 0.03f) {
                 iterator.remove()
                 continue
-            }
-
-            // Check if animation is still settling
-            val posDiff = Math.abs(track.currentRect.left - track.targetRect.left) +
-                          Math.abs(track.currentRect.top - track.targetRect.top)
-            val alphaDiff = Math.abs(track.currentAlpha - track.targetAlpha)
-            if (posDiff > 0.5f || alphaDiff > 0.01f) {
-                needsAnotherFrame = true
             }
 
             if (track.currentAlpha <= 0.01f) continue

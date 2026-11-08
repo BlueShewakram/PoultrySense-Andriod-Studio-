@@ -600,8 +600,8 @@ class MonitorFragment : Fragment() {
                 } catch (_: Exception) {
                     // Overlay failures must never interrupt the video preview.
                 }
-                // High-speed 30 FPS polling matches real-time detector output for zero-latency overlay tracking
-                delay(33)
+                // High-speed 60 FPS polling matches real-time detector output for zero-latency overlay tracking
+                delay(16)
             }
         }
     }
