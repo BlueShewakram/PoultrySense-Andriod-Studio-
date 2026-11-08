@@ -154,7 +154,9 @@ FIREBASE_DATABASE_URL = os.environ.get(
 # SMS is scan-scoped and unaffected: the farmer gets one summary when the scan ends.
 GLOBAL_ALERT_COOLDOWN_SEC = float(os.environ.get("GLOBAL_ALERT_COOLDOWN_SEC", "900.0"))
 GEMINI_MIN_QUERY_GAP_SEC = float(os.environ.get("GEMINI_MIN_QUERY_GAP_SEC", "20.0"))
-DAYTIME_RECUMBENT_THRESHOLD_SEC = float(os.environ.get("DAYTIME_RECUMBENT_THRESHOLD_SEC", os.environ.get("STATIONARY_DURATION_THRESHOLD_SEC", "45.0")))
+DAYTIME_RECUMBENT_THRESHOLD_SEC = float(os.environ.get("DAYTIME_RECUMBENT_THRESHOLD_SEC", os.environ.get("STATIONARY_DURATION_THRESHOLD_SEC", "60.0")))
+GEMINI_TRIGGER_STATIONARY_SEC = float(os.environ.get("POULTRYSENSE_STATIONARY_TRIGGER_SEC", "45.0"))
+OBSERVATION_WINDOW = float(os.environ.get("POULTRYSENSE_OBSERVATION_WINDOW", "45.0"))
 
 _last_global_alert_timestamp = 0.0
 _last_global_sms_timestamp = 0.0
@@ -680,8 +682,8 @@ DEBUG_TRACK = os.environ.get("POULTRYSENSE_DEBUG_TRACK", "").strip().lower() in 
 classification_queue = queue.Queue(maxsize=6)
 classification_lock = threading.Lock()
 
-# Temporal Observation Window (seconds before declaring baseline health)
-OBSERVATION_WINDOW = 15.0
+# Temporal Observation Window (seconds before declaring baseline health or escalating to Gemini)
+OBSERVATION_WINDOW = float(os.environ.get("POULTRYSENSE_OBSERVATION_WINDOW", "45.0"))
 
 
 # Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
@@ -855,14 +857,14 @@ class AnomalyDetectionEngine:
         # Healthy chickens spend up to 60% of their time resting/sleeping with zero optical motion.
         # If the bird is resting alongside the flock (not isolated) and shows healthy visual traits
         # (unhealthy_prob < 0.35), prolonged immobility is normal resting/sleep, NOT sickness!
-        # BUT: if stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC (45s), the immobility is too
+        # BUT: if stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC (60s), the immobility is too
         # prolonged — even social resting should not clamp the score, so Gemini can evaluate.
         is_social_rest = (
             (not is_isolated)
             and (stats.get("isolation_pct", 0.0) < 35.0)
             and (stationary_sec < DAYTIME_RECUMBENT_THRESHOLD_SEC)
         )
-        is_visually_healthy = (unhealthy_prob < 0.35)
+        is_visually_healthy = (unhealthy_prob < 0.40)
 
         if is_social_rest and is_visually_healthy:
             act_score = min(act_score, 15.0)
@@ -3114,14 +3116,14 @@ def camera_loop():
 
             # 2. Calibration vs 5-Component Weighted Anomaly Evaluation
             if elapsed_obs < OBSERVATION_WINDOW:
-                health_label = "Calibrating"
+                health_label = "Observing"
                 anomaly_score = 0
                 anomaly_tier = "Normal"
                 gemini_summary = ""
                 gemini_verified = False
-                health_detail = f"Baseline Calibration {elapsed_obs:.1f}/{OBSERVATION_WINDOW:.0f}s"
-                color = (255, 215, 0)  # Gold — neutral calibration phase
-                observing_count += 1
+                health_detail = f"Baseline Observation {elapsed_obs:.0f}/{OBSERVATION_WINDOW:.0f}s"
+                color = get_id_color(display_id)  # Maintain standard ID color during observation
+                healthy_count += 1
             else:
                 # 3. Compute 5-Component Weighted Anomaly Score
                 anomaly_info = anomaly_engine.compute_anomaly(
@@ -3194,30 +3196,30 @@ def camera_loop():
 
                 if stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC:
                     abnormal_triggers.append(f"Prolonged immobility ({stationary_sec:.0f}s >= {DAYTIME_RECUMBENT_THRESHOLD_SEC:.0f}s threshold)")
-                elif stationary_sec >= 25.0 and behavior_label in ("rest", "stand", "sit", "recumbent"):
-                    abnormal_triggers.append(f"Extended stationary resting ({stationary_sec:.0f}s)")
+                elif stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC and behavior_label in ("rest", "stand", "sit", "recumbent"):
+                    abnormal_triggers.append(f"Extended stationary resting ({stationary_sec:.0f}s >= {GEMINI_TRIGGER_STATIONARY_SEC:.0f}s)")
 
-                if unhealthy_prob >= 0.40 or anomaly_info.get("sub_scores", {}).get("posture", 0) >= 40.0:
+                if unhealthy_prob >= 0.45 or anomaly_info.get("sub_scores", {}).get("posture", 0) >= 45.0:
                     abnormal_triggers.append(f"Lethargic posture / visual anomaly score ({unhealthy_prob:.2f})")
 
-                if is_isolated and (stats.get("isolation_pct", 0) >= 35.0 or elapsed_obs >= 20.0):
+                if is_isolated and (stats.get("isolation_pct", 0) >= 40.0 and elapsed_obs >= OBSERVATION_WINDOW):
                     abnormal_triggers.append(f"Spatial isolation away from flock ({stats.get('isolation_pct', 0):.0f}%)")
 
                 curr_t_check, _, _ = get_current_climate()
                 if curr_t_check is not None:
-                    if curr_t_check > 30.0 and (stationary_sec >= 15.0 or motion < 1.6):
+                    if curr_t_check > 30.0 and (stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC or motion < 1.6):
                         abnormal_triggers.append(f"Heat stress condition ({curr_t_check:.1f}°C > 30°C with reduced activity)")
-                    elif curr_t_check < 18.0 and (stationary_sec >= 15.0 or motion < 1.6):
+                    elif curr_t_check < 18.0 and (stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC or motion < 1.6):
                         abnormal_triggers.append(f"Cold stress condition ({curr_t_check:.1f}°C < 18°C with huddled inactivity)")
 
-                if anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60:
+                if anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 65:
                     abnormal_triggers.append(f"High anomaly score ({anomaly_tier} {anomaly_score}%)")
 
                 # Sustained observation gate: Gemini evaluates ONLY when abnormal behavior is sustained,
                 # never on immediate single-frame transients or newly appeared chickens still calibrating.
                 is_sustained_recumbency = (
-                    (behavior_label == "recumbent" or unhealthy_prob >= 0.45)
-                    and stationary_sec >= 20.0
+                    (behavior_label == "recumbent" or unhealthy_prob >= 0.50)
+                    and (stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC or (unhealthy_prob >= 0.85 and stationary_sec >= 30.0))
                     and elapsed_obs >= OBSERVATION_WINDOW
                 )
                 is_prolonged_immobility = (
@@ -3225,8 +3227,8 @@ def camera_loop():
                     and elapsed_obs >= OBSERVATION_WINDOW
                 )
                 is_sustained_anomaly = (
-                    (anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 60)
-                    and stationary_sec >= 20.0
+                    (anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 65)
+                    and stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC
                     and elapsed_obs >= OBSERVATION_WINDOW
                 )
 
@@ -3327,7 +3329,7 @@ def camera_loop():
             # Clean minimal badge with Gemini verification indicator
             gemini_check = " \u2713" if gemini_verified else ""
             if elapsed_obs < OBSERVATION_WINDOW and unhealthy_prob < 0.45:
-                badge_text = f"#{display_id}"
+                badge_text = f"#{display_id} {behavior_label.upper()}"
             elif gemini_verified:
                 badge_text = f"#{display_id} {gemini_severity.upper()}{gemini_check}"
             elif behavior_label == "recumbent":
