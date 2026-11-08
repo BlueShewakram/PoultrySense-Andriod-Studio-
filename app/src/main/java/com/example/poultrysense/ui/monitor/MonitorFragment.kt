@@ -521,9 +521,16 @@ class MonitorFragment : Fragment() {
                                     // Forward active chicken alerts to MainActivity with bright physical color tag
                                     status.alerts?.forEach { alertItem ->
                                         val cId = alertItem.chickenId ?: 0
-                                        if (cId > 0 && alertItem.status != "Healthy") {
+                                        val isNormal = alertItem.status.equals("Healthy", ignoreCase = true) ||
+                                            alertItem.status?.startsWith("Normal", ignoreCase = true) == true ||
+                                            alertItem.status?.startsWith("Low", ignoreCase = true) == true ||
+                                            alertItem.anomalyTier.equals("Normal", ignoreCase = true) ||
+                                            alertItem.severity.equals("Low", ignoreCase = true)
+                                        if (cId > 0 && !isNormal) {
                                             val tag = ChickenTagHelper.getTagInfo(cId)
-                                            val isCrit = alertItem.severity.equals("critical", ignoreCase = true) || (alertItem.anomalyScore ?: 0) >= 70
+                                            val isCrit = alertItem.severity.equals("critical", ignoreCase = true) ||
+                                                alertItem.anomalyTier.equals("High Concern", ignoreCase = true) ||
+                                                (alertItem.anomalyScore ?: 0) >= 70
                                             val alert = FarmAlert(
                                                 id = "alert-ai-c$cId",
                                                 severity = if (isCrit) AlertSeverity.CRITICAL else AlertSeverity.WARNING,

@@ -79,10 +79,10 @@ object AlertCardBinder {
                     tvSeverityChip.setTextColor(ContextCompat.getColor(context, R.color.white))
                 }
                 AlertSeverity.INFO -> {
-                    viewAccentBar.setBackgroundResource(R.drawable.bg_alert_accent_warning)
-                    tvSeverityChip.text = "INFO"
+                    viewAccentBar.setBackgroundResource(R.drawable.bg_alert_accent_healthy)
+                    tvSeverityChip.text = "NORMAL"
                     tvSeverityChip.setBackgroundResource(R.drawable.bg_healthy_badge)
-                    tvSeverityChip.setTextColor(ContextCompat.getColor(context, R.color.primary))
+                    tvSeverityChip.setTextColor(ContextCompat.getColor(context, R.color.healthy))
                 }
             }
 

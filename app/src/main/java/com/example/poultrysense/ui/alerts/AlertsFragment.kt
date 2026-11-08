@@ -102,9 +102,26 @@ class AlertsFragment : Fragment() {
                         val behavior = verdict["behavior"]?.toString().orEmpty()
                         val timestamp = verdict["timestamp"]?.toString().orEmpty()
                         val tag = ChickenTagHelper.getTagInfo(cid)
+                        val isNormal = tier.equals("Normal", ignoreCase = true) ||
+                            tier.equals("Healthy", ignoreCase = true) ||
+                            severity.equals("Low", ignoreCase = true)
+
+                        // Cleared / Normal birds are not active alerts requiring intervention
+                        if (isNormal) {
+                            continue
+                        }
+
                         val critical = severity.equals("Critical", ignoreCase = true) ||
                             tier.equals("High Concern", ignoreCase = true) ||
                             score >= 70
+                        val alertSeverity = when {
+                            critical -> AlertSeverity.CRITICAL
+                            tier.equals("Suspicious", ignoreCase = true) ||
+                                severity.equals("High", ignoreCase = true) ||
+                                severity.equals("Medium", ignoreCase = true) ||
+                                score >= 40 -> AlertSeverity.WARNING
+                            else -> AlertSeverity.INFO
+                        }
                         val description = buildString {
                             if (behavior.isNotBlank()) append("${behavior.replaceFirstChar { it.uppercase() }} • ")
                             append("Anomaly score $score/100")
@@ -114,7 +131,7 @@ class AlertsFragment : Fragment() {
                         parsed.add(
                             FarmAlert(
                                 id = "live-${child.key}",
-                                severity = if (critical) AlertSeverity.CRITICAL else AlertSeverity.WARNING,
+                                severity = alertSeverity,
                                 title = "${tag.displayLabel} • ${TierLabels.forTier(tier.ifBlank { "Needs Attention" })}",
                                 description = description,
                                 timeAgo = "Live",
@@ -235,7 +252,13 @@ class AlertsFragment : Fragment() {
     ): FarmAlert {
         val tag = ChickenTagHelper.getTagInfo(detail.chickenId)
         val tier = detail.anomalyTier?.ifBlank { "Needs Attention" } ?: "Needs Attention"
-        val critical = tier.equals("High Concern", ignoreCase = true) || detail.anomalyScore >= 70
+        val isNormal = tier.equals("Normal", ignoreCase = true) || tier.equals("Healthy", ignoreCase = true)
+        val critical = !isNormal && (tier.equals("High Concern", ignoreCase = true) || detail.anomalyScore >= 70)
+        val alertSeverity = when {
+            isNormal -> AlertSeverity.INFO
+            critical -> AlertSeverity.CRITICAL
+            else -> AlertSeverity.WARNING
+        }
         val behavior = (detail.behavior?.ifBlank { "Abnormal behavior" } ?: "Abnormal behavior")
             .replaceFirstChar { it.uppercase() }
         val description = buildString {
@@ -247,7 +270,7 @@ class AlertsFragment : Fragment() {
 
         return FarmAlert(
             id = "scan-${session.id}-chicken-${detail.chickenId}",
-            severity = if (critical) AlertSeverity.CRITICAL else AlertSeverity.WARNING,
+            severity = alertSeverity,
             title = "${tag.displayLabel} • ${TierLabels.forTier(tier)}",
             description = description,
             timeAgo = session.time,

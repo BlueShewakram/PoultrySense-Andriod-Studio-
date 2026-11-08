@@ -6,6 +6,7 @@ data class ChickenAlertItem(
     @SerializedName("chicken_id") val chickenId: Int? = 0,
     @SerializedName("status") val status: String? = "Needs Attention",
     @SerializedName("anomaly_score") val anomalyScore: Int? = 0,
+    @SerializedName("anomaly_tier") val anomalyTier: String? = "Normal",
     @SerializedName("behavior") val behavior: String? = "",
     @SerializedName("duration_sec") val durationSec: Double? = 0.0,
     @SerializedName("severity") val severity: String? = "Moderate",

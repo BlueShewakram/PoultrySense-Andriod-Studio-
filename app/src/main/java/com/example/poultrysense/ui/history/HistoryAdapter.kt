@@ -66,8 +66,14 @@ class HistoryAdapter(private var sessions: List<ScanSession>) :
             chipGroupNormal.removeAllViews()
 
             try {
-                val flaggedBirds = details.filter { (it.anomalyTier ?: "Normal") != "Normal" || it.anomalyScore >= 40 }
-                val normalBirds = details.filter { (it.anomalyTier ?: "Normal") == "Normal" && it.anomalyScore < 40 }
+                val flaggedBirds = details.filter {
+                    val tier = it.anomalyTier ?: "Normal"
+                    !tier.equals("Normal", ignoreCase = true) && !tier.equals("Healthy", ignoreCase = true)
+                }
+                val normalBirds = details.filter {
+                    val tier = it.anomalyTier ?: "Normal"
+                    tier.equals("Normal", ignoreCase = true) || tier.equals("Healthy", ignoreCase = true)
+                }
 
                 if (flaggedBirds.isNotEmpty()) {
                     tvFlaggedSectionHeader.visibility = View.VISIBLE

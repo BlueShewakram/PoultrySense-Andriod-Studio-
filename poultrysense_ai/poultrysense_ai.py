@@ -385,17 +385,26 @@ def scan_record(det):
             return
         track_id = det["track_id"]
         tier = det.get("anomaly_tier", "Normal")
-        _scan_state["seen_ids"].add(track_id)
-        if tier == "Suspicious":
-            _scan_state["warning_ids"].add(track_id)
-        elif tier == "High Concern":
-            _scan_state["alert_ids"].add(track_id)
-
-        tier_weights = {"Normal": 0, "Monitor": 1, "Suspicious": 2, "High Concern": 3}
-        existing = _scan_state["chickens"].get(track_id)
         curr_score = det.get("anomaly_score", 0)
         curr_summary = det.get("gemini_summary", "")
         curr_behavior = det.get("behavior", "")
+        gemini_verified = det.get("gemini_verified", False)
+
+        _scan_state["seen_ids"].add(track_id)
+
+        # Gemini is the definitive authority: if Gemini verified Normal, clear from warnings/alerts
+        if gemini_verified and tier == "Normal":
+            _scan_state["warning_ids"].discard(track_id)
+            _scan_state["alert_ids"].discard(track_id)
+        elif tier == "Suspicious":
+            _scan_state["warning_ids"].add(track_id)
+            _scan_state["alert_ids"].discard(track_id)
+        elif tier == "High Concern":
+            _scan_state["alert_ids"].add(track_id)
+            _scan_state["warning_ids"].discard(track_id)
+
+        tier_weights = {"Normal": 0, "Monitor": 1, "Suspicious": 2, "High Concern": 3}
+        existing = _scan_state["chickens"].get(track_id)
 
         if existing is None:
             _scan_state["chickens"][track_id] = {
@@ -406,11 +415,16 @@ def scan_record(det):
                 "gemini_summary": curr_summary
             }
         else:
-            if curr_score > existing.get("anomaly_score", 0):
-                existing["anomaly_score"] = curr_score
-            if tier_weights.get(tier, 0) > tier_weights.get(existing.get("anomaly_tier", "Normal"), 0):
+            # If Gemini has rendered an authoritative verdict, override prior heuristic scores
+            if gemini_verified:
                 existing["anomaly_tier"] = tier
-            if curr_summary and not existing.get("gemini_summary"):
+                existing["anomaly_score"] = curr_score
+            else:
+                if curr_score > existing.get("anomaly_score", 0):
+                    existing["anomaly_score"] = curr_score
+                if tier_weights.get(tier, 0) > tier_weights.get(existing.get("anomaly_tier", "Normal"), 0):
+                    existing["anomaly_tier"] = tier
+            if curr_summary:
                 existing["gemini_summary"] = curr_summary
             if curr_behavior:
                 existing["behavior"] = curr_behavior
@@ -530,12 +544,21 @@ def sync_verdict_to_firebase(verdict_obj):
     elif "gemini_summary" in payload and "reason" not in payload:
         payload["reason"] = payload["gemini_summary"]
 
-    try:
-        # 1. Update active alerts node for live alerts view
-        url_alert = f"{FIREBASE_DATABASE_URL}/active_alerts/chicken_{cid}.json"
-        requests.put(url_alert, json=payload, timeout=5)
+    tier = payload.get("tier", "Normal")
+    severity = payload.get("severity", "Low")
+    is_normal = tier in ["Normal", "Healthy"] or severity in ["Low", "Normal", "Healthy"]
 
-        # 2. Update diagnostic verdicts node
+    try:
+        # 1. Update active alerts node for live alerts view:
+        # If Gemini confirms the chicken is Normal/Healthy, REMOVE it from active_alerts!
+        url_alert = f"{FIREBASE_DATABASE_URL}/active_alerts/chicken_{cid}.json"
+        if is_normal:
+            requests.delete(url_alert, timeout=5)
+            print(f"[Firebase] Chicken #{cid} verified Healthy/Normal by Gemini — cleared from active_alerts.")
+        else:
+            requests.put(url_alert, json=payload, timeout=5)
+
+        # 2. Update diagnostic verdicts node (keep the full record for clinical history)
         url_diag = f"{FIREBASE_DATABASE_URL}/diagnostic_verdicts/chicken_{cid}.json"
         requests.put(url_diag, json=payload, timeout=5)
 
@@ -1193,6 +1216,16 @@ class GeminiVerdictEngine:
             }
             v_tier, v_label = SEV_TO_TIER.get(verdict_severity, (tier, tier))
 
+            # Calibrate anomaly score to match Gemini's expert diagnostic verdict
+            if verdict_severity == "Low" or v_tier == "Normal":
+                calibrated_score = min(score, 15)  # Confirmed healthy/normal
+            elif verdict_severity == "Medium" or v_tier == "Monitor":
+                calibrated_score = 40  # Monitor tier (30-59)
+            elif verdict_severity == "High" or v_tier == "Suspicious":
+                calibrated_score = max(65, min(score, 79))  # Suspicious tier (60-79)
+            else:  # Critical / High Concern
+                calibrated_score = max(85, score)  # High Concern tier (80-100)
+
             tag_info = get_poultry_tag_info(track_id)
 
             # Store the verdict in memory
@@ -1200,6 +1233,7 @@ class GeminiVerdictEngine:
                 "tier": v_tier,
                 "label": v_label,
                 "severity": verdict_severity,
+                "anomaly_score": calibrated_score,
                 "reason": verdict_reason,
                 "recommendation": verdict_farmer_action,
                 "farmer_action": verdict_farmer_action,
@@ -1218,12 +1252,12 @@ class GeminiVerdictEngine:
                 "tag_color": tag_info["tag_color"],
                 "tag_color_hex": tag_info["tag_color_hex"],
                 "tag_label": tag_info["tag_label"],
-                "status": f"{verdict_severity} • {tag_info['tag_label']}",
+                "status": f"{v_label} • {tag_info['tag_label']}",
                 "severity": verdict_severity,
                 "reason": verdict_reason,
                 "farmer_action": verdict_farmer_action,
                 "recommendation": verdict_farmer_action,
-                "anomaly_score": score,
+                "anomaly_score": calibrated_score,
                 "anomaly_tier": v_tier,
                 "behavior": f"Stationary {stationary_sec:.0f}s • Resting {stats.get('rest_pct', 0.0)}%",
                 "duration_sec": round(stationary_sec, 1),
@@ -1236,7 +1270,10 @@ class GeminiVerdictEngine:
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "timestamp_epoch": time.time()
             }
-            self.active_alerts[track_id] = alert_obj
+            if v_tier == "Normal" or verdict_severity == "Low":
+                self.active_alerts.pop(track_id, None)
+            else:
+                self.active_alerts[track_id] = alert_obj
 
             # 1. Save Gemini's JSON diagnostic verdict directly to Firebase Realtime Database
             sync_verdict_to_firebase(alert_obj)
@@ -3260,18 +3297,22 @@ def camera_loop():
                     health_detail = gemini_reason
 
                     if gemini_tier == "Normal":
+                        anomaly_score = gemini_verdict.get("anomaly_score", min(anomaly_score, 15))
                         health_label = "Healthy"
                         color = get_id_color(display_id)
                         healthy_count += 1
                     elif gemini_tier == "Monitor":
+                        anomaly_score = gemini_verdict.get("anomaly_score", 40)
                         health_label = "Monitor"
                         color = (0, 215, 255)
                         observing_count += 1
                     elif gemini_tier == "Suspicious":
+                        anomaly_score = gemini_verdict.get("anomaly_score", max(65, min(anomaly_score, 79)))
                         health_label = "Needs Attention"
                         color = (0, 140, 255)
                         warning_count += 1
                     else:  # High Concern
+                        anomaly_score = gemini_verdict.get("anomaly_score", max(85, anomaly_score))
                         health_label = "Critical Alert"
                         color = (70, 70, 255)
                         unhealthy_count += 1
