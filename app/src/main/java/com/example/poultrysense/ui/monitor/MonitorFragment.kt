@@ -705,16 +705,19 @@ class MonitorFragment : Fragment() {
         }
 
         val ctx = context ?: return
+        val hasGeminiAlert = (geminiVerified || !gemini.isNullOrBlank()) &&
+            (tier.equals("High Concern", ignoreCase = true) || health.lowercase(Locale.getDefault()) == "high concern")
+
         when {
-            tier == "High Concern" || health.lowercase(Locale.getDefault()) == "high concern" -> {
+            hasGeminiAlert -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_critical_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.critical))
                 tvStatus.text = TierLabels.ALERT.uppercase(Locale.getDefault())
             }
-            tier == "Suspicious" || health.lowercase(Locale.getDefault()) in listOf("needs attention", "warning", "needs review") -> {
+            tier == "High Concern" || tier == "Suspicious" || health.lowercase(Locale.getDefault()) in listOf("high concern", "needs attention", "warning", "needs review") -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
-                tvStatus.text = TierLabels.ATTENTION.uppercase(Locale.getDefault())
+                tvStatus.text = if (tier == "High Concern") "EVALUATING" else TierLabels.ATTENTION.uppercase(Locale.getDefault())
             }
             tier == "Monitor" -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)

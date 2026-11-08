@@ -84,11 +84,15 @@ class DetectionOverlayView @JvmOverloads constructor(
             seenKeys.add(key)
 
             val tier = item.anomalyTier ?: "Normal"
+            val hasGeminiAlert = (item.geminiVerified == true || !item.geminiSummary.isNullOrBlank()) &&
+                (tier.equals("High Concern", ignoreCase = true) || tier.equals("Suspicious", ignoreCase = true))
+
             val label = buildString {
                 if (trackId > 0) append('#').append(trackId) else append("CHICKEN")
                 when {
+                    hasGeminiAlert && tier.equals("High Concern", ignoreCase = true) -> append(" CRITICAL ALERT")
+                    tier.equals("High Concern", ignoreCase = true) -> append(" EVALUATING...")
                     item.behavior?.equals("recumbent", ignoreCase = true) == true -> append(" RECUMBENT")
-                    tier.equals("High Concern", ignoreCase = true) -> append(" ALERT")
                     tier.equals("Suspicious", ignoreCase = true) -> append(" ATTENTION")
                     tier.equals("Monitor", ignoreCase = true) -> append(" WATCH")
                     else -> item.behavior?.takeIf { it.isNotBlank() }?.let {
@@ -97,7 +101,7 @@ class DetectionOverlayView @JvmOverloads constructor(
                 }
                 if (item.geminiVerified == true) append(" \u2713")
             }
-            val color = colorForTier(tier)
+            val color = colorForDetection(tier, hasGeminiAlert)
             val newTarget = RectF(left, top, right, bottom)
 
             val existing = activeTracks[key]
@@ -144,10 +148,12 @@ class DetectionOverlayView @JvmOverloads constructor(
         }
     }
 
-    private fun colorForTier(tier: String): Int = when (tier) {
-        "High Concern" -> Color.parseColor("#FF4646")
-        "Suspicious" -> Color.parseColor("#FF8C00")
-        "Monitor" -> Color.parseColor("#00D7FF")
+    private fun colorForDetection(tier: String, hasGeminiAlert: Boolean): Int = when {
+        // Red ONLY when confirmed as an anomaly/alert by Gemini!
+        hasGeminiAlert && tier.equals("High Concern", ignoreCase = true) -> Color.parseColor("#FF4646")
+        // If locally high concern or suspicious, show Orange (under observation) prior to Gemini verdict
+        tier.equals("High Concern", ignoreCase = true) || tier.equals("Suspicious", ignoreCase = true) -> Color.parseColor("#FF8C00")
+        tier.equals("Monitor", ignoreCase = true) -> Color.parseColor("#00D7FF")
         else -> Color.parseColor("#00E676")
     }
 

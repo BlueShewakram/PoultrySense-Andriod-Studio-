@@ -3174,10 +3174,11 @@ def camera_loop():
                 else:  # High Concern (>= 80)
                     health_label = "High Concern"
                     if unhealthy_prob >= 0.45 or behavior_label == "recumbent":
-                        health_detail = f"Severe Recumbency / Paralyzed Posture ({int(unhealthy_prob * 100)}%)"
+                        health_detail = f"Recumbent / Paralyzed Posture ({int(unhealthy_prob * 100)}%)"
                     else:
                         health_detail = f"Severe Lethargy Marker ({stationary_sec:.0f}s immobile)"
-                    color = (70, 70, 255)  # Vivid Alert Red
+                    # Prior to Gemini confirmation, hold at Amber-Orange (Suspicious/Evaluating) instead of Red
+                    color = (0, 140, 255)  # Bright Amber-Orange
                     unhealthy_count += 1
 
                 # 5. Multimodal Abnormal Behavior & Sensor Stress Analysis with Gemini 3.6 Flash
