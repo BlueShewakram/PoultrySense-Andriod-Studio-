@@ -1806,8 +1806,8 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
 
         for disp_id, last_cx, last_cy, last_t, old_raw_id in all_candidates:
             elapsed = curr_time - last_t
-            # Tighten re-ID window: max 2.5s for inactive tracks, max 4.0s for active missed tracks
-            max_reid_elapsed = 2.5 if old_raw_id is None else 4.0
+            # Robust re-ID window: preserves the chicken's identity through 1.3s to 5.0s occlusions/blink
+            max_reid_elapsed = 5.0
             if elapsed > max_reid_elapsed:
                 continue
 
@@ -1818,11 +1818,12 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
             speed = float(np.hypot(vx, vy))
 
             # Dynamic velocity-expanded matching radius
-            # For inactive tracks, limit search radius to 90px so panning the camera doesn't steal the ID!
+            # For inactive tracks, limit search radius to 110px so panning doesn't steal the ID,
+            # but a chicken pausing or stepping near the same spot (within 110px) smoothly resumes its ID and data!
             if old_raw_id is None:
-                dynamic_radius = min(90.0, 60.0 + (speed * 0.25))
+                dynamic_radius = min(110.0, 75.0 + (speed * 0.25))
             else:
-                dynamic_radius = min(180.0, max(70.0, 50.0 + (speed * 0.35) + (20.0 * elapsed)))
+                dynamic_radius = min(180.0, max(75.0, 60.0 + (speed * 0.35) + (20.0 * elapsed)))
 
             # Distance to predicted location and last known location
             dist_pred = float(np.hypot(cx - pred_cx, cy - pred_cy))
@@ -1905,9 +1906,9 @@ def cleanup_stale_ids(active_raw_ids, max_missed=45):
                 track_frozen_streaks.pop(raw_id, None)
                 track_confirmed_raw_ids.discard(raw_id)
 
-    # Clean up inactive tracks older than 2.5 seconds (persists identity through occlusions and head-turns)
+    # Clean up inactive tracks older than 5.0 seconds (persists identity through 1-4s brief occlusions, blinks, and head-turns)
     for disp_id in list(inactive_tracks.keys()):
-        if curr_time - inactive_tracks[disp_id]["time"] > 2.5:
+        if curr_time - inactive_tracks[disp_id]["time"] > 5.0:
             del inactive_tracks[disp_id]
             purge_display_id_data(disp_id)
 
@@ -3334,6 +3335,21 @@ def camera_loop():
                 gemini_verified = False
                 gemini_severity = "Low"
 
+                # Condition-Collapse Invalidation Guard:
+                # If a bird was previously evaluated as Normal, but NOW collapses (recumbent posture,
+                # acute visual sickness >= 0.50, or prolonged immobility >= 60s):
+                # The old Normal verdict is INVALIDATED and purged so sickness is NEVER hidden!
+                is_condition_collapsed = (
+                    behavior_label == "recumbent"
+                    or unhealthy_prob >= 0.50
+                    or (stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC and unhealthy_prob >= 0.35)
+                )
+                if gemini_verdict and gemini_verdict.get("tier") == "Normal" and is_condition_collapsed:
+                    gemini_escalator.verdicts.pop(display_id, None)
+                    gemini_verdict = None
+                    with _global_cooldown_lock:
+                        _last_alert_timestamp_by_id.pop(display_id, None)
+
                 if gemini_verdict and gemini_verdict.get("gemini_evaluated", False):
                     gemini_verified = True
                     gemini_tier = gemini_verdict["tier"]
@@ -3474,8 +3490,8 @@ def camera_loop():
         else:
             health_index = 100
             consecutive_empty_frames += 1
-            if consecutive_empty_frames == 40:  # ~1.3 seconds with 0 birds (panning to another pen/chicken)
-                print("[AI Vision] Camera panned or scene empty for 1.3s — clearing stale tracks.")
+            if consecutive_empty_frames == 180:  # ~6.0 seconds of completely empty frame (camera moved to another pen or put down)
+                print("[AI Vision] Scene empty for 6.0s — clearing stale tracks.")
                 reset_all_tracking_state()
 
 
