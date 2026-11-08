@@ -357,88 +357,61 @@
                     android:layout_weight="1"
                     android:fontFamily="sans-serif-black"
                     android:letterSpacing="-0.02"
+                    android:maxLines="1"
+                    android:ellipsize="end"
                     android:text="Camera Viewport"
                     android:textColor="#0F172A"
                     android:textSize="17sp" />
 
-                <!-- Mode Selector and Target Reset Controls -->
+                <!-- 1-Tap Stream Mode Selector: Clean Stream vs AI Vision -->
                 <LinearLayout
+                    android:id="@+id/layoutStreamModeToggle"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="32dp"
+                    android:background="@drawable/bg_segmented_container"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:padding="2dp">
 
-                    <!-- 1-Tap Stream Mode Selector: Clean Stream vs AI Vision -->
                     <LinearLayout
-                        android:id="@+id/layoutStreamModeToggle"
+                        android:id="@+id/btnToggleClean"
                         android:layout_width="wrap_content"
-                        android:layout_height="32dp"
-                        android:background="@drawable/bg_segmented_container"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:padding="2dp">
+                        android:layout_height="match_parent"
+                        android:background="@drawable/bg_segmented_active"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingHorizontal="10dp">
 
-                        <LinearLayout
-                            android:id="@+id/btnToggleClean"
+                        <TextView
+                            android:id="@+id/tvToggleClean"
                             android:layout_width="wrap_content"
-                            android:layout_height="match_parent"
-                            android:background="@drawable/bg_segmented_active"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:gravity="center"
-                            android:paddingHorizontal="10dp">
-
-                            <TextView
-                                android:id="@+id/tvToggleClean"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:fontFamily="sans-serif-bold"
-                                android:text="📹 Streaming"
-                                android:textColor="@color/primary"
-                                android:textSize="11.5sp" />
-                        </LinearLayout>
-
-                        <LinearLayout
-                            android:id="@+id/btnToggleAi"
-                            android:layout_width="wrap_content"
-                            android:layout_height="match_parent"
-                            android:background="@android:color/transparent"
-                            android:clickable="true"
-                            android:focusable="true"
-                            android:gravity="center"
-                            android:paddingHorizontal="10dp">
-
-                            <TextView
-                                android:id="@+id/tvToggleAi"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:fontFamily="sans-serif-bold"
-                                android:text="🎯 Detection"
-                                android:textColor="#64748B"
-                                android:textSize="11.5sp" />
-                        </LinearLayout>
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="📹 Streaming"
+                            android:textColor="@color/primary"
+                            android:textSize="11.5sp" />
                     </LinearLayout>
 
-                    <!-- Quick Target Reset Button: wipes old verdicts when pointing at another chicken -->
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnResetTarget"
-                        style="?attr/materialButtonOutlinedStyle"
+                    <LinearLayout
+                        android:id="@+id/btnToggleAi"
                         android:layout_width="wrap_content"
-                        android:layout_height="32dp"
-                        android:layout_marginStart="8dp"
-                        android:insetTop="0dp"
-                        android:insetBottom="0dp"
-                        android:paddingHorizontal="10dp"
-                        android:text="New Target"
-                        android:textAllCaps="false"
-                        android:textColor="#475569"
-                        android:textSize="11.5sp"
-                        app:cornerRadius="16dp"
-                        app:icon="@drawable/ic_refresh"
-                        app:iconSize="13dp"
-                        app:iconTint="#475569"
-                        app:strokeColor="#CBD5E1"
-                        app:strokeWidth="1dp" />
+                        android:layout_height="match_parent"
+                        android:background="@android:color/transparent"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:paddingHorizontal="10dp">
+
+                        <TextView
+                            android:id="@+id/tvToggleAi"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:fontFamily="sans-serif-bold"
+                            android:text="🎯 Detection"
+                            android:textColor="#64748B"
+                            android:textSize="11.5sp" />
+                    </LinearLayout>
                 </LinearLayout>
             </LinearLayout>
 
@@ -622,9 +595,39 @@
                             android:fontFamily="sans-serif-medium"
                             android:text="No camera assigned"
                             android:textColor="@color/white"
-                            android:textSize="11.5sp" />
+                            android:textSize="11.5sp"
+                            android:maxLines="1"
+                            android:ellipsize="end" />
 
+                        <!-- Quick Target Reset Action -->
+                        <LinearLayout
+                            android:id="@+id/btnResetTarget"
+                            android:layout_width="wrap_content"
+                            android:layout_height="28dp"
+                            android:layout_marginEnd="10dp"
+                            android:background="@drawable/bg_monitor_glass_hud"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingHorizontal="10dp">
 
+                            <ImageView
+                                android:layout_width="12dp"
+                                android:layout_height="12dp"
+                                android:src="@drawable/ic_refresh"
+                                app:tint="@color/white"
+                                tools:ignore="ContentDescription" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="5dp"
+                                android:fontFamily="sans-serif-bold"
+                                android:text="New Target"
+                                android:textColor="@color/white"
+                                android:textSize="10.5sp" />
+                        </LinearLayout>
 
                         <!-- Frame Snapshot Shutter Action -->
                         <ImageView
