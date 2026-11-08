@@ -164,9 +164,9 @@ class DetectionOverlayView @JvmOverloads constructor(
         }
         lastFrameTimeMs = now
 
-        // Exponential smoothing factor: frame-rate independent (~12 / sec convergence)
-        val posLerpFactor = (1.0f - Math.exp((-14.0 * dtSec).toDouble())).toFloat().coerceIn(0.15f, 0.65f)
-        val alphaLerpFactor = (1.0f - Math.exp((-10.0 * dtSec).toDouble())).toFloat().coerceIn(0.15f, 0.60f)
+        // High-responsiveness exponential convergence (~24 / sec) for instant real-time box alignment
+        val posLerpFactor = (1.0f - Math.exp((-24.0 * dtSec).toDouble())).toFloat().coerceIn(0.25f, 0.85f)
+        val alphaLerpFactor = (1.0f - Math.exp((-16.0 * dtSec).toDouble())).toFloat().coerceIn(0.20f, 0.75f)
 
         // Center-crop projection transform matching ImageView
         val scale = maxOf(width.toFloat() / sourceWidth, height.toFloat() / sourceHeight)

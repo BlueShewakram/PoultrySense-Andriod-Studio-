@@ -131,9 +131,8 @@ def load_env_file():
 
 load_env_file()
 
-# Detection is capped at 10 inferences/second on GPU (3 on CPU). Inference itself
-# is the real limit, so this gate only prevents wasted fast runs.
-DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "10.0"))
+# Detection rate cap: set to 25 FPS for ultra-smooth real-time HUD box tracking
+DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "25.0"))
 # Confidence threshold for the chicken detector. 0.25 is the current setting;
 # override with POULTRYSENSE_DETECTION_CONF=0.30 to restore the previous value.
 DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.30"))
@@ -1700,7 +1699,7 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
 
         for disp_id, last_cx, last_cy, last_t, old_raw_id in all_candidates:
             elapsed = curr_time - last_t
-            if elapsed > 2.5:
+            if elapsed > 6.0:
                 continue
 
             # Linear motion extrapolation: predict where running chicken moved to
@@ -1709,8 +1708,8 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
             pred_cy = last_cy + vy * elapsed
             speed = float(np.hypot(vx, vy))
 
-            # Dynamic velocity-expanded matching radius (tightened from 350px to 120px max)
-            dynamic_radius = min(120.0, max(50.0, 40.0 + (speed * 0.2) + (15.0 * elapsed)))
+            # Dynamic velocity-expanded matching radius (allows up to 240px to securely re-identify running/foraging chickens)
+            dynamic_radius = min(240.0, max(75.0, 60.0 + (speed * 0.35) + (25.0 * elapsed)))
 
             # Distance to predicted location and last known location
             dist_pred = float(np.hypot(cx - pred_cx, cy - pred_cy))
@@ -1792,9 +1791,9 @@ def cleanup_stale_ids(active_raw_ids, max_missed=120):
                 track_frozen_streaks.pop(raw_id, None)
                 track_confirmed_raw_ids.discard(raw_id)
 
-    # Clean up inactive tracks older than 3.0 seconds
+    # Clean up inactive tracks older than 6.0 seconds (persists identity through occlusions and head-turns)
     for disp_id in list(inactive_tracks.keys()):
-        if curr_time - inactive_tracks[disp_id]["time"] > 3.0:
+        if curr_time - inactive_tracks[disp_id]["time"] > 6.0:
             del inactive_tracks[disp_id]
             track_histories.pop(disp_id, None)
             track_motion_windows.pop(disp_id, None)
@@ -2704,8 +2703,8 @@ def camera_loop():
     )
 
     rate_gate = RateGate(DETECTION_MAX_RATE_HZ)
-    # Keep tracks alive for ~4 seconds of wall-clock time regardless of det rate.
-    max_missed_detections = max(3, int(round(4.0 * DETECTION_MAX_RATE_HZ)))
+    # Keep tracks alive for ~5 seconds of wall-clock time regardless of det rate.
+    max_missed_detections = max(3, int(round(5.0 * DETECTION_MAX_RATE_HZ)))
 
     cached_display_items = []
     cached_person_boxes = []
@@ -2715,13 +2714,13 @@ def camera_loop():
     _last_trackdbg_print = 0.0
     _prev_raw_id_set = set()
     _raw_id_switches = 0
+    _person_check_counter = 0
 
     while True:
-        # Pace detection to 2-3 Hz, then consume only the newest camera frame.
-        # Inference never queues frames, so latency stays bounded.
+        # High-FPS frame consumption: short wait bounds latency without stalling video
         wait = rate_gate.remaining()
         if wait > 0:
-            time.sleep(min(wait, 0.25))
+            time.sleep(min(wait, 0.015))
             continue
 
         frame, generation = frame_buffer.wait_for_newer(last_generation, timeout=0.5)
@@ -2737,7 +2736,6 @@ def camera_loop():
         curr_time = time.time()
         det_interval = max(1e-3, curr_time - prev_det_time)
         prev_det_time = curr_time
-        # Real elapsed time, not a per-frame clamp: detection runs at 2-3 Hz.
         dt = max(0.001, min(2.0, det_interval))
         inst_det_fps = min(1.0 / det_interval, DETECTION_MAX_RATE_HZ * 1.5)
         smooth_det_fps = (
@@ -2745,8 +2743,10 @@ def camera_loop():
             else 0.8 * smooth_det_fps + 0.2 * inst_det_fps
         )
 
-        # Human / Person Veto on every detection frame (2-3 Hz is ample for people).
-        if person_model is not None:
+        # Human / Person Veto: checked periodically every 4 frames (or if a person was recently in frame)
+        # to avoid burning 15ms CPU on every single frame.
+        _person_check_counter += 1
+        if person_model is not None and (_person_check_counter % 4 == 0 or len(cached_person_boxes) > 0):
             try:
                 p_res = person_model.predict(source=frame, classes=[0], conf=0.30, imgsz=384, verbose=False)[0]
                 if p_res.boxes is not None and len(p_res.boxes) > 0:

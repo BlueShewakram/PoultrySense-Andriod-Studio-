@@ -1,13 +1,12 @@
 # PoultrySense tracker config for BoT-SORT (chicken tracking)
 # Optimized for fast-running chickens & occlusion recovery
 tracker_type: botsort
-# The detector runs at conf 0.30, so the tracker must accept tracks from 0.35
-# upward. At 0.45/0.48 every printed-photo or distant-chicken detection in the
-# 0.30-0.47 band was silently untrackable, which is why boxes vanished.
-track_high_thresh: 0.35
-track_low_thresh: 0.25
-new_track_thresh: 0.35
-track_buffer: 40
+# The detector runs at conf 0.30, so the tracker must accept tracks from 0.30
+# upward and keep tracking down to 0.15 during turns and motion blur.
+track_high_thresh: 0.30
+track_low_thresh: 0.15
+new_track_thresh: 0.30
+track_buffer: 90
 match_thresh: 0.70
 fuse_score: true
 
@@ -15,13 +14,7 @@ fuse_score: true
 gmc_method: none # static USB coop camera: GMC burns CPU for zero gain
 
 # ReID: appearance memory per track
-# Dedicated ReID encoder (512-d embeddings, CPU/ONNX) instead of the "auto"
-# fallback, which silently swaps to yolo26n-cls.pt on OpenVINO detectors.
-# Downloaded automatically by Ultralytics on first run.
-# proximity_thresh is an IoU-distance gate: at 0.55 appearance matching was
-# skipped whenever a bird/photo moved far enough to drop IoU below 0.45. 0.80
-# lets ReID re-link the same bird after a large jump.
-proximity_thresh: 0.80
-appearance_thresh: 0.65
+proximity_thresh: 0.85
+appearance_thresh: 0.55
 with_reid: true
 model: yolo26n-reid.onnx
