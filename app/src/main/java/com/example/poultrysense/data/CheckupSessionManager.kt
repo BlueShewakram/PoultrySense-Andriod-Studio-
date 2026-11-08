@@ -338,6 +338,26 @@ object CheckupSessionManager {
         return emptyList()
     }
 
+    /** Clears all local and cloud scan session records. */
+    fun clearAllSessions(context: Context) {
+        val prefs = getPrefs(context)
+        prefs.edit()
+            .remove(KEY_SESSION_HISTORY)
+            .putInt(KEY_SESSION_COUNTER, 0)
+            .apply()
+
+        try {
+            val uid = UserPreferences.getCachedUser(context)?.uid
+            val db = FirebaseConfig.database()
+            val historyRef = if (uid.isNullOrBlank()) {
+                db.getReference("farms").child("scan_history")
+            } else {
+                db.getReference("users").child(uid).child("scan_history")
+            }
+            historyRef.removeValue()
+        } catch (_: Exception) {}
+    }
+
     private fun isLegacyDemoSession(session: ScanSession): Boolean {
         if (session.id !in setOf("session-106", "session-107", "session-108")) return false
         return session.date == "Sep 13, 2026" || session.date == "Sep 12, 2026"

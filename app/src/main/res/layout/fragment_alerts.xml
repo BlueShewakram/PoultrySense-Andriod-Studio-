@@ -48,6 +48,17 @@
                     android:textSize="12.5sp" />
             </LinearLayout>
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnClearAlerts"
+                style="@style/Widget.Material3.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Clear Live"
+                android:textColor="@color/critical"
+                android:textSize="12.5sp"
+                app:icon="@drawable/ic_delete_sweep"
+                app:iconTint="@color/critical"
+                app:iconSize="18dp" />
         </LinearLayout>
 
         <TextView

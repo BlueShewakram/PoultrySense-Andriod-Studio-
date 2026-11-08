@@ -68,6 +68,28 @@ class AlertsFragment : Fragment() {
                 _binding?.swipeRefreshLayout?.let { it.isRefreshing = false }
             }, 500)
         }
+
+        binding.btnClearAlerts.setOnClickListener {
+            val ctx = context ?: return@setOnClickListener
+            if (liveAlerts.isEmpty()) {
+                android.widget.Toast.makeText(ctx, "No live alerts to clear", android.widget.Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+                .setTitle("Clear Live Alerts?")
+                .setMessage("This will dismiss all active AI vision alerts from the live feed.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear All") { _, _ ->
+                    try {
+                        FirebaseConfig.database().getReference("active_alerts").removeValue()
+                        liveAlerts.clear()
+                        render()
+                        android.widget.Toast.makeText(ctx, "Live alerts cleared", android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {}
+                }
+                .show()
+        }
+
         attachLiveAlertsListener()
         refreshAndRender()
     }

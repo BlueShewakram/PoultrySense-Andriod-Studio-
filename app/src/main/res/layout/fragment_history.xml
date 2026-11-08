@@ -19,25 +19,45 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical">
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-            <TextView
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="sans-serif-black"
+                    android:letterSpacing="-0.03"
+                    android:text="@string/history_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="26sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="1dp"
+                    android:fontFamily="sans-serif-medium"
+                    android:text="Historical Anomaly &amp; Tracking Sessions"
+                    android:textColor="@color/text_muted"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnClearHistory"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-black"
-                android:letterSpacing="-0.03"
-                android:text="@string/history_title"
-                android:textColor="@color/text_primary"
-                android:textSize="26sp" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="1dp"
-                android:fontFamily="sans-serif-medium"
-                android:text="Historical Anomaly &amp; Tracking Sessions"
-                android:textColor="@color/text_muted"
-                android:textSize="12sp" />
+                android:text="Clear All"
+                android:textColor="@color/critical"
+                android:textSize="12.5sp"
+                app:icon="@drawable/ic_delete_sweep"
+                app:iconTint="@color/critical"
+                app:iconSize="18dp" />
         </LinearLayout>
 
         <!-- Horizontal Barn Filter Chips -->

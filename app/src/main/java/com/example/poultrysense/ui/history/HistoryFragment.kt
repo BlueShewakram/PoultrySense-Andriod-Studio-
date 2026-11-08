@@ -52,6 +52,25 @@ class HistoryFragment : Fragment() {
         }
 
         setupFilterChips()
+
+        binding.btnClearHistory.setOnClickListener {
+            val ctx = context ?: return@setOnClickListener
+            if (allSessions.isEmpty()) {
+                android.widget.Toast.makeText(ctx, "No history records to clear", android.widget.Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(ctx)
+                .setTitle("Clear Scan History?")
+                .setMessage("This will remove all past scan records from your phone and cloud history. This cannot be undone.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Clear All") { _, _ ->
+                    CheckupSessionManager.clearAllSessions(ctx)
+                    loadSessions()
+                    android.widget.Toast.makeText(ctx, "Scan history cleared", android.widget.Toast.LENGTH_SHORT).show()
+                }
+                .show()
+        }
+
         refreshAndLoad()
     }
 
