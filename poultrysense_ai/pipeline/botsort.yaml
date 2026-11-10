@@ -1,11 +1,12 @@
 # PoultrySense tracker config for BoT-SORT (chicken tracking)
 # Optimized for fast-running chickens & occlusion recovery
 tracker_type: botsort
-# The detector runs at conf 0.30, so the tracker must accept tracks from 0.30
-# upward and keep tracking down to 0.15 during turns and motion blur.
-track_high_thresh: 0.30
+# Detector reports down to DETECTOR_CONF (0.15) so the tracker's second
+# association stage can keep a track alive through motion blur. New tracks
+# still require DETECTION_CONF (0.45) via new_track_thresh.
+track_high_thresh: 0.45
 track_low_thresh: 0.15
-new_track_thresh: 0.30
+new_track_thresh: 0.45
 track_buffer: 90
 match_thresh: 0.70
 fuse_score: true

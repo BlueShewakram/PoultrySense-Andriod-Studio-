@@ -133,9 +133,16 @@ load_env_file()
 
 # Detection rate cap: set to 25 FPS for ultra-smooth real-time HUD box tracking
 DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "25.0"))
-# Confidence threshold for the chicken detector. 0.25 is the current setting;
-# override with POULTRYSENSE_DETECTION_CONF=0.30 to restore the previous value.
-DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.30"))
+
+# Two thresholds, deliberately different:
+#
+# DETECTOR_CONF is what the detector reports. It must stay LOW so BoT-SORT's
+# second association stage can still see a blurred/fast chicken. Ultralytics
+# drops everything below this before the tracker runs, so raising it silently
+# disables track_low_thresh.
+# DETECTION_CONF is what may create a new track or a new box on screen.
+DETECTOR_CONF = float(os.environ.get("POULTRYSENSE_DETECTOR_CONF", "0.15"))
+DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.45"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
 # hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
@@ -368,6 +375,7 @@ def scan_start():
     track_motion_windows.clear()
     track_stationary_duration.clear()
     track_classifications.clear()
+    track_last_hist_time.clear()
 
     # Reset active_alerts in Firebase Realtime Database for the new scan session
     if requests is not None:
@@ -656,6 +664,7 @@ frame_lock = threading.Lock()
 # --- Motion & History State ---
 track_histories = defaultdict(lambda: deque(maxlen=30))
 track_motion_windows = defaultdict(lambda: deque(maxlen=90))  # 3-second rolling window at 30 FPS
+track_last_hist_time = {}   # display_id -> timestamp of last non-coasting position update
 
 track_first_seen = {}              # display_id -> first appearance timestamp
 track_stationary_duration = {}     # display_id -> continuous seconds stationary (motion < 1.6)
@@ -676,19 +685,37 @@ track_frozen_streaks = defaultdict(int)     # raw_id -> consecutive pixel-identi
 # CHURN_MAX_FROZEN consecutive frozen observations veto a confirmation hit.
 CHURN_EPS = 2.0
 CHURN_MAX_FROZEN = 2
-# Hold the last known box for up to ~0.5 s of missed detections so a brief
-# detector dropout does not blank a chicken's box on the video overlay.
-COAST_MAX_FRAMES = 5
+# Hold the last known box for ~0.4 s of missed detections so a brief detector
+# dropout does not blank a chicken's box. Time-based, so changing the detection
+# rate does not silently shorten it.
+COAST_MAX_FRAMES = max(3, int(round(0.4 * DETECTION_MAX_RATE_HZ)))
+# Coasting stops extrapolating after this many frames and holds position, so a
+# stale velocity cannot fling the box across the frame.
+COAST_EXTRAPOLATE_FRAMES = max(2, int(round(0.2 * DETECTION_MAX_RATE_HZ)))
+# Minimum box side as a fraction of frame width. Resolution-independent: 45 px
+# on 640 px wide, 90 px on 1280 px, instead of a fixed 45 px everywhere.
+MIN_BOX_FRACTION = float(os.environ.get("POULTRYSENSE_MIN_BOX_FRACTION", "0.07"))
+MIN_BOX_PX_FLOOR = int(os.environ.get("POULTRYSENSE_MIN_BOX_PX", "24"))
+# A classification older than this is ignored instead of being reported forever.
+CLASSIFICATION_MAX_AGE_SEC = float(os.environ.get("POULTRYSENSE_CLASSIFICATION_MAX_AGE_SEC", "5.0"))
+# Classifier input sizes in ONE place each. Changing them must also re-export the
+# OpenVINO/ONNX model, which is now keyed by size (see resolve_openvino).
+CLASSIFIER_IMGSZ = int(os.environ.get("POULTRYSENSE_CLASSIFIER_IMGSZ", "224"))
+# Health classifier is trained/exported/inferred at 320 per project spec.
+HEALTH_CLASSIFIER_IMGSZ = int(os.environ.get("POULTRYSENSE_HEALTH_CLASSIFIER_IMGSZ", "320"))
+# Human/face veto cadence. Runs on its own thread so it never delays a box.
+VETO_HZ = float(os.environ.get("POULTRYSENSE_VETO_HZ", "8"))
+# Appearance (ReID) encoder device. Measured on this machine: CPU 1.8 ms/crop,
+# OpenVINO GPU 3.0 ms/crop + 15s compile + 9s first inference — GPU is far
+# slower for this small model, so CPU is the default. Set
+# POULTRYSENSE_REID_DEVICE=gpu to force OpenVINO GPU (opt-in).
+REID_DEVICE = os.environ.get("POULTRYSENSE_REID_DEVICE", "cpu").strip().lower()
 DEBUG_TRACK = os.environ.get("POULTRYSENSE_DEBUG_TRACK", "").strip().lower() in {"1", "true", "yes"}
 classification_queue = queue.Queue(maxsize=6)
 classification_lock = threading.Lock()
 
-# Temporal Observation Window (seconds before declaring baseline health or escalating to Gemini)
-OBSERVATION_WINDOW = float(os.environ.get("POULTRYSENSE_OBSERVATION_WINDOW", "45.0"))
-
-
 # Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
-MAX_TRACKED_CHICKENS = 10
+MAX_TRACKED_CHICKENS = int(os.environ.get("POULTRYSENSE_MAX_TRACKED_CHICKENS", "10"))
 
 # --- Camera Configuration ---
 # Camera index: 1 = external USB camera ("HD Camera")
@@ -1307,105 +1334,371 @@ gemini_escalator = GeminiVerdictEngine()
 
 
 
-def classification_worker(beh_model, hlth_model):
+def classification_worker(beh_model, hlth_model, beh_imgsz=None, hlth_imgsz=None):
     """Background worker that continuously classifies chicken health and behavior
     on a secondary core without blocking the video tracking loop."""
+    if beh_imgsz is None:
+        beh_imgsz = CLASSIFIER_IMGSZ
+    if hlth_imgsz is None:
+        hlth_imgsz = HEALTH_CLASSIFIER_IMGSZ
+
     while True:
         try:
             disp_id, crop = classification_queue.get(timeout=1.0)
         except Exception:
             continue
 
-        b_label = "stand"
-        unhealthy_prob = 0.0
+        b_label = None
+        unhealthy_prob = None
 
         if beh_model is not None:
             try:
-                b_res = beh_model.predict(source=crop, imgsz=224, verbose=False)[0]
+                b_res = beh_model.predict(source=crop, imgsz=beh_imgsz, verbose=False)[0]
                 b_label = BEHAVIOR_NAMES.get(int(b_res.probs.top1), "stand")
-            except Exception:
-                pass
+            except Exception as ex_beh:
+                print(f"[CLASSIFY] Behavior inference failed: {ex_beh}")
 
         if hlth_model is not None:
             try:
-                h_res = hlth_model.predict(source=crop, imgsz=224, verbose=False)[0]
+                h_res = hlth_model.predict(source=crop, imgsz=hlth_imgsz, verbose=False)[0]
                 # In PoultrySense_HealthClassifier: index 0 is Healthy, index 1 is Unhealthy
                 if h_res.probs is not None and len(h_res.probs.data) >= 2:
                     unhealthy_prob = float(h_res.probs.data[1])
-                else:
-                    unhealthy_prob = 0.0
-            except Exception:
-                pass
+            except Exception as ex_hlth:
+                print(f"[CLASSIFY] Health inference failed: {ex_hlth}")
+
+        # Never write a fabricated "healthy" result on failure: leave the
+        # previous entry in place and let CLASSIFICATION_MAX_AGE_SEC expire it.
+        if b_label is None and unhealthy_prob is None:
+            continue
 
         with classification_lock:
+            previous = track_classifications.get(disp_id, {})
             track_classifications[disp_id] = {
-                "behavior": b_label,
-                "unhealthy_prob": unhealthy_prob,
+                "behavior": b_label if b_label is not None else previous.get("behavior", "stand"),
+                "unhealthy_prob": (
+                    unhealthy_prob if unhealthy_prob is not None
+                    else previous.get("unhealthy_prob", 0.0)
+                ),
                 "time": time.time()
             }
 
 
 
 # --- Threaded Camera Reader for 30 FPS capture ---
+# Camera backends in order of preference.
+#
+# MSMF first because it is the only Windows backend that implements
+# CAP_PROP_BUFFERSIZE, and a buffer of 1 is what stops the driver handing back
+# frames that are already several frames old. DSHOW never implemented that
+# property (get() returns -1, set() returns False), so it falls back to a
+# driver-managed queue that we can only flush at open time.
+CAMERA_BACKEND_PREFERENCE = (
+    ("MSMF", "CAP_MSMF"),
+    ("DSHOW", "CAP_DSHOW"),
+    ("ANY", "CAP_ANY"),
+)
+
+
+def fourcc_to_str(value):
+    """Decode an OpenCV FOURCC integer into its four-character code.
+
+    Returns an empty string when the backend does not report a codec.
+    """
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return ""
+    if value <= 0:
+        return ""
+    code = "".join(chr((value >> (8 * i)) & 0xFF) for i in range(4))
+    return code if code.isprintable() and code.strip() else ""
+
+
+def next_backoff(current, maximum=5.0):
+    """Exponential backoff with a ceiling so a dead camera cannot spin."""
+    return min(max(0.05, float(current) * 2.0), float(maximum))
+
+
+def configure_capture(cap, width, height, fps, want_mjpg=True, flush_frames=3):
+    """Apply the requested capture mode and report what the driver accepted.
+
+    ``VideoCapture.set()`` on Windows returns ``True`` for any *known*
+    property even when the driver rejects the value, so every request is
+    verified by reading the property back.
+
+    ``flush_frames`` discards frames the driver queued during negotiation.
+    It is skipped on reconnect, where a half-initialised device can block
+    indefinitely inside ``grab()``.
+    """
+    def _get(prop, default=0.0):
+        try:
+            value = cap.get(prop)
+            return default if value is None else float(value)
+        except Exception:
+            return default
+
+    def _set(prop, value):
+        try:
+            return bool(cap.set(prop, value))
+        except Exception:
+            return False
+
+    # FOURCC must be negotiated before width/height: UVC drivers lock the
+    # supported format list once a resolution has been selected.
+    if want_mjpg:
+        _set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+
+    _set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    _set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    _set(cv2.CAP_PROP_FPS, fps)
+
+    # Buffer control: -1 means the backend has no such property at all.
+    buffer_ok = _get(cv2.CAP_PROP_BUFFERSIZE, -1.0) == 1.0
+    if not buffer_ok:
+        _set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        buffer_ok = _get(cv2.CAP_PROP_BUFFERSIZE, -1.0) == 1.0
+
+    # Auto-exposure: 0.25 = automatic, 0.75 = manual. Only touch it when the
+    # driver actually reports the property, otherwise the request is a no-op
+    # that used to be logged as if it had worked.
+    auto_exposure = _get(cv2.CAP_PROP_AUTO_EXPOSURE, -1.0)
+    exposure_set = None
+    if auto_exposure >= 0.0:
+        _set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+        exposure_set = _get(cv2.CAP_PROP_AUTO_EXPOSURE, -1.0)
+
+    _set(cv2.CAP_PROP_BRIGHTNESS, 128)
+    _set(cv2.CAP_PROP_CONTRAST, 40)
+
+    # Flush whatever the driver queued while the format was being negotiated.
+    for _ in range(max(0, int(flush_frames))):
+        try:
+            cap.grab()
+        except Exception:
+            break
+
+    codec = fourcc_to_str(_get(cv2.CAP_PROP_FOURCC, 0.0))
+    return {
+        "codec": codec,
+        "mjpg_requested": bool(want_mjpg),
+        "mjpg_applied": codec.upper() == "MJPG",
+        "width": int(_get(cv2.CAP_PROP_FRAME_WIDTH, 0.0)),
+        "height": int(_get(cv2.CAP_PROP_FRAME_HEIGHT, 0.0)),
+        "fps": _get(cv2.CAP_PROP_FPS, 0.0),
+        "buffer_control": buffer_ok,
+        "auto_exposure": exposure_set,
+    }
+
+
 class ThreadedCamera:
     """Reads frames from the camera in a background thread so capture
-    is decoupled from the (slower) YOLO inference loop."""
+    is decoupled from the (slower) YOLO inference loop.
 
-    def __init__(self, camera_index=EXTERNAL_CAMERA_INDEX):
-        self.cap = None
+    The reader keeps only the newest frame, reopens the device after a run of
+    failed reads instead of spinning at 100% CPU, and reports the mode the
+    driver actually negotiated rather than the one that was requested.
+    """
+
+    # Consecutive failed reads before the device is considered dead.
+    RECONNECT_AFTER = 5
+    MAX_BACKOFF_SEC = 5.0
+    # Give the driver time to tear the old stream down before reopening.
+    RECONNECT_SETTLE_SEC = 0.5
+
+    def __init__(self, camera_index=EXTERNAL_CAMERA_INDEX,
+                 width=None, height=None, fps=None):
         self._buffer = FrameBuffer()
         self._ret = False
         self._running = False
         self._thread = None
+        self._cap_lock = threading.Lock()
+        self._last_frame_time = 0.0
+        self._stats = {"frames": 0, "read_failures": 0, "reconnects": 0}
+
+        self._preferred_index = camera_index
+        self.index = camera_index
+        self.width = int(width if width is not None
+                         else os.environ.get("POULTRYSENSE_CAM_WIDTH", "640"))
+        self.height = int(height if height is not None
+                          else os.environ.get("POULTRYSENSE_CAM_HEIGHT", "480"))
+        self.fps = float(fps if fps is not None
+                         else os.environ.get("POULTRYSENSE_CAM_FPS", "30"))
+        self.want_mjpg = os.environ.get(
+            "POULTRYSENSE_CAM_CODEC", "MJPG"
+        ).strip().upper() != "NONE"
+
+        self.cap = None
+        self.backend_name = "?"
+        self.mode = {}
         self._open(camera_index)
 
+    def _index_candidates(self, camera_index):
+        candidates = [camera_index]
+        if camera_index != FALLBACK_CAMERA_INDEX:
+            candidates.append(FALLBACK_CAMERA_INDEX)
+        return candidates
+
+    def _try_open(self, index):
+        """Open ``index`` on the first backend that yields a working capture."""
+        for backend_name, attr in CAMERA_BACKEND_PREFERENCE:
+            api = getattr(cv2, attr, None)
+            if api is None:
+                continue
+            cap = cv2.VideoCapture(index, api)
+            if not cap.isOpened():
+                cap.release()
+                continue
+            mode = configure_capture(cap, self.width, self.height, self.fps, self.want_mjpg)
+            self.cap = cap
+            self.index = index
+            self.backend_name = backend_name
+            self.mode = mode
+            self._log_opened(index, backend_name, mode)
+            return True
+        return False
+
     def _open(self, camera_index):
-        # Try external camera first with DirectShow
-        self.cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-        if not self.cap.isOpened():
-            self.cap = cv2.VideoCapture(camera_index)
+        for index in self._index_candidates(camera_index):
+            if self._try_open(index):
+                return True
+        print("[ERROR] No camera could be opened!")
+        return False
 
-        # Fallback to built-in laptop camera
-        if not self.cap.isOpened() and camera_index != FALLBACK_CAMERA_INDEX:
-            print(f"[WARN] External camera {camera_index} not available, falling back to camera {FALLBACK_CAMERA_INDEX}")
-            self.cap = cv2.VideoCapture(FALLBACK_CAMERA_INDEX, cv2.CAP_DSHOW)
-            if not self.cap.isOpened():
-                self.cap = cv2.VideoCapture(FALLBACK_CAMERA_INDEX)
-            camera_index = FALLBACK_CAMERA_INDEX
-
-        if self.cap.isOpened():
-            # Use MJPG codec for high-clarity & fast 30 FPS transfer
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            self.cap.set(cv2.CAP_PROP_FPS, 30)
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-
-            # Enable natural auto-exposure and optimal brightness for clear, vivid display
-            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
-            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 128)
-            self.cap.set(cv2.CAP_PROP_CONTRAST, 40)
-            actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            print(f"[INFO] Camera opened: index={camera_index}, res={actual_w}x{actual_h}, codec=MJPG, Auto-Exposure=ON")
+    def _log_opened(self, index, backend_name, mode):
+        codec = mode.get("codec") or "unreported"
+        if mode.get("mjpg_applied"):
+            codec_note = f"codec={codec} (MJPG confirmed)"
+        elif mode.get("codec"):
+            codec_note = f"codec={codec} (driver refused MJPG; using native format)"
+        elif mode.get("mjpg_requested"):
+            codec_note = "codec=unreported (backend does not expose FOURCC)"
         else:
-            print("[ERROR] No camera could be opened!")
+            codec_note = "codec=unreported"
+
+        if mode.get("buffer_control"):
+            buffer_note = "buffer=1 (no stale frames)"
+        else:
+            buffer_note = "buffer=driver-managed (flushed at open)"
+
+        exposure = mode.get("auto_exposure")
+        exposure_note = (
+            "auto-exposure=on" if exposure is not None and exposure <= 0.5
+            else "auto-exposure=manual" if exposure is not None
+            else "auto-exposure=unsupported"
+        )
+
+        print(
+            f"[INFO] Camera opened: index={index}, backend={backend_name}, "
+            f"{codec_note}, res={mode.get('width')}x{mode.get('height')}, "
+            f"fps={float(mode.get('fps') or 0.0):.0f}, {buffer_note}, {exposure_note}"
+        )
+
+        if index != self._preferred_index:
+            print(
+                f"[WARN] Preferred camera {self._preferred_index} unavailable; "
+                f"using camera {index}. Reconnect the coop camera and restart to switch back."
+            )
 
     def start(self):
         if self._running:
             return self
         self._running = True
-        self._thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self._thread = threading.Thread(
+            target=self._reader_loop, name="camera-reader", daemon=True
+        )
         self._thread.start()
         return self
 
     def _reader_loop(self):
+        failures = 0
+        backoff = 0.25
+
         while self._running:
-            ret, frame = self.cap.read()
-            self._ret = ret
+            cap = self.cap
+            ret, frame = (False, None) if cap is None else cap.read()
+
             if ret and frame is not None:
+                failures = 0
+                backoff = 0.25
+                self._ret = True
+                self._last_frame_time = time.monotonic()
+                self._stats["frames"] += 1
                 self._buffer.publish(frame)
+                continue
+
+            # A failed read must never spin the CPU: back off, then reopen.
+            failures += 1
+            self._ret = False
+            self._stats["read_failures"] += 1
+            if failures >= self.RECONNECT_AFTER:
+                failures = 0
+                if self._reconnect():
+                    # Device is back: read again immediately instead of
+                    # sleeping out the backoff we accumulated while it was dead.
+                    backoff = 0.25
+                    continue
+            time.sleep(backoff)
+            backoff = next_backoff(backoff, self.MAX_BACKOFF_SEC)
+
+    def _reconnect(self):
+        with self._cap_lock:
+            old = self.cap
+            self.cap = None
+        if old is not None:
+            try:
+                old.release()
+            except Exception:
+                pass
+
+        self._stats["reconnects"] += 1
+        print(
+            f"[WARN] Camera {self.index} stopped delivering frames; "
+            f"reopening (attempt {self._stats['reconnects']})."
+        )
+        time.sleep(self.RECONNECT_SETTLE_SEC)
+
+        for backend_name, attr in CAMERA_BACKEND_PREFERENCE:
+            api = getattr(cv2, attr, None)
+            if api is None:
+                continue
+            cap = cv2.VideoCapture(self.index, api)
+            if not cap.isOpened():
+                cap.release()
+                continue
+            mode = configure_capture(
+                cap, self.width, self.height, self.fps, self.want_mjpg,
+                flush_frames=0,
+            )
+            with self._cap_lock:
+                self.cap = cap
+            self.backend_name = backend_name
+            self.mode = mode
+            self._log_opened(self.index, backend_name, mode)
+            return True
+        return False
+
+    def info(self):
+        """Report the negotiated mode and reader health for /status."""
+        since_frame = None
+        if self._last_frame_time:
+            since_frame = round(time.monotonic() - self._last_frame_time, 2)
+        return {
+            "index": self.index,
+            "backend": self.backend_name,
+            "codec": self.mode.get("codec", ""),
+            "mjpg_applied": bool(self.mode.get("mjpg_applied")),
+            "width": self.mode.get("width", 0),
+            "height": self.mode.get("height", 0),
+            "fps": round(float(self.mode.get("fps") or 0.0), 1),
+            "buffer_control": bool(self.mode.get("buffer_control")),
+            "auto_exposure": self.mode.get("auto_exposure"),
+            "frames": self._stats["frames"],
+            "read_failures": self._stats["read_failures"],
+            "reconnects": self._stats["reconnects"],
+            "seconds_since_frame": since_frame,
+            "reader_alive": bool(self._thread and self._thread.is_alive()),
+        }
 
     def read(self):
         frame, _ = self._buffer.read()
@@ -1423,17 +1716,27 @@ class ThreadedCamera:
         )
         if frame is None:
             return False, None, generation
-        return self._ret, frame.copy(), generation
+        # A buffered frame is valid even if the most recent read failed, so
+        # report success on the frame rather than on the last device read.
+        return True, frame.copy(), generation
 
     def isOpened(self):
-        return self.cap is not None and self.cap.isOpened()
+        with self._cap_lock:
+            return self.cap is not None and self.cap.isOpened()
 
     def release(self):
         self._running = False
         if self._thread is not None:
             self._thread.join(timeout=2.0)
-        if self.cap is not None:
-            self.cap.release()
+            self._thread = None
+        with self._cap_lock:
+            cap = self.cap
+            self.cap = None
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
 
 def get_model_path(candidates):
@@ -1591,6 +1894,49 @@ def resolve_accelerated_model(pt_path, imgsz=640):
     return resolve_openvino(pt_path, imgsz=imgsz)
 
 
+def _imgsz_marker_path(export_path):
+    """Sidecar file recording the input size an export was built for."""
+    return export_path.rstrip("\\/") + ".poultysense_imgsz"
+
+
+def _export_imgsz_matches(export_path, imgsz):
+    """True only when the export was built for exactly this input size.
+
+    Without this check a cached 224 export is silently reused for a 320
+    request, which is how a model resize can appear to work and change nothing.
+    """
+    try:
+        with open(_imgsz_marker_path(export_path), "r", encoding="utf-8") as fh:
+            return int(fh.read().strip()) == int(imgsz)
+    except Exception:
+        return False
+
+
+def _mark_export_imgsz(export_path, imgsz):
+    try:
+        with open(_imgsz_marker_path(export_path), "w", encoding="utf-8") as fh:
+            fh.write(str(int(imgsz)))
+    except Exception as exc:
+        print(f"[OpenVINO] Notice writing export marker: {exc}")
+
+
+def _park_export(export_path):
+    """Move a stale export aside instead of deleting it, then return nothing.
+
+    Old IRs are kept (renamed) so they can be restored, per project policy.
+    """
+    import shutil
+    n = 1
+    while os.path.exists(f"{export_path}_backup{n}"):
+        n += 1
+    target = f"{export_path}_backup{n}"
+    try:
+        shutil.move(export_path, target)
+        print(f"[OpenVINO] Parked stale export as {os.path.basename(target)} (kept, not deleted)")
+    except Exception as exc:
+        print(f"[OpenVINO] Notice parking stale export: {exc}")
+
+
 def resolve_openvino(pt_path, imgsz=640):
     """Resolves OpenVINO export format if supported, else returns PyTorch .pt path."""
     if not pt_path or not pt_path.endswith(".pt"):
@@ -1612,11 +1958,19 @@ def resolve_openvino(pt_path, imgsz=640):
         stem = os.path.splitext(os.path.basename(abs_pt))[0] + "_openvino_model"
         beside = os.path.join(os.path.dirname(abs_pt), stem)
         if os.path.isdir(beside):
-            print(f"[OpenVINO] Using cached model export: {beside}")
-            return beside
+            if _export_imgsz_matches(beside, imgsz):
+                print(f"[OpenVINO] Using cached model export: {beside} (imgsz={imgsz})")
+                return beside
+            print(
+                f"[OpenVINO] Cached export {os.path.basename(beside)} was NOT built for "
+                f"imgsz={imgsz}; rebuilding at the requested size."
+            )
+            _park_export(beside)
+
         print(f"[OpenVINO] Exporting {os.path.basename(abs_pt)} (imgsz={imgsz})...")
         YOLO(abs_pt).export(format="openvino", imgsz=imgsz)
         if os.path.isdir(beside):
+            _mark_export_imgsz(beside, imgsz)
             print(f"[OpenVINO] Export ready: {beside}")
             return beside
         cwd_copy = os.path.join(os.getcwd(), stem)
@@ -1624,6 +1978,7 @@ def resolve_openvino(pt_path, imgsz=640):
             if os.path.isdir(beside):
                 shutil.rmtree(beside)
             shutil.move(cwd_copy, beside)
+            _mark_export_imgsz(beside, imgsz)
             print(f"[OpenVINO] Export ready: {beside}")
             return beside
     except Exception as e:
@@ -1635,13 +1990,17 @@ def resolve_onnx(pt_path, imgsz=640):
     """Resolve an ONNX detector beside the .pt weights, exporting once if missing.
 
     DirectML needs an ONNX graph; PyTorch has no AMD GPU path on Windows.
+    The export is keyed by input size for the same reason as OpenVINO.
     """
     if not pt_path or not pt_path.endswith(".pt"):
         return pt_path
 
     onnx_path = os.path.splitext(pt_path)[0] + ".onnx"
     if os.path.exists(onnx_path):
-        return onnx_path
+        if _export_imgsz_matches(onnx_path, imgsz):
+            return onnx_path
+        print(f"[ONNX] Cached graph was NOT built for imgsz={imgsz}; rebuilding.")
+        _park_export(onnx_path)
 
     try:
         from ultralytics import YOLO
@@ -1651,11 +2010,148 @@ def resolve_onnx(pt_path, imgsz=640):
         )
         exported = str(exported)
         if os.path.exists(exported):
+            _mark_export_imgsz(exported, imgsz)
             print(f"[ONNX] Export ready: {exported}")
             return exported
     except Exception as e:
         print(f"[AI ENGINE] ONNX export notice ({e}); using native PyTorch .pt engine.")
     return pt_path
+
+
+class OpenVINOReIDEncoder:
+    """Appearance encoder on the Intel iGPU via OpenVINO.
+
+    Drop-in replacement for ultralytics' ReID: same (img, dets_xywh) signature
+    and the same RGB /255 / 224 bilinear preprocessing, so switching device
+    cannot change association behaviour. Used when POULTRYSENSE_REID_DEVICE=gpu.
+    """
+
+    def __init__(self, model_path, imgsz=224, device="GPU", batch_size=16):
+        import openvino as ov
+        import torch
+        from ultralytics.utils.ops import xywh2xyxy
+
+        self.imgsz = int(imgsz)
+        self.batch_size = int(batch_size)
+        self._xywh2xyxy = xywh2xyxy
+        self.device = device
+
+        core = ov.Core()
+        model = core.read_model(str(model_path))
+        try:
+            model.reshape([-1, 3, self.imgsz, self.imgsz])
+        except Exception:
+            pass
+        self.compiled = core.compile_model(model, device)
+        self.output = self.compiled.output(0)
+        print(f"[ReID] OpenVINO encoder ready on {device} (imgsz={self.imgsz})")
+
+    def __call__(self, img, dets):
+        import torch
+        import numpy as np
+        import cv2
+
+        dets = np.asarray(dets)
+        if dets.size == 0:
+            return []
+        boxes = dets[:, :4]
+        xyxy = self._xywh2xyxy(torch.from_numpy(boxes.astype(np.float32))).cpu()
+        h, w = img.shape[:2]
+
+        crops = []
+        keep = []
+        for b in xyxy:
+            x1, y1, x2, y2 = [float(v) for v in b.tolist()]
+            x1 = max(0, min(w - 1, int(round(x1))))
+            y1 = max(0, min(h - 1, int(round(y1))))
+            x2 = max(x1 + 1, min(w, int(round(x2))))
+            y2 = max(y1 + 1, min(h, int(round(y2))))
+            if x2 <= x1 or y2 <= y1:
+                keep.append(False)
+                crops.append(None)
+                continue
+            crop = img[y1:y2, x1:x2]
+            if crop.size == 0:
+                keep.append(False)
+                crops.append(None)
+                continue
+            keep.append(True)
+            crops.append(cv2.resize(crop, (self.imgsz, self.imgsz),
+                                    interpolation=cv2.INTER_LINEAR))
+
+        valid = [c for c, k in zip(crops, keep) if k]
+        if not valid:
+            return [None] * len(boxes)
+
+        batch = np.zeros((len(valid), 3, self.imgsz, self.imgsz), dtype=np.float32)
+        for i, c in enumerate(valid):
+            rgb = cv2.cvtColor(c, cv2.COLOR_BGR2RGB)
+            t = rgb.transpose(2, 0, 1).astype(np.float32) / 255.0
+            batch[i] = t
+
+        out = self.compiled(batch)[self.output]
+        out = np.asarray(out)
+        feats = iter(out)
+        result = []
+        for k in keep:
+            if k:
+                result.append(next(feats).astype(np.float32))
+            else:
+                result.append(None)
+        return result
+
+
+def install_reid_device(device, model_path=None):
+    """Point BoT-SORT's appearance encoder at the requested device.
+
+    Ultralytics builds the encoder with torch.device(...), which rejects
+    OpenVINO device strings, so the GPU path is installed by replacing the
+    build_encoder symbol that bot_sort.py already imported.
+    """
+    device = (device or "cpu").strip().lower()
+    if device in ("cpu", "torch", ""):
+        print("[ReID] Appearance encoder: CPU (PyTorch)")
+        return "cpu"
+
+    ov_device = "GPU.0" if device in ("gpu", "openvino") else device.upper()
+    try:
+        import openvino  # noqa: F401
+        from ultralytics.trackers import bot_sort
+    except Exception as exc:
+        print(f"[ReID] OpenVINO unavailable ({exc}); using CPU encoder.")
+        return "cpu"
+
+    resolved = model_path
+    if resolved is None:
+        resolved = os.path.join(SCRIPT_DIR, "yolo26n-reid.onnx")
+    if not os.path.exists(resolved):
+        # fall back to whatever ultralytics ships
+        try:
+            from ultralytics.utils.downloads import attempt_download_asset
+            resolved = attempt_download_asset("yolo26n-reid.onnx")
+        except Exception:
+            pass
+
+    original = getattr(bot_sort, "build_encoder", None)
+
+    def _factory(with_reid, model, _device=None):
+        if not with_reid:
+            return None
+        path = resolved if (model is None or str(model).endswith(".onnx") is False) else model
+        if not os.path.exists(str(path)):
+            path = resolved
+        try:
+            enc = OpenVINOReIDEncoder(path, imgsz=224, device=ov_device)
+            return enc
+        except Exception as exc:
+            print(f"[ReID] GPU encoder failed ({exc}); falling back to CPU.")
+            if original is not None:
+                return original(with_reid, model, "cpu")
+            return None
+
+    bot_sort.build_encoder = _factory
+    print(f"[ReID] Appearance encoder routed to OpenVINO {ov_device}")
+    return f"openvino:{ov_device}"
 
 
 def _crop_is_frozen(frame, box, raw_id):
@@ -1679,6 +2175,127 @@ def _crop_is_frozen(frame, box, raw_id):
         return bool(np.mean(np.abs(sig - prev)) < CHURN_EPS)
     except Exception:
         return False
+
+
+# --- Human / Face Veto (runs on its own thread) ---
+# Shared between the veto worker and the detection loop. Kept tiny and
+# copy-on-write: the worker replaces the lists, the loop reads them.
+veto_state_lock = threading.Lock()
+veto_state = {"person_boxes": [], "face_boxes": [], "updated_at": 0.0}
+PERSON_CONTAINMENT_THRESH = float(os.environ.get("POULTRYSENSE_PERSON_CONTAINMENT", "0.60"))
+FACE_CONTAINMENT_THRESH = float(os.environ.get("POULTRYSENSE_FACE_CONTAINMENT", "0.35"))
+
+
+def box_is_human(box, person_boxes, face_boxes,
+                 person_thresh=None, face_thresh=None):
+    """True when a "chicken" box is really a person or a face.
+
+    The old rule skipped the check entirely whenever the chicken box was larger
+    than 10% of the person box, so a big false box on a person's torso was never
+    vetoed. This compares containment in BOTH directions instead, so a box
+    covering a person (inter/person_area) is rejected just like a small box
+    sitting inside one (inter/chicken_area).
+    """
+    if person_thresh is None:
+        person_thresh = PERSON_CONTAINMENT_THRESH
+    if face_thresh is None:
+        face_thresh = FACE_CONTAINMENT_THRESH
+
+    bx1, by1, bx2, by2 = [float(v) for v in box[:4]]
+    chicken_area = max(1.0, (bx2 - bx1) * (by2 - by1))
+    bcx = (bx1 + bx2) / 2.0
+    bcy = (by1 + by2) / 2.0
+
+    for pbox in person_boxes or ():
+        px1, py1, px2, py2 = [float(v) for v in pbox[:4]]
+        person_area = max(1.0, (px2 - px1) * (py2 - py1))
+        ix1, iy1 = max(bx1, px1), max(by1, py1)
+        ix2, iy2 = min(bx2, px2), min(by2, py2)
+        if ix2 <= ix1 or iy2 <= iy1:
+            continue
+        inter = (ix2 - ix1) * (iy2 - iy1)
+        if (inter / chicken_area) >= person_thresh:
+            return True
+        if (inter / person_area) >= person_thresh:
+            return True
+
+    for fbox in face_boxes or ():
+        fx1, fy1, fx2, fy2 = [float(v) for v in fbox[:4]]
+        ix1, iy1 = max(bx1, fx1), max(by1, fy1)
+        ix2, iy2 = min(bx2, fx2), min(by2, fy2)
+        if ix2 > ix1 and iy2 > iy1:
+            inter = (ix2 - ix1) * (iy2 - iy1)
+            if (inter / chicken_area) >= face_thresh:
+                return True
+        # A face is small, so "centre inside" is a safe signal here.
+        if fx1 <= bcx <= fx2 and fy1 <= bcy <= fy2:
+            return True
+
+    return False
+
+
+def veto_worker(frame_source, stop_event, person_model=None, face_detector=None):
+    """Detect people and faces off the detection thread.
+
+    Runs at VETO_HZ against a downscaled copy so a CPU person/face model never
+    delays a bounding box. Results are published to ``veto_state``.
+    """
+    interval = 1.0 / max(0.5, VETO_HZ)
+    last_generation = 0
+    print(
+        f"[INFO] Human/Face veto worker started at {VETO_HZ:.1f} Hz "
+        f"(person={'on' if person_model else 'off'}, face={'on' if face_detector else 'off'})"
+    )
+
+    while not stop_event.is_set():
+        frame, generation = frame_source.wait_for_newer(last_generation, timeout=0.5)
+        if frame is None:
+            continue
+        last_generation = generation
+
+        h, w = frame.shape[:2]
+        scale = min(1.0, 480.0 / max(1.0, float(w)))
+        if scale < 1.0:
+            small = cv2.resize(frame, (int(w * scale), int(h * scale)),
+                               interpolation=cv2.INTER_AREA)
+        else:
+            small = frame
+
+        person_boxes = []
+        face_boxes = []
+
+        if person_model is not None:
+            try:
+                p_res = person_model.predict(
+                    source=small, classes=[0], conf=0.30, imgsz=384, verbose=False
+                )[0]
+                if p_res.boxes is not None and len(p_res.boxes) > 0:
+                    raw = p_res.boxes.xyxy.cpu().numpy()
+                    person_boxes = (raw / max(scale, 1e-6)).tolist()
+            except Exception:
+                pass
+
+        if face_detector is not None:
+            try:
+                f_res = face_detector.process(cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+                if f_res.detections:
+                    for det in f_res.detections:
+                        rb = det.location_data.relative_bounding_box
+                        face_boxes.append([
+                            max(0.0, rb.xmin) * w,
+                            max(0.0, rb.ymin) * h,
+                            min(1.0, rb.xmin + rb.width) * w,
+                            min(1.0, rb.ymin + rb.height) * h,
+                        ])
+            except Exception:
+                pass
+
+        with veto_state_lock:
+            veto_state["person_boxes"] = person_boxes
+            veto_state["face_boxes"] = face_boxes
+            veto_state["updated_at"] = time.time()
+
+        time.sleep(interval)
 
 
 # --- Persistent Chicken ID Allocator with Motion-Predictive Spatial Re-Identification ---
@@ -1705,6 +2322,7 @@ def purge_display_id_data(disp_id):
     track_stationary_duration.pop(disp_id, None)
     track_histories.pop(disp_id, None)
     track_motion_windows.pop(disp_id, None)
+    track_last_hist_time.pop(disp_id, None)
     track_classifications.pop(disp_id, None)
     track_velocities.pop(disp_id, None)
     display_id_last_positions.pop(disp_id, None)
@@ -1740,6 +2358,7 @@ def reset_all_tracking_state():
     track_classifications.clear()
     track_last_positions.clear()
     track_motion_windows.clear()
+    track_last_hist_time.clear()
     inactive_tracks.clear()
     track_velocities.clear()
     display_id_last_positions.clear()
@@ -2620,6 +3239,7 @@ def stream_publisher(cam, frame_buffer, stop_event):
     min_encode_interval = 1.0 / max(1.0, STREAM_MAX_FPS)
     last_encode = 0.0
     last_cam_generation = 0
+    last_cam_info = 0.0
 
     while not stop_event.is_set():
         ret, frame, last_cam_generation = cam.read_newer(
@@ -2658,6 +3278,12 @@ def stream_publisher(cam, frame_buffer, stop_event):
             latest_status["active"] = True
             latest_status["fps"] = round(smooth_fps, 1)
             latest_status["stream_fps"] = round(smooth_fps, 1)
+            # Surface the negotiated camera mode and reader health ~1 Hz so a
+            # silent MJPG/buffer downgrade is visible in /status instead of
+            # only in the startup log.
+            if now - last_cam_info >= 1.0:
+                last_cam_info = now
+                latest_status["camera"] = cam.info()
 
 
 # --- Main Inference & Camera Loop ---
@@ -2675,6 +3301,8 @@ def camera_loop():
     behavior_model = None
     health_model = None
     chicken_classes = [0]
+    person_model = None
+    face_detector = None
 
     if HAS_YOLO:
         # 1. Chicken Detection Model
@@ -2696,9 +3324,10 @@ def camera_loop():
 
                 print("[INFO] YOLO Detection Model loaded successfully!")
 
-                # Determine strict chicken class ID(s)
+                # Determine strict chicken class ID(s). Avoid touching .names on
+                # OpenVINO exports: it triggers a ~25s lazy weight load.
                 found_classes = []
-                if hasattr(det_model, 'names') and det_model.names:
+                if model_format != "openvino" and hasattr(det_model, 'names') and det_model.names:
                     for cid, cname in det_model.names.items():
                         name_str = str(cname).lower()
                         if any(k in name_str for k in ["chicken", "poultry", "hen", "rooster", "bird"]):
@@ -2712,8 +3341,10 @@ def camera_loop():
 
                 if found_classes:
                     chicken_classes = found_classes
+                else:
+                    chicken_classes = [0]
 
-                class_labels = [det_model.names.get(c, 'chicken') for c in chicken_classes]
+                class_labels = [str(c) for c in chicken_classes]
                 print(f"[INFO] STRICT CHICKEN FILTER: Tracking only class IDs {chicken_classes} -> {class_labels}")
             except Exception as e:
                 print(f"[WARN] Failed to load Detection Model: {e}")
@@ -2735,11 +3366,33 @@ def camera_loop():
         except Exception as ex_p:
             print(f"[WARN] Human Veto Filter initialization warning: {ex_p}")
 
+        # Face detector (MediaPipe) for the human/face veto, off the detection thread.
+        try:
+            import mediapipe as mp
+            face_detector = mp.solutions.face_detection.FaceDetection(
+                model_selection=1, min_detection_confidence=0.5
+            )
+            print("[INFO] MediaPipe face veto active")
+        except Exception as ex_fd:
+            print(f"[WARN] MediaPipe face veto unavailable: {ex_fd}")
+
+        # Pin the device once so Ultralytics does not rebuild the predictor (and
+        # recompile OpenVINO) on every track() call, and warm it up.
+        if det_model is not None:
+            try:
+                det_model.overrides["device"] = exec_device
+                import numpy as _np
+                _dummy = _np.zeros((640, 640, 3), dtype=_np.uint8)
+                det_model.predict(source=_dummy, imgsz=640, verbose=False)
+                print(f"[INFO] Detector pinned to device={exec_device} and warmed up")
+            except Exception as ex_wu:
+                print(f"[WARN] Detector warm-up notice: {ex_wu}")
+
         # 2. Behavior Classification Model
         beh_path = get_model_path(BEHAVIOR_MODELS)
         if beh_path:
             try:
-                resolved_beh = resolve_accelerated_model(beh_path, imgsz=224)
+                resolved_beh = resolve_accelerated_model(beh_path, imgsz=CLASSIFIER_IMGSZ)
                 print(f"[INFO] Loading Behavior Model from: {resolved_beh}")
                 try:
                     behavior_model = YOLO(resolved_beh, task='classify')
@@ -2754,7 +3407,7 @@ def camera_loop():
         hlth_path = get_model_path(HEALTH_MODELS)
         if hlth_path:
             try:
-                resolved_hlth = resolve_accelerated_model(hlth_path, imgsz=224)
+                resolved_hlth = resolve_accelerated_model(hlth_path, imgsz=HEALTH_CLASSIFIER_IMGSZ)
                 print(f"[INFO] Loading Health Classifier Model from: {resolved_hlth}")
                 try:
                     health_model = YOLO(resolved_hlth, task='classify')
@@ -2769,11 +3422,15 @@ def camera_loop():
         if behavior_model is not None or health_model is not None:
             c_thread = threading.Thread(
                 target=classification_worker,
-                args=(behavior_model, health_model),
+                args=(behavior_model, health_model, CLASSIFIER_IMGSZ, HEALTH_CLASSIFIER_IMGSZ),
                 daemon=True
             )
             c_thread.start()
             print("[INFO] Background AI Health & Behavior Worker started on dedicated core.")
+
+        # Route the BoT-SORT appearance (ReID) encoder to the requested device.
+        reid_status = install_reid_device(REID_DEVICE)
+        print(f"[INFO] ReID device: {reid_status}")
 
     # Initialize Threaded Camera Capture (external USB camera, index 1)
     cam = ThreadedCamera(EXTERNAL_CAMERA_INDEX)
@@ -2797,6 +3454,17 @@ def camera_loop():
         f"[INFO] Clean stream publisher started at camera FPS "
         f"(detection capped at {DETECTION_MAX_RATE_HZ:.1f}/s, conf={DETECTION_CONF:.2f})"
     )
+
+    # Human/face veto runs on its own thread at VETO_HZ against a downscaled copy.
+    veto_stop = threading.Event()
+    veto_thread = None
+    if person_model is not None or face_detector is not None:
+        veto_thread = threading.Thread(
+            target=veto_worker,
+            args=(frame_buffer, veto_stop, person_model, face_detector),
+            daemon=True,
+        )
+        veto_thread.start()
 
     rate_gate = RateGate(DETECTION_MAX_RATE_HZ)
     # Keep tracks alive for ~1.5 seconds of wall-clock time so brief dropout doesn't flicker,
@@ -2841,19 +3509,11 @@ def camera_loop():
             else 0.8 * smooth_det_fps + 0.2 * inst_det_fps
         )
 
-        # Human / Person Veto: checked periodically every 4 frames (or if a person was recently in frame)
-        # to avoid burning 15ms CPU on every single frame.
-        _person_check_counter += 1
-        if person_model is not None and (_person_check_counter % 4 == 0 or len(cached_person_boxes) > 0):
-            try:
-                p_res = person_model.predict(source=frame, classes=[0], conf=0.30, imgsz=384, verbose=False)[0]
-                if p_res.boxes is not None and len(p_res.boxes) > 0:
-                    cached_person_boxes = p_res.boxes.xyxy.cpu().numpy()
-                else:
-                    cached_person_boxes = []
-            except Exception:
-                pass
-        person_boxes = cached_person_boxes
+        # Human / face veto comes from a dedicated thread running at VETO_HZ, so it
+        # never delays a bounding box. Copy the shared lists (cheap) and use them.
+        with veto_state_lock:
+            person_boxes = list(veto_state.get("person_boxes", []))
+            face_boxes = list(veto_state.get("face_boxes", []))
 
         display_items = cached_display_items
         if det_model is not None:
@@ -2867,6 +3527,9 @@ def camera_loop():
             lowconf_dropped = 0
             frozen_dropped = 0
             unconfirmed_dropped = 0
+            detection_error = None
+            tracking_unavailable = False
+            min_box_side = max(MIN_BOX_PX_FLOOR, int(round(MIN_BOX_FRACTION * w_frame)))
 
             try:
                 tracker_cfg = TRACKER_YAML if os.path.exists(TRACKER_YAML) else "botsort.yaml"
@@ -2875,78 +3538,63 @@ def camera_loop():
                     persist=True,
                     tracker=tracker_cfg,
                     classes=chicken_classes,
-                    conf=DETECTION_CONF,  # Native confidence: sensitive to all chickens while person veto rejects humans
+                    conf=DETECTOR_CONF,  # Low: lets BoT-SORT's 2nd association stage keep fast/blurry chickens
                     iou=0.50,
-                    imgsz=640,          # Full native 640px resolution — guarantees 100% accuracy & small chicken recall
+                    imgsz=640,
                     max_det=20,
-                    device=exec_device,
                     verbose=False
                 )[0]
 
                 boxes = results.boxes
                 det_boxes = 0 if boxes is None else len(boxes)
                 tracked_boxes = 0
-                if boxes is not None and len(boxes) > 0 and boxes.id is not None:
-                    tracked_boxes = len(boxes.id)
-                    xyxys = boxes.xyxy.cpu().numpy()
-                    confs = boxes.conf.cpu().numpy()
-                    ids = boxes.id.cpu().numpy()
-                    cls_ids = boxes.cls.cpu().numpy() if boxes.cls is not None else np.zeros(len(xyxys))
+                if boxes is not None and len(boxes) > 0:
+                    if boxes.id is None:
+                        # Transient: tracker has detections but no IDs (reset / first
+                        # frame). Keep the last good boxes instead of blanking.
+                        tracking_unavailable = True
+                    else:
+                        tracked_boxes = len(boxes.id)
+                        xyxys = boxes.xyxy.cpu().numpy()
+                        confs = boxes.conf.cpu().numpy()
+                        ids = boxes.id.cpu().numpy()
+                        cls_ids = boxes.cls.cpu().numpy() if boxes.cls is not None else np.zeros(len(xyxys))
 
-                    for box, conf, raw_id, c_id in zip(xyxys, confs, ids, cls_ids):
-                        if int(c_id) not in chicken_classes:
-                            continue
-                        raw_seen += 1
-
-                        # 1. Human / Person Veto: reject only hand-sized blobs that sit
-                        # deep inside a person box. A real chicken — or a printed photo
-                        # held up for the camera — is large relative to the body and must
-                        # survive; the old rule vetoed anything whose centre fell inside
-                        # the person box, which deleted held-up photos and nearby birds.
-                        bx1, by1, bx2, by2 = box
-                        bcx = (bx1 + bx2) / 2.0
-                        bcy = (by1 + by2) / 2.0
-                        is_human = False
-                        chicken_area = max(1.0, (bx2 - bx1) * (by2 - by1))
-                        for pbox in person_boxes:
-                            px1, py1, px2, py2 = pbox
-                            person_area = max(1.0, (px2 - px1) * (py2 - py1))
-                            if chicken_area > 0.10 * person_area:
+                        for box, conf, raw_id, c_id in zip(xyxys, confs, ids, cls_ids):
+                            if int(c_id) not in chicken_classes:
                                 continue
-                            if not (px1 <= bcx <= px2 and py1 <= bcy <= py2):
+                            raw_seen += 1
+
+                            # Human / face veto: reject boxes that are really a
+                            # person or a face (see box_is_human).
+                            if box_is_human(box, person_boxes, face_boxes):
+                                person_vetoed += 1
                                 continue
-                            ix1 = max(bx1, px1)
-                            iy1 = max(by1, py1)
-                            ix2 = min(bx2, px2)
-                            iy2 = min(by2, py2)
-                            if ix2 > ix1 and iy2 > iy1:
-                                inter_area = (ix2 - ix1) * (iy2 - iy1)
-                                if (inter_area / chicken_area) > 0.60:
-                                    is_human = True
-                                    break
-                        if is_human:
-                            person_vetoed += 1
-                            continue
 
-                        # 2. Minimum Box Dimensions & Plump Aspect Ratio Filter (rejects fingers, cords, and specks)
-                        box_w = abs(bx2 - bx1)
-                        box_h = abs(by2 - by1)
-                        aspect = box_w / max(1.0, box_h)
-                        if box_w < 45 or box_h < 45 or aspect < 0.28 or aspect > 3.2:
-                            size_dropped += 1
-                            continue
+                            # Minimum Box Dimensions (resolution-relative) + aspect
+                            box_w = abs(box[2] - box[0])
+                            box_h = abs(box[3] - box[1])
+                            aspect = box_w / max(1.0, box_h)
+                            if box_w < min_box_side or box_h < min_box_side or aspect < 0.28 or aspect > 3.2:
+                                size_dropped += 1
+                                continue
 
-                        raw_boxes.append(box)
-                        raw_confs.append(float(conf))
-                        active_raw_ids.append(int(raw_id))
-            except Exception:
-                pass
-
-            cleanup_stale_ids(active_raw_ids, max_missed=max_missed_detections)
+                            raw_boxes.append(box)
+                            raw_confs.append(float(conf))
+                            active_raw_ids.append(int(raw_id))
+            except Exception as det_ex:
+                detection_error = f"{type(det_ex).__name__}: {det_ex}"
+                print(f"[DETECTION] Exception: {detection_error}")
+                tracking_unavailable = True
 
             # Collect display items (both active detections and motion-extrapolated coasting tracks)
-            display_items = []
-            seen_display_ids = set()
+            if tracking_unavailable:
+                display_items = cached_display_items
+            else:
+                cleanup_stale_ids(active_raw_ids, max_missed=max_missed_detections)
+
+                display_items = []
+                seen_display_ids = set()
 
             for box, conf, raw_id in zip(raw_boxes, raw_confs, active_raw_ids):
                 cx = (box[0] + box[2]) / 2.0
@@ -2960,33 +3608,22 @@ def camera_loop():
 
                 # 2. Debounce & Frozen Crop Check (filters out hands, furniture, and room artifacts)
                 if raw_id not in track_confirmed_raw_ids:
-                    if conf >= 0.38:
-                        if _crop_is_frozen(frame, box, raw_id):
-                            track_frozen_streaks[raw_id] += 1
-                            if track_frozen_streaks[raw_id] >= CHURN_MAX_FROZEN:
-                                frozen_dropped += 1
-                                continue
-                        else:
-                            track_frozen_streaks[raw_id] = 0
-                        track_hit_streaks[raw_id] += 1
-                        required_hits = 1  # Immediate 1st-frame appearance — zero confirmation lag
-                        if track_hit_streaks[raw_id] >= required_hits:
-                            track_confirmed_raw_ids.add(raw_id)
-                        else:
-                            unconfirmed_dropped += 1
+                    if _crop_is_frozen(frame, box, raw_id):
+                        track_frozen_streaks[raw_id] += 1
+                        if track_frozen_streaks[raw_id] >= CHURN_MAX_FROZEN:
+                            frozen_dropped += 1
                             continue
                     else:
-                        lowconf_dropped += 1
+                        track_frozen_streaks[raw_id] = 0
+                    track_hit_streaks[raw_id] += 1
+                    required_hits = 1  # Immediate 1st-frame appearance — zero confirmation lag
+                    if track_hit_streaks[raw_id] >= required_hits:
+                        track_confirmed_raw_ids.add(raw_id)
+                    else:
+                        unconfirmed_dropped += 1
                         continue
 
-                # 3. High-responsiveness box tracking (95% current detection for immediate tracking)
-                if display_id in display_coasting_boxes:
-                    prev_box = display_coasting_boxes[display_id]["box"]
-                    alpha = 0.95  # Near-instantaneous response for fast-moving chickens
-                    box = alpha * box + (1.0 - alpha) * prev_box
-                    cx = (box[0] + box[2]) / 2.0
-                    cy = (box[1] + box[3]) / 2.0
-
+                # 3. Box tracking: no smoothing — draw the detector's box as-is.
                 seen_display_ids.add(display_id)
                 display_coasting_boxes[display_id] = {
                     "box": box,
@@ -3007,37 +3644,38 @@ def camera_loop():
                 })
 
             # Anti-blink motion coasting: hold confirmed tracks for up to 2 missed frames (~66ms)
-            for disp_id in list(display_coasting_boxes.keys()):
-                if disp_id not in seen_display_ids:
-                    c_info = display_coasting_boxes[disp_id]
-                    c_info["missed"] += 1
-                    if c_info["missed"] <= COAST_MAX_FRAMES:
-                        vx, vy = track_velocities.get(disp_id, (0.0, 0.0))
-                        # Extrapolate box position along running velocity vector
-                        shift_x = float(vx * dt)
-                        shift_y = float(vy * dt)
-                        old_box = c_info["box"]
-                        new_box = np.array([
-                            max(0.0, float(old_box[0] + shift_x)),
-                            max(0.0, float(old_box[1] + shift_y)),
-                            min(float(w_frame), float(old_box[2] + shift_x)),
-                            min(float(h_frame), float(old_box[3] + shift_y))
-                        ], dtype=np.float32)
+            if not tracking_unavailable:
+                for disp_id in list(display_coasting_boxes.keys()):
+                        if disp_id not in seen_display_ids:
+                            c_info = display_coasting_boxes[disp_id]
+                            c_info["missed"] += 1
+                            if c_info["missed"] <= COAST_MAX_FRAMES:
+                                vx, vy = track_velocities.get(disp_id, (0.0, 0.0))
+                                # Extrapolate box position along running velocity vector
+                                shift_x = float(vx * dt)
+                                shift_y = float(vy * dt)
+                                old_box = c_info["box"]
+                                new_box = np.array([
+                                    max(0.0, float(old_box[0] + shift_x)),
+                                    max(0.0, float(old_box[1] + shift_y)),
+                                    min(float(w_frame), float(old_box[2] + shift_x)),
+                                    min(float(h_frame), float(old_box[3] + shift_y))
+                                ], dtype=np.float32)
 
-                        c_info["box"] = new_box
-                        c_info["cx"] += shift_x
-                        c_info["cy"] += shift_y
-                        display_items.append({
-                            "display_id": disp_id,
-                            "box": new_box,
-                            "conf": c_info["conf"],
-                            "raw_id": c_info["raw_id"],
-                            "cx": c_info["cx"],
-                            "cy": c_info["cy"],
-                            "is_coasting": True
-                        })
-                    else:
-                        del display_coasting_boxes[disp_id]
+                                c_info["box"] = new_box
+                                c_info["cx"] += shift_x
+                                c_info["cy"] += shift_y
+                                display_items.append({
+                                    "display_id": disp_id,
+                                    "box": new_box,
+                                    "conf": c_info["conf"],
+                                    "raw_id": c_info["raw_id"],
+                                    "cx": c_info["cx"],
+                                    "cy": c_info["cy"],
+                                    "is_coasting": True
+                                })
+                            else:
+                                del display_coasting_boxes[disp_id]
 
             cached_display_items = display_items
 
@@ -3107,11 +3745,14 @@ def camera_loop():
                 motion = 0.0
             else:
                 motion = 0.0
+                last_hist_t = track_last_hist_time.get(display_id)
+                motion_dt = dt if last_hist_t is None else max(1e-3, min(2.0, curr_time - last_hist_t))
                 if len(hist) > 0:
                     prev_c = hist[-1]
                     delta_px = float(np.hypot(cx - prev_c[0], cy - prev_c[1]))
-                    motion = normalize_motion(delta_px, dt)
+                    motion = normalize_motion(delta_px, motion_dt)
                 hist.append((int(cx), int(cy)))
+                track_last_hist_time[display_id] = curr_time
 
             # Record rolling temporal motion history
             track_motion_windows[display_id].append(motion)
@@ -3134,7 +3775,7 @@ def camera_loop():
             # Read non-blocking classification from background worker thread (0ms latency on video!)
             with classification_lock:
                 cached = track_classifications.get(display_id)
-                if cached:
+                if cached and (curr_time - cached.get("time", 0)) <= CLASSIFICATION_MAX_AGE_SEC:
                     behavior_label = cached.get("behavior", "stand")
                     unhealthy_prob = cached.get("unhealthy_prob", 0.0)
                     last_time = cached.get("time", 0)
@@ -3143,20 +3784,28 @@ def camera_loop():
                     unhealthy_prob = 0.0
                     last_time = 0
 
-            # Queue crop to background worker if expired (>1.5s old) without blocking video stream
-            if not is_coasting and (curr_time - last_time > 1.5) and not classification_queue.full():
-                if crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
+            # Queue crop to background worker if expired (>1.5s old) without blocking video stream.
+            # Drop the oldest item instead of skipping when the queue is full, so a
+            # busy worker never starves a bird of classification forever.
+            if not is_coasting and (curr_time - last_time > 1.5) and crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
+                try:
+                    classification_queue.put_nowait((display_id, crop.copy()))
+                except queue.Full:
+                    try:
+                        classification_queue.get_nowait()
+                    except Exception:
+                        pass
                     try:
                         classification_queue.put_nowait((display_id, crop.copy()))
                     except Exception:
                         pass
+                except Exception:
+                    pass
 
             # Real-time Motion fusion heuristic:
             # Active locomotion / foraging requires optical motion. A motionless chicken cannot be walking or pecking.
             if motion > 4.5:
                 behavior_label = "walk"
-            elif motion > 2.2 and behavior_label == "peck":
-                behavior_label = "peck"
             elif motion < 1.6:
                 # Chicken is motionless / stationary on the litter
                 if unhealthy_prob >= 0.45:
@@ -3533,6 +4182,8 @@ def camera_loop():
                 "alerts": gemini_escalator.get_active_alerts()
             })
 
+    if veto_thread is not None:
+        veto_stop.set()
     stream_stop.set()
     cam.release()
 
