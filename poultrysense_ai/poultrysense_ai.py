@@ -141,6 +141,7 @@ DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "25.0"))
 # drops everything below this before the tracker runs, so raising it silently
 # disables track_low_thresh.
 # DETECTION_CONF is what may create a new track or a new box on screen.
+DETECTOR_CONF = float(os.environ.get("POULTRYSENSE_DETECTOR_CONF", "0.15"))
 DETECTOR_IMGSZ = int(os.environ.get("POULTRYSENSE_DETECTOR_IMGSZ", "640"))
 DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.45"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
@@ -585,6 +586,7 @@ def sync_verdict_to_firebase(verdict_obj):
 
 # Backward compatibility alias
 sync_alert_to_firebase = sync_verdict_to_firebase
+
 
 _last_live_alert_sync = {}
 def sync_live_alert_debounced(cid, payload):
