@@ -141,7 +141,7 @@ DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "25.0"))
 # drops everything below this before the tracker runs, so raising it silently
 # disables track_low_thresh.
 # DETECTION_CONF is what may create a new track or a new box on screen.
-DETECTOR_CONF = float(os.environ.get("POULTRYSENSE_DETECTOR_CONF", "0.15"))
+DETECTOR_IMGSZ = int(os.environ.get("POULTRYSENSE_DETECTOR_IMGSZ", "640"))
 DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.45"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
@@ -597,9 +597,10 @@ def sync_live_alert_debounced(cid, payload):
             sync_verdict_to_firebase(payload)
         threading.Thread(target=_bg, daemon=True).start()
 
-TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", "botsort.yaml")
+TRACKER_NAME = os.environ.get("POULTRYSENSE_TRACKER", "botsort").strip().lower()
+TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", TRACKER_NAME + ".yaml")
 if not os.path.exists(TRACKER_YAML):
-    TRACKER_YAML = "botsort.yaml"
+    TRACKER_YAML = os.path.join(SCRIPT_DIR, "pipeline", "botsort.yaml")
 
 DET_MODELS = [
     os.path.join(MODELS_DIR, "PoultrySense_ChickenDet_v5_26n.pt"),
@@ -3310,9 +3311,9 @@ def camera_loop():
         if det_path:
             try:
                 if model_format == "onnx":
-                    resolved_det = resolve_onnx(det_path, imgsz=640)
+                    resolved_det = resolve_onnx(det_path, imgsz=DETECTOR_IMGSZ)
                 elif model_format == "openvino":
-                    resolved_det = resolve_accelerated_model(det_path, imgsz=640)
+                    resolved_det = resolve_accelerated_model(det_path, imgsz=DETECTOR_IMGSZ)
                 else:
                     resolved_det = det_path
                 print(f"[INFO] Loading Detection Model from: {resolved_det}")
@@ -3540,8 +3541,9 @@ def camera_loop():
                     classes=chicken_classes,
                     conf=DETECTOR_CONF,  # Low: lets BoT-SORT's 2nd association stage keep fast/blurry chickens
                     iou=0.50,
-                    imgsz=640,
+                    imgsz=DETECTOR_IMGSZ,
                     max_det=20,
+                    device=exec_device,
                     verbose=False
                 )[0]
 
