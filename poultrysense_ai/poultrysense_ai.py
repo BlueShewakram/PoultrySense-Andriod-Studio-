@@ -1023,10 +1023,16 @@ class GeminiVerdictEngine:
         self.active_alerts = {}         # track_id -> alert dict (for /alerts endpoint)
         self.chicken_summaries = {}     # track_id -> 1-sentence reason (backwards compat)
         self.model_name = "gemini-3.6-flash"
-        self._query_in_progress = False
         self.api_key = self._find_api_key()
         self.client = None
         self._init_client()
+
+        # Sequential verdict queue: one Gemini query at a time, no main-loop blocking,
+        # no artificial 20 s gap, no global _query_in_progress flag. Every flagged
+        # bird gets checked in order; per-bird 15-min cooldown still prevents dupes.
+        self._verdict_queue = queue.Queue()
+        self._worker_thread = threading.Thread(target=self._verdict_queue_worker, daemon=True)
+        self._worker_thread.start()
 
     def _find_api_key(self):
         global GLOBAL_ALERT_COOLDOWN_SEC
@@ -1096,34 +1102,47 @@ class GeminiVerdictEngine:
         if is_track_cooldown_active(track_id, curr_time):
             return
 
-        # 2. Short system-wide gap between Gemini calls
-        if is_global_cooldown_active(curr_time):
-            return
+        # 2. Stamp this bird's window now, so the cooldown starts when we ask,
+        #    not when Gemini answers.
+        record_track_alert(track_id, curr_time)
 
-        # 3. Prevent concurrent queries
-        if self._query_in_progress:
-            return
-
-        self._query_in_progress = True
-
-        # Save temporary snapshot of flagged chicken
+        # Save temporary snapshot of flagged chicken (per-bird filename to avoid
+        # races when multiple birds are queued).
         if snapshot_path is None:
-            snapshot_path = os.path.join(SCRIPT_DIR, "flagged_chicken.jpg")
+            snapshot_path = os.path.join(SCRIPT_DIR, f"flagged_chicken_{track_id}.jpg")
         if crop is not None and crop.size > 0:
             try:
                 cv2.imwrite(snapshot_path, crop)
             except Exception as ex_save:
                 print(f"[Vision Engine] Notice saving flagged snapshot: {ex_save}")
 
-        # Stamp this bird's window now, so the cooldown starts when we ask,
-        # not when Gemini answers.
-        record_track_alert(track_id, curr_time)
+        # 3. Enqueue for the sequential background worker (non-blocking).
+        self._verdict_queue.put((
+            track_id, stats, baseline, anomaly_info, snapshot_path,
+            curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label
+        ))
 
-        threading.Thread(
-            target=self._verdict_worker,
-            args=(track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label),
-            daemon=True
-        ).start()
+    def _verdict_queue_worker(self):
+        """Single background worker: drains the verdict queue sequentially so every
+        flagged bird gets checked without blocking the detection loop."""
+        while True:
+            try:
+                item = self._verdict_queue.get(timeout=1.0)
+            except Exception:
+                continue
+            try:
+                (track_id, stats, baseline, anomaly_info, snapshot_path,
+                 curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label) = item
+                self._verdict_worker(
+                    track_id, stats, baseline, anomaly_info, snapshot_path,
+                    curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label
+                )
+            except Exception as ex:
+                print(f"[Gemini] Verdict worker error: {ex}")
+            finally:
+                self._verdict_queue.task_done()
+            # small polite gap between Gemini calls
+            time.sleep(1.0)
 
     def _verdict_worker(self, track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags=None, behavior_label="stand"):
         """
@@ -1317,7 +1336,7 @@ class GeminiVerdictEngine:
             #    starts at request time rather than at response time.
 
         finally:
-            self._query_in_progress = False
+            pass
 
     def get_verdict(self, track_id):
         """Returns the latest Gemini verdict for a chicken, or None if not yet evaluated."""
