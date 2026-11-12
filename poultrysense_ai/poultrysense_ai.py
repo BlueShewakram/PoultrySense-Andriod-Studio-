@@ -35,7 +35,7 @@ if sys.platform.startswith('win'):
     except Exception:
         pass
 
-from collections import defaultdict, deque
+from collections import defaultdict, deque, Counter
 
 # --- 1. Import Requests & Google Gemini ---
 try:
@@ -61,7 +61,7 @@ except ImportError:
 if HAS_PYDANTIC:
     class ChickenDiagnosticVerdict(BaseModel):
         severity: Literal["Low", "Medium", "High", "Critical"] = Field(
-            description="Diagnostic severity rating: Low, Medium, High, or Critical."
+            description="Diagnostic severity rating: 'Low' (healthy, alert, normal resting/standing, no signs of disease or stress), 'Medium' (mild watch/mild environmental discomfort), 'High' (noticeable lethargy/illness), 'Critical' (severe emergency, collapse, moribund)."
         )
         reason: str = Field(
             description="Diagnostic explanation based on visual posture, plumage, comb, duration, and climate telemetry."
@@ -643,11 +643,11 @@ BEHAVIOR_NAMES = {0: "peck", 1: "stand", 2: "walk"}
 # Human-readable posture wording sent to Gemini. "rest" is assigned by the
 # motion heuristic when a bird has been still for 15 s or more.
 POSTURE_LABELS = {
-    "peck": "Feeding / pecking",
-    "stand": "Standing",
-    "walk": "Walking",
-    "rest": "Resting / recumbent",
-    "recumbent": "Recumbent / down / unable to stand",
+    "peck": "Feeding / pecking at ground",
+    "stand": "Standing upright (alert, looking at surroundings)",
+    "walk": "Walking (locomotion across pen)",
+    "rest": "Resting calmly / sleeping with eyes closed",
+    "recumbent": "Recumbent / down on ground / unable to stand",
 }
 HEALTH_NAMES = {0: "Healthy", 1: "Unhealthy"}
 
@@ -699,17 +699,21 @@ track_confirmed_raw_ids = set()             # set of raw_ids confirmed (debounce
 display_coasting_boxes = {}                 # display_id -> last known bbox & metadata for anti-blink coasting
 track_crop_sig = {}                         # raw_id -> last 16x16 gray crop signature (static-phantom gate)
 track_frozen_streaks = defaultdict(int)     # raw_id -> consecutive pixel-identical observations
+track_appearance_profiles = {}              # display_id -> biometric visual profile (lum, sat, aspect, area, tex)
+track_behavior_smoothers = {}               # display_id -> TemporalBehaviorFilter instance (hysteresis & smoothing)
 
 # Pixel-churn gate tuning: mean-abs-diff (/255) below CHURN_EPS counts as frozen;
 # CHURN_MAX_FROZEN consecutive frozen observations veto a confirmation hit.
 # Four consecutive frozen observations instead of two: a genuinely still
 # chicken (resting, dust-bathing, broody) must not be mistaken for a frozen poster.
 CHURN_EPS = 2.0
-CHURN_MAX_FROZEN = 4
-# Hold the last known box for ~0.4 s of missed detections so a brief detector
-# dropout does not blank a chicken's box. Time-based, so changing the detection
-# rate does not silently shorten it. The box is frozen, never extrapolated.
-COAST_MAX_FRAMES = max(3, int(round(0.4 * DETECTION_MAX_RATE_HZ)))
+CHURN_MAX_FROZEN = 2
+# Hold the last known box for at most 2 missed frames (~0.08 s) so a brief detector
+# dropout does not blank a chicken's box, while preventing ghost/stuck boxes when running.
+COAST_MAX_FRAMES = int(os.environ.get("POULTRYSENSE_COAST_MAX_FRAMES", "2"))
+# Coasting stops extrapolating after this many frames and holds position, so a
+# stale velocity cannot fling the box across the frame.
+COAST_EXTRAPOLATE_FRAMES = max(2, int(round(0.2 * DETECTION_MAX_RATE_HZ)))
 # Minimum box side as a fraction of frame width. Resolution-independent: 45 px
 # on 640 px wide, 90 px on 1280 px, instead of a fixed 45 px everywhere.
 MIN_BOX_FRACTION = float(os.environ.get("POULTRYSENSE_MIN_BOX_FRACTION", "0.07"))
@@ -722,9 +726,8 @@ HEALTH_CLASSIFICATION_MAX_AGE_SEC = float(os.environ.get("POULTRYSENSE_HEALTH_CL
 CLASSIFIER_IMGSZ = int(os.environ.get("POULTRYSENSE_CLASSIFIER_IMGSZ", "224"))
 # Health classifier is trained/exported/inferred at 320 per project spec.
 HEALTH_CLASSIFIER_IMGSZ = int(os.environ.get("POULTRYSENSE_HEALTH_CLASSIFIER_IMGSZ", "320"))
-# Human/face veto cadence. This is a secondary safety model, so keep it low
-# enough that it does not compete with the chicken detector.
-VETO_HZ = float(os.environ.get("POULTRYSENSE_VETO_HZ", "2"))
+# Human/face veto cadence. Runs on its own thread; 2 Hz preserves CPU for real-time chicken tracking.
+VETO_HZ = float(os.environ.get("POULTRYSENSE_VETO_HZ", "2.0"))
 # Appearance (ReID) encoder device. Measured on this machine: CPU 1.8 ms/crop,
 # OpenVINO GPU 3.0 ms/crop + 15s compile + 9s first inference — GPU is far
 # slower for this small model, so CPU is the default. Set
@@ -742,8 +745,9 @@ behavior_history_sample_times = {}
 behavior_stats_cache = {}
 behavior_baseline_cache = {}
 
-# Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
-MAX_TRACKED_CHICKENS = int(os.environ.get("POULTRYSENSE_MAX_TRACKED_CHICKENS", "10"))
+# Limit active tracked subjects (defaults to 3 for cage video simulation bantres.mp4, 10 for open live coop)
+_sim_video = os.environ.get("POULTRYSENSE_VIDEO_SOURCE", "").strip()
+MAX_TRACKED_CHICKENS = int(os.environ.get("POULTRYSENSE_MAX_TRACKED_CHICKENS", "3" if _sim_video else "10"))
 
 # --- Camera Configuration ---
 # Camera index: 1 = external USB camera ("HD Camera")
@@ -856,7 +860,7 @@ class AnomalyDetectionEngine:
       80–100: High Concern (Immediate Critical Alert)
     """
     @staticmethod
-    def compute_anomaly(stats, baseline, unhealthy_prob, is_isolated, stationary_sec):
+    def compute_anomaly(stats, baseline, unhealthy_prob, is_isolated, stationary_sec, behavior_label="stand"):
         observed_sec = stats.get("observed_sec", 0.0)
 
         # 1. Activity / Lethargy sub-score (0-100, weight 0.35)
@@ -937,18 +941,34 @@ class AnomalyDetectionEngine:
         )
 
         # Ethological Locomotion Reality Check (Weeks et al. 2000, Dawkins et al. 2012):
-        # A chicken that is actively moving / foraging (avg_motion >= 2.5 or stationary_sec < 5.0)
-        # cannot be in pathological recumbency or paralyzed distress.
-        # Clinical Visual Override applies when the chicken is stationary / low-activity (stationary_sec >= 10.0 or motion < 2.0).
-        is_actively_moving = (stationary_sec < 5.0 and stats.get("avg_motion", 0.0) >= 2.0)
+        # A chicken that is actively moving, walking, or foraging (peck/walk or stationary_sec < 5.0)
+        # is physiologically healthy and active. Moving chickens are strictly Normal / Healthy (Green Box).
+        is_actively_moving = (behavior_label in ("walk", "peck") or stationary_sec < 5.0 or stats.get("avg_motion", 0.0) >= 1.8)
         if not is_actively_moving:
-            if unhealthy_prob >= 0.65:
-                raw_score = max(raw_score, 70.0 + (unhealthy_prob - 0.65) * 80.0)
-            elif unhealthy_prob >= 0.45:
-                raw_score = max(raw_score, 45.0 + (unhealthy_prob - 0.45) * 60.0)
+            if behavior_label == "recumbent":
+                # True recumbency (down on ground / unable to stand)
+                if unhealthy_prob >= 0.65:
+                    raw_score = max(raw_score, 75.0 + (unhealthy_prob - 0.65) * 60.0)
+                elif unhealthy_prob >= 0.45:
+                    raw_score = max(raw_score, 50.0 + (unhealthy_prob - 0.45) * 50.0)
+            elif behavior_label in ("stand", "rest"):
+                # Standing upright or normal resting on litter is normal physiological behavior.
+                # A standing bird is alert on its legs — stationary standing is capped:
+                # - < 60s: Completely Normal / Healthy (Green Box, score <= 20)
+                # - >= 60s: Extended resting pause -> Monitor tier (WATCH, Cyan Box, score <= 45)
+                # A standing bird is NOT in acute pathology — NEVER jump to Suspicious (Attention) on standing!
+                if stationary_sec >= 60.0:
+                    raw_score = min(raw_score, 45.0)
+                else:
+                    raw_score = min(raw_score, 20.0)
+            else:
+                if unhealthy_prob >= 0.65:
+                    raw_score = max(raw_score, 60.0 + (unhealthy_prob - 0.65) * 50.0)
+                elif unhealthy_prob >= 0.45:
+                    raw_score = max(raw_score, 40.0 + (unhealthy_prob - 0.45) * 40.0)
         else:
-            # Active foraging / locomotion dampens visual noise from unfamiliar outdoor backdrops
-            raw_score = min(raw_score, 25.0)
+            # Active locomotion/foraging guarantees healthy normal score (< 20 = Normal/Healthy)
+            raw_score = min(raw_score, 18.0)
 
         total_score = int(round(min(100.0, max(0.0, raw_score))))
 
@@ -1019,10 +1039,20 @@ GEMINI_SYSTEM_INSTRUCTION = (
     "1. A cropped camera snapshot of a flagged chicken ('flagged_chicken.jpg') flagged by YOLO/ByteTrack or environmental sensors.\n"
     "2. Quantitative telemetry data including stationary duration, optical flow motion, lethargy markers, flock isolation, and ambient environmental sensor vectors (DHT22 temperature & humidity).\n\n"
     "DIAGNOSTIC GUIDELINES:\n"
-    "- Distinguish between physiological rest/sleep vs pathological lethargy/illness.\n"
-    "- Normal rest/sleep: smooth plumage, bright red comb, head tucked or upright, resting in flock proximity.\n"
-    "- Pathological markers: ruffled/dirty plumage, closed eyes, drooped wings resting on litter, hunched 'sick bird' posture, cyanotic/pale comb, solitary isolation.\n"
+    "- Distinguish between physiological rest/sleep/standing vs pathological lethargy/illness.\n"
+    "- Normal rest/sleep/standing: smooth plumage, bright red comb, head upright or tucked, resting in flock proximity, alertness.\n"
+    "- Pathological markers: ruffled/dirty plumage, closed eyes, drooped wings resting on litter, hunched 'sick bird' posture, cyanotic/pale comb, solitary isolation, inability to stand.\n"
     "- Correlate with climate: Temperature >30°C causes acute heat stress (panting, wing elevation, lethargy). Temperature <18°C causes cold huddling.\n"
+    "- BEHAVIORAL POSTURE RECOGNITION GUIDELINES:\n"
+    "  * 'Standing': Bird is on its feet with head held upright looking around at surroundings. Do NOT assume it is pecking or feeding unless the snapshot clearly shows the beak in direct contact with or pointing straight down at the ground.\n"
+    "  * 'Resting': Bird is sitting calmly on litter or stationary with eyes closed/relaxed, smooth plumage, bright comb. This is normal healthy physiological rest/sleep, NOT illness.\n"
+    "  * 'Walking': Bird is actively moving its legs across the floor.\n"
+    "  * 'Pecking': Bird is actively dipping its head downward to feed or forage on the ground.\n"
+    "- SEVERITY RATING CRITERIA (strictly follow):\n"
+    "  * 'Low': Bird is HEALTHY, alert, standing, resting, feeding, or shows NO signs of disease/distress. If plumage and comb are normal, severity MUST be 'Low' (even if flagged for stationary duration).\n"
+    "  * 'Medium': Mild watch or environmental discomfort (slight panting from heat, but alert and upright).\n"
+    "  * 'High': Moderate distress, noticeable lethargy, hunched posture, ruffled feathers.\n"
+    "  * 'Critical': Severe emergency, collapsed, unable to stand, acute respiratory distress, moribund.\n"
     "- Output MUST strictly conform to the required JSON schema with fields: severity, reason, and farmer_action.\n"
     "- The 'severity' field must be one of: 'Low', 'Medium', 'High', 'Critical'."
 )
@@ -1240,30 +1270,52 @@ class GeminiVerdictEngine:
                         temperature=0.2
                     )
 
-                    response = self.client.models.generate_content(
-                        model=self.model_name,
-                        contents=[image_part, telemetry_prompt],
-                        config=config
-                    )
+                    # Model cascade: try requested model, fall back gracefully if rate/quota-limited
+                    candidate_models = [self.model_name]
+                    for fb in ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"]:
+                        if fb not in candidate_models:
+                            candidate_models.append(fb)
+
+                    response = None
+                    used_model = self.model_name
+                    for try_model in candidate_models:
+                        try:
+                            response = self.client.models.generate_content(
+                                model=try_model,
+                                contents=[image_part, telemetry_prompt],
+                                config=config
+                            )
+                            if response:
+                                used_model = try_model
+                                break
+                        except Exception as ex_call:
+                            err_str = str(ex_call).lower()
+                            if "quota" in err_str or "429" in err_str or "resource_exhausted" in err_str or "503" in err_str:
+                                print(f"[Gemini] Model {try_model} rate/quota limit reached; attempting fallback...")
+                                continue
+                            else:
+                                print(f"[Gemini] API error on {try_model}: {ex_call}")
+                                break
 
                     # Parse structured response
                     parsed_data = None
-                    if hasattr(response, "parsed") and response.parsed is not None:
-                        if isinstance(response.parsed, ChickenDiagnosticVerdict):
-                            parsed_data = response.parsed.model_dump()
-                        elif isinstance(response.parsed, dict):
-                            parsed_data = response.parsed
-                        else:
-                            parsed_data = json.loads(json.dumps(response.parsed, default=str))
+                    if response is not None:
+                        if hasattr(response, "parsed") and response.parsed is not None:
+                            if isinstance(response.parsed, ChickenDiagnosticVerdict):
+                                parsed_data = response.parsed.model_dump()
+                            elif isinstance(response.parsed, dict):
+                                parsed_data = response.parsed
+                            else:
+                                parsed_data = json.loads(json.dumps(response.parsed, default=str))
 
-                    if parsed_data is None and hasattr(response, "text") and response.text:
-                        raw_text = response.text.strip()
-                        if raw_text.startswith("```"):
-                            raw_text = raw_text.split("```")[1]
-                            if raw_text.startswith("json"):
-                                raw_text = raw_text[4:]
-                        raw_text = raw_text.strip()
-                        parsed_data = json.loads(raw_text)
+                        if parsed_data is None and hasattr(response, "text") and response.text:
+                            raw_text = response.text.strip()
+                            if raw_text.startswith("```"):
+                                raw_text = raw_text.split("```")[1]
+                                if raw_text.startswith("json"):
+                                    raw_text = raw_text[4:]
+                            raw_text = raw_text.strip()
+                            parsed_data = json.loads(raw_text)
 
                     if isinstance(parsed_data, dict):
                         gemini_evaluated = True
@@ -1282,10 +1334,34 @@ class GeminiVerdictEngine:
                         verdict_reason = parsed_data.get("reason", verdict_reason)
                         verdict_farmer_action = parsed_data.get("farmer_action", verdict_farmer_action)
 
-                        print(f"[Gemini] ✓ Verdict for Chicken #{track_id}: {verdict_severity} — {verdict_reason}")
+                        print(f"[Gemini {used_model}] ✓ Verdict for Chicken #{track_id}: {verdict_severity} — {verdict_reason}")
 
                 except Exception as ex:
                     print(f"[Gemini] API error for Chicken #{track_id}: {ex}")
+
+            # Semantic consistency guard: if Gemini's diagnostic reason explicitly confirms the bird is healthy,
+            # alert, or shows no signs of illness, enforce severity = 'Low' to eliminate false alarms!
+            lower_reason = verdict_reason.lower()
+            healthy_signals = [
+                "shows no signs of illness",
+                "no signs of illness",
+                "no signs of disease",
+                "no signs of stress",
+                "normal physiological",
+                "healthy physiological",
+                "indicates normal",
+                "normal resting and alertness",
+                "rather than pathological",
+                "healthy red comb",
+                "alert posture with smooth plumage"
+            ]
+            pathological_signals = [
+                "severe", "moribund", "respiratory distress", "unable to stand", "cyanotic", "acute lethargy"
+            ]
+            if any(hs in lower_reason for hs in healthy_signals) and not any(ps in lower_reason for ps in pathological_signals):
+                if verdict_severity != "Low":
+                    print(f"[Gemini] Auto-calibrated severity from {verdict_severity} to Low (diagnostic reason confirmed healthy/normal)")
+                    verdict_severity = "Low"
 
             # Map severity to internal tier and label
             SEV_TO_TIER = {
@@ -1324,7 +1400,7 @@ class GeminiVerdictEngine:
                 "timestamp": curr_time
             }
 
-            self.chicken_summaries[track_id] = f"Gemini: {verdict_reason}" if gemini_evaluated else verdict_reason
+            self.chicken_summaries[track_id] = f"Gemini: {verdict_reason}" if gemini_evaluated else ""
 
             alert_obj = {
                 "chicken_id": track_id,
@@ -1575,6 +1651,8 @@ class ThreadedCamera:
         self._cap_lock = threading.Lock()
         self._last_frame_time = 0.0
         self._stats = {"frames": 0, "read_failures": 0, "reconnects": 0}
+        self.was_rewound = False
+        self.is_video_file = False
 
         self._preferred_index = camera_index
         self.index = camera_index
@@ -1619,6 +1697,95 @@ class ThreadedCamera:
         return False
 
     def _open(self, camera_index):
+        # 0. Check for video or image simulation source (POULTRYSENSE_VIDEO_SOURCE)
+        video_src = os.environ.get("POULTRYSENSE_VIDEO_SOURCE", "").strip()
+        if not video_src and isinstance(camera_index, str):
+            video_src = camera_index
+
+        image_extensions = (".jfif", ".jpg", ".jpeg", ".png", ".bmp", ".webp")
+
+        if video_src:
+            candidate_paths = [
+                video_src,
+                os.path.join(SCRIPT_DIR, video_src),
+            ]
+            base, ext = os.path.splitext(video_src)
+            if not ext:
+                for img_ext in image_extensions:
+                    candidate_paths.append(video_src + img_ext)
+                    candidate_paths.append(os.path.join(SCRIPT_DIR, video_src + img_ext))
+
+            candidate_paths.extend([
+                os.path.join(SCRIPT_DIR, "5mins chicken.mp4"),
+                os.path.join(SCRIPT_DIR, "4mins chicken.mp4"),
+                os.path.join(SCRIPT_DIR, "picture of bantres.jfif"),
+                os.path.join(SCRIPT_DIR, "pciture of bantres.jfif"),
+                os.path.join(SCRIPT_DIR, "picture of bantres.jpg"),
+                os.path.join(SCRIPT_DIR, "bantres.jpg"),
+                os.path.join(SCRIPT_DIR, "bantres.mp4"),
+                os.path.join(SCRIPT_DIR, "chicken_coop_simulation.mp4")
+            ])
+
+            for p in candidate_paths:
+                if not os.path.exists(p) or os.path.isdir(p):
+                    continue
+
+                p_lower = p.lower()
+                is_img = p_lower.endswith(image_extensions)
+
+                # Check if it's an image file
+                if is_img:
+                    img = cv2.imread(p)
+                    if img is not None:
+                        h, w = img.shape[:2]
+                        self.static_frame = img
+                        self.is_image_file = True
+                        self.is_video_file = True
+                        self.index = p
+                        self.backend_name = "ImageSimulation"
+                        self.width = w
+                        self.height = h
+                        self.fps = 30.0
+                        print(f"[INFO] Running in SIMULATION MODE with picture: {p} ({w}x{h} @ {self.fps:.0f} FPS continuous feed)")
+                        return True
+
+                # Video file capture
+                cap = cv2.VideoCapture(p)
+                if cap.isOpened():
+                    if hasattr(cv2, 'CAP_PROP_ORIENTATION_AUTO'):
+                        try:
+                            cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+                        except Exception:
+                            pass
+                    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                    if total_frames == 1 or is_img:
+                        ret, img = cap.read()
+                        cap.release()
+                        if ret and img is not None:
+                            h, w = img.shape[:2]
+                            self.static_frame = img
+                            self.is_image_file = True
+                            self.is_video_file = True
+                            self.index = p
+                            self.backend_name = "ImageSimulation"
+                            self.width = w
+                            self.height = h
+                            self.fps = 30.0
+                            print(f"[INFO] Running in SIMULATION MODE with picture: {p} ({w}x{h} @ {self.fps:.0f} FPS continuous feed)")
+                            return True
+
+                    self.cap = cap
+                    self.index = p
+                    self.backend_name = "VideoSimulation"
+                    self.is_video_file = True
+                    self.is_image_file = False
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
+                    fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+                    self.fps = fps if fps > 0 else 30.0
+                    print(f"[INFO] Running in SIMULATION MODE with video: {p} ({w}x{h} @ {self.fps:.0f} FPS)")
+                    return True
+
         for index in self._index_candidates(camera_index):
             if self._try_open(index):
                 return True
@@ -1673,10 +1840,46 @@ class ThreadedCamera:
     def _reader_loop(self):
         failures = 0
         backoff = 0.25
+        is_sim = getattr(self, "is_video_file", False)
+        is_image = getattr(self, "is_image_file", False)
+
+        # Static image simulation: stream the static image continuously at target fps
+        if is_image and getattr(self, "static_frame", None) is not None:
+            frame_interval = 1.0 / max(1.0, self.fps)
+            while self._running:
+                self._ret = True
+                self._last_frame_time = time.monotonic()
+                self._stats["frames"] += 1
+                self._buffer.publish(self.static_frame.copy())
+                time.sleep(frame_interval)
+            return
 
         while self._running:
             cap = self.cap
             ret, frame = (False, None) if cap is None else cap.read()
+
+            if is_sim and not ret and cap is not None:
+                # Video simulation reached end: rewind to beginning for seamless infinite loop
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                self.was_rewound = True
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    # Instant reopen to guarantee continuous zero-freeze looping without backoff
+                    with self._cap_lock:
+                        if self.cap is not None:
+                            try:
+                                self.cap.release()
+                            except Exception:
+                                pass
+                        self.cap = cv2.VideoCapture(self.index)
+                        cap = self.cap
+                    if cap is not None and cap.isOpened():
+                        if hasattr(cv2, 'CAP_PROP_ORIENTATION_AUTO'):
+                            try:
+                                cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+                            except Exception:
+                                pass
+                        ret, frame = cap.read()
 
             if ret and frame is not None:
                 failures = 0
@@ -1685,6 +1888,8 @@ class ThreadedCamera:
                 self._last_frame_time = time.monotonic()
                 self._stats["frames"] += 1
                 self._buffer.publish(frame)
+                if is_sim:
+                    time.sleep(max(0.001, 1.0 / max(1.0, self.fps)))
                 continue
 
             # A failed read must never spin the CPU: back off, then reopen.
@@ -1702,6 +1907,9 @@ class ThreadedCamera:
             backoff = next_backoff(backoff, self.MAX_BACKOFF_SEC)
 
     def _reconnect(self):
+        if getattr(self, "is_image_file", False):
+            return True
+
         with self._cap_lock:
             old = self.cap
             self.cap = None
@@ -1710,6 +1918,19 @@ class ThreadedCamera:
                 old.release()
             except Exception:
                 pass
+
+        if getattr(self, "is_video_file", False):
+            cap = cv2.VideoCapture(self.index)
+            if cap.isOpened():
+                if hasattr(cv2, 'CAP_PROP_ORIENTATION_AUTO'):
+                    try:
+                        cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+                    except Exception:
+                        pass
+                self.cap = cap
+                self.was_rewound = True
+                return True
+            return False
 
         self._stats["reconnects"] += 1
         print(
@@ -1743,15 +1964,16 @@ class ThreadedCamera:
         since_frame = None
         if self._last_frame_time:
             since_frame = round(time.monotonic() - self._last_frame_time, 2)
+        is_image = getattr(self, "is_image_file", False)
         return {
             "index": self.index,
             "backend": self.backend_name,
-            "codec": self.mode.get("codec", ""),
+            "codec": self.mode.get("codec", "STATIC_IMAGE" if is_image else ""),
             "mjpg_applied": bool(self.mode.get("mjpg_applied")),
-            "width": self.mode.get("width", 0),
-            "height": self.mode.get("height", 0),
-            "fps": round(float(self.mode.get("fps") or 0.0), 1),
-            "buffer_control": bool(self.mode.get("buffer_control")),
+            "width": self.width if is_image else self.mode.get("width", 0),
+            "height": self.height if is_image else self.mode.get("height", 0),
+            "fps": round(float(self.fps or 0.0), 1),
+            "buffer_control": True if is_image else bool(self.mode.get("buffer_control")),
             "auto_exposure": self.mode.get("auto_exposure"),
             "frames": self._stats["frames"],
             "read_failures": self._stats["read_failures"],
@@ -1781,6 +2003,8 @@ class ThreadedCamera:
         return True, frame.copy(), generation
 
     def isOpened(self):
+        if getattr(self, "is_image_file", False) and getattr(self, "static_frame", None) is not None:
+            return True
         with self._cap_lock:
             return self.cap is not None and self.cap.isOpened()
 
@@ -2584,6 +2808,8 @@ def purge_display_id_data(disp_id):
     track_velocities.pop(disp_id, None)
     display_id_last_positions.pop(disp_id, None)
     display_coasting_boxes.pop(disp_id, None)
+    track_appearance_profiles.pop(disp_id, None)
+    track_behavior_smoothers.pop(disp_id, None)
     if disp_id in behavior_history.records:
         del behavior_history.records[disp_id]
     if disp_id in behavior_history.baselines:
@@ -2627,6 +2853,8 @@ def reset_all_tracking_state():
     display_coasting_boxes.clear()
     track_crop_sig.clear()
     track_frozen_streaks.clear()
+    track_appearance_profiles.clear()
+    track_behavior_smoothers.clear()
     behavior_history.records.clear()
     behavior_history.baselines.clear()
     gemini_escalator.verdicts.clear()
@@ -2645,32 +2873,262 @@ def reset_all_tracking_state():
             pass
 
 
-def assign_display_id(raw_id, cx=None, cy=None, box=None):
-    """Guarantees consistent Chicken IDs (#1 to #10) even when chickens run fast or change direction.
-    Uses linear motion prediction (velocity vectors) and dynamic search radii to match running chickens."""
-    curr_time = time.time()
+# --- Visual Biometric Appearance Profiler (Plumage Color, Wings, Size & Feather Pattern) ---
+def extract_chicken_appearance(crop, box):
+    """Extracts lightweight visual biometric fingerprint: plumage luminance, color saturation,
+    characteristic size/area, aspect ratio, and 16x16 normalized feather texture gradient."""
+    x1, y1, x2, y2 = box[:4]
+    w = max(1.0, float(x2 - x1))
+    h = max(1.0, float(y2 - y1))
+    aspect = w / h
+    area = w * h
 
-    # 1. If this raw tracker ID is already mapped, update position, velocity, and return
+    if crop is None or crop.size == 0 or crop.shape[0] < 8 or crop.shape[1] < 8:
+        return {
+            "lum": 160.0,
+            "sat": 50.0,
+            "aspect": aspect,
+            "area": area,
+            "tex": np.zeros((16, 16), dtype=np.float32)
+        }
+
+    try:
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+        lum = float(lab[:, :, 0].mean())
+        sat = float(hsv[:, :, 1].mean())
+
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        small = cv2.resize(gray, (16, 16), interpolation=cv2.INTER_AREA).astype(np.float32)
+        s_std = small.std()
+        tex = (small - small.mean()) / (s_std if s_std > 1e-4 else 1.0)
+    except Exception:
+        lum = 160.0
+        sat = 50.0
+        tex = np.zeros((16, 16), dtype=np.float32)
+
+    return {
+        "lum": lum,
+        "sat": sat,
+        "aspect": aspect,
+        "area": area,
+        "tex": tex
+    }
+
+
+def compute_appearance_distance(app1, app2):
+    """Computes normalized dissimilarity between two chicken visual profiles."""
+    d_lum = min(2.0, abs(app1["lum"] - app2["lum"]) / 35.0)
+    d_sat = min(2.0, abs(app1["sat"] - app2["sat"]) / 25.0)
+    d_aspect = min(2.0, abs(app1["aspect"] - app2["aspect"]) / 0.35)
+
+    area1 = max(1.0, app1.get("area", 1.0))
+    area2 = max(1.0, app2.get("area", 1.0))
+    area_ratio = max(area1, area2) / min(area1, area2)
+    d_area = min(2.0, (area_ratio - 1.0) / 0.60)
+
+    t1 = app1.get("tex")
+    t2 = app2.get("tex")
+    if t1 is not None and t2 is not None and t1.shape == t2.shape:
+        d_tex = min(2.0, float(np.mean(np.abs(t1 - t2))))
+    else:
+        d_tex = 0.5
+
+    return float(0.28 * d_lum + 0.24 * d_sat + 0.24 * d_tex + 0.14 * d_aspect + 0.10 * d_area)
+
+
+def update_chicken_appearance_profile(disp_id, app_info):
+    """Updates exponential moving average appearance profile for a display ID."""
+    if disp_id not in track_appearance_profiles:
+        track_appearance_profiles[disp_id] = {
+            "lum": app_info["lum"],
+            "sat": app_info["sat"],
+            "aspect": app_info["aspect"],
+            "area": app_info["area"],
+            "tex": app_info["tex"].copy()
+        }
+    else:
+        prof = track_appearance_profiles[disp_id]
+        prof["lum"] = 0.88 * prof["lum"] + 0.12 * app_info["lum"]
+        prof["sat"] = 0.88 * prof["sat"] + 0.12 * app_info["sat"]
+        prof["aspect"] = 0.88 * prof["aspect"] + 0.12 * app_info["aspect"]
+        prof["area"] = 0.88 * prof["area"] + 0.12 * app_info["area"]
+        prof["tex"] = 0.88 * prof["tex"] + 0.12 * app_info["tex"]
+
+
+# --- Temporal Behavior Filter with Biological Locomotion & Posture Hysteresis ---
+class TemporalBehaviorFilter:
+    """Maintains a rolling window of behavioral classifications with biological hysteresis,
+    eliminating rapid HUD flickering, distinguishing standing/looking-around from pecking
+    (requires head dip pattern to ground), verifying true leg-driven walking vs standing,
+    and identifying calm resting / closed-eye sleep."""
+    def __init__(self, window_sec=2.0):
+        self.window_sec = window_sec
+        self.history = deque()  # (timestamp, instant_beh)
+        self.current_state = "stand"
+        self.last_state_change = 0.0
+        self.head_y_history = deque()  # (timestamp, top_y, box_h)
+        self.centroid_history = deque()  # (timestamp, cx, cy)
+
+    def update(self, raw_beh, speed, aspect_ratio, stationary_sec, curr_time, motion=0.0,
+               top_y=None, cy=None, cx=None, box_h=None):
+        if self.last_state_change == 0.0:
+            self.last_state_change = curr_time
+
+        # 1. Track spatial displacement for true leg-driven walking
+        if cx is not None and cy is not None:
+            self.centroid_history.append((curr_time, float(cx), float(cy)))
+            while self.centroid_history and curr_time - self.centroid_history[0][0] > 1.5:
+                self.centroid_history.popleft()
+
+        displacement = 0.0
+        if len(self.centroid_history) >= 2:
+            dt_disp = self.centroid_history[-1][0] - self.centroid_history[0][0]
+            if dt_disp >= 0.35:
+                dx = cx - self.centroid_history[0][1]
+                dy = cy - self.centroid_history[0][2]
+                displacement = float(np.hypot(dx, dy))
+
+        # 2. Track head vertical movement to detect ground-directed peck dip pattern (1-2 dips)
+        peck_dip_detected = False
+        if top_y is not None and box_h is not None and box_h > 15:
+            self.head_y_history.append((curr_time, float(top_y), float(box_h)))
+            while self.head_y_history and curr_time - self.head_y_history[0][0] > 2.0:
+                self.head_y_history.popleft()
+
+            # Analyze head dip pattern: True peck requires downward head stroke towards the ground
+            # (top_y dips downwards by at least 8% of box_h and returns, 1-2+ times)
+            if len(self.head_y_history) >= 4:
+                y_vals = [y for _, y, _ in self.head_y_history]
+                baseline_y = min(y_vals)  # highest head level
+                max_dip_y = max(y_vals)   # lowest head level
+                dip_amplitude = max_dip_y - baseline_y
+                if dip_amplitude >= (0.08 * box_h):
+                    peck_dip_detected = True
+
+        # 3. Biological override rules:
+        # A. True Walking: Legs moving across space. Requires centroid displacement
+        is_true_walking = (displacement >= 10.0 and speed >= 6.0) or speed >= 16.0 or (raw_beh == "walk" and displacement >= 8.0 and speed >= 5.0)
+        # B. Planted Legs: Centroid barely displacing (disp < 6px and speed < 4.5px/s)
+        is_planted_standing = (displacement < 6.0 and speed < 4.5 and motion < 2.0)
+
+        if is_true_walking and not is_planted_standing:
+            instant_beh = "walk"
+        # C. Recumbency Gate: Flat posture (aspect >= 1.30) AND prolonged immobility (>= 25s)
+        elif aspect_ratio >= 1.30 and stationary_sec >= 25.0 and speed < 5.0 and motion < 1.0:
+            instant_beh = "recumbent"
+        # D. Normal Resting: ONLY when the chicken has physically sat down on the litter (low, flat body profile)
+        # Sternal recumbency / brooding posture requires horizontal aspect ratio (aspect >= 1.20)
+        # A chicken standing upright on its legs (aspect < 1.10) is ALWAYS STANDING, NEVER RESTING!
+        elif aspect_ratio >= 1.20 and stationary_sec >= 8.0 and speed < 4.0 and motion < 1.0 and not is_true_walking:
+            instant_beh = "rest"
+        # E. Feeding / Pecking: Valid ONLY when ground peck dip is detected (head moving down towards ground 1-2 times)
+        # A chicken standing tall looking around at surroundings is STANDING, NOT pecking!
+        elif raw_beh == "peck" and peck_dip_detected and speed < 12.0 and aspect_ratio >= 0.75:
+            instant_beh = "peck"
+        # F. Default upright posture: Chicken is standing on legs looking at surroundings
+        else:
+            instant_beh = "stand"
+
+        self.history.append((curr_time, instant_beh))
+
+        # Prune older than window_sec (default 2.0s)
+        while self.history and curr_time - self.history[0][0] > self.window_sec:
+            self.history.popleft()
+
+        total = len(self.history)
+        if total == 0:
+            return self.current_state
+
+        counts = Counter([b for _, b in self.history])
+
+        # 4. Hysteresis State Transition Logic:
+        # Fast enter WALK on sprint / active translation
+        if instant_beh == "walk" and (displacement >= 12.0 or speed >= 18.0):
+            self.current_state = "walk"
+            self.last_state_change = curr_time
+            return self.current_state
+
+        # Exit WALK when chicken slows down / stops moving
+        if self.current_state == "walk":
+            if is_planted_standing or speed < 6.0 or (counts["walk"] / total < 0.40 and speed < 10.0):
+                if counts["peck"] / total >= 0.50 and peck_dip_detected:
+                    self.current_state = "peck"
+                elif counts["rest"] / total >= 0.50:
+                    self.current_state = "rest"
+                else:
+                    self.current_state = "stand"
+                self.last_state_change = curr_time
+            return self.current_state
+
+        # Enter PECK: requires persistent pecking over at least 50% of recent window AND peck dip pattern
+        if counts["peck"] / total >= 0.50 and speed < 12.0 and peck_dip_detected:
+            if self.current_state != "peck":
+                self.current_state = "peck"
+                self.last_state_change = curr_time
+            return self.current_state
+
+        # Enter REST: sitting down or calm resting
+        if counts["rest"] / total >= 0.50 and speed < 5.0 and not is_true_walking:
+            if self.current_state != "rest":
+                self.current_state = "rest"
+                self.last_state_change = curr_time
+            return self.current_state
+
+        # Enter RECUMBENT: requires persistent flat posture and long duration
+        if counts["recumbent"] / total >= 0.70 and stationary_sec >= 25.0:
+            if self.current_state != "recumbent":
+                self.current_state = "recumbent"
+                self.last_state_change = curr_time
+            return self.current_state
+
+        # Default stable state: STAND (looking at surroundings / alert)
+        if self.current_state != "stand" and (curr_time - self.last_state_change >= 0.6):
+            if counts["stand"] / total >= 0.40 or (counts.get(self.current_state, 0) / total < 0.40):
+                self.current_state = "stand"
+                self.last_state_change = curr_time
+
+        return self.current_state
+
+
+def assign_display_id(raw_id, cx=None, cy=None, box=None, crop=None):
+    """Guarantees consistent Chicken IDs (#1 to #3 in simulation, up to #10 in open coop)
+    even when chickens run fast or change direction. Uses linear motion prediction,
+    flock conservation, biometric appearance profiling (wings, size, patterns), and
+    slot recycling so chicken IDs never escalate to #4..#9 or swap identities."""
+    curr_time = time.time()
+    max_slots = MAX_TRACKED_CHICKENS
+
+    app_info = extract_chicken_appearance(crop, box) if (crop is not None and box is not None) else None
+
+    # 1. If this raw tracker ID is already mapped, verify bounds, update position/velocity, and return
     if raw_id in track_display_ids:
         disp_id = track_display_ids[raw_id]
-        track_missed_counts[raw_id] = 0
-        if cx is not None and cy is not None:
-            track_last_positions[raw_id] = (cx, cy, curr_time)
-            update_track_velocity(disp_id, cx, cy, curr_time)
-        return disp_id
+        if disp_id <= max_slots:
+            track_missed_counts[raw_id] = 0
+            if cx is not None and cy is not None:
+                track_last_positions[raw_id] = (cx, cy, curr_time)
+                update_track_velocity(disp_id, cx, cy, curr_time)
+            if app_info is not None:
+                update_chicken_appearance_profile(disp_id, app_info)
+            return disp_id
+        else:
+            track_display_ids.pop(raw_id, None)
 
-    # 2. Spatial & Motion-Predictive Re-Identification:
+    # 2. Spatial & Biometric Appearance-Predictive Re-Identification:
     # Check candidates from BOTH:
     #   A) Active tracks that were missed in current frame (raw ID handoff during running)
     #   B) Inactive archived tracks
     best_match_id = None
-    best_dist = float("inf")
+    best_cost = float("inf")
     matched_from_active_raw = None
 
     if cx is not None and cy is not None:
         # Candidate source A: missed active display IDs
         missed_active_candidates = []
         for r_id, d_id in list(track_display_ids.items()):
+            if d_id > max_slots:
+                continue
             m_cnt = track_missed_counts.get(r_id, 0)
             if m_cnt > 0:  # Currently un-matched in this frame
                 last_pos = track_last_positions.get(r_id)
@@ -2680,15 +3138,14 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
         # Candidate source B: inactive archived tracks
         inactive_candidates = []
         for d_id, info in list(inactive_tracks.items()):
-            inactive_candidates.append((d_id, info["cx"], info["cy"], info["time"], None))
+            if d_id <= max_slots:
+                inactive_candidates.append((d_id, info["cx"], info["cy"], info["time"], None))
 
         all_candidates = missed_active_candidates + inactive_candidates
 
         for disp_id, last_cx, last_cy, last_t, old_raw_id in all_candidates:
             elapsed = curr_time - last_t
-            # Robust re-ID window: preserves the chicken's identity through 1.3s to 5.0s occlusions/blink
-            max_reid_elapsed = 5.0
-            if elapsed > max_reid_elapsed:
+            if elapsed > 5.0:
                 continue
 
             # Linear motion extrapolation: predict where running chicken moved to
@@ -2697,21 +3154,28 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
             pred_cy = last_cy + vy * elapsed
             speed = float(np.hypot(vx, vy))
 
-            # Dynamic velocity-expanded matching radius
-            # For inactive tracks, limit search radius to 110px so panning doesn't steal the ID,
-            # but a chicken pausing or stepping near the same spot (within 110px) smoothly resumes its ID and data!
-            if old_raw_id is None:
-                dynamic_radius = min(110.0, 75.0 + (speed * 0.25))
-            else:
-                dynamic_radius = min(180.0, max(75.0, 60.0 + (speed * 0.35) + (20.0 * elapsed)))
-
-            # Distance to predicted location and last known location
             dist_pred = float(np.hypot(cx - pred_cx, cy - pred_cy))
             dist_last = float(np.hypot(cx - last_cx, cy - last_cy))
             dist = min(dist_pred, dist_last)
 
-            if dist < dynamic_radius and dist < best_dist:
-                best_dist = dist
+            # Dynamic velocity-expanded matching radius
+            if len(all_candidates) == 1:
+                match_radius = 500.0
+            elif old_raw_id is not None:
+                match_radius = min(450.0, max(160.0, 120.0 + (speed * 0.50) + (150.0 * elapsed)))
+            else:
+                match_radius = min(350.0, max(120.0, 90.0 + (speed * 0.25) + (80.0 * elapsed)))
+
+            # Biometric appearance cost (wings, plumage, size, feather pattern)
+            app_cost = 0.0
+            if app_info is not None and disp_id in track_appearance_profiles:
+                app_cost = compute_appearance_distance(app_info, track_appearance_profiles[disp_id])
+
+            norm_spatial = min(2.0, dist / max(50.0, match_radius))
+            combined_cost = 0.60 * norm_spatial + 0.40 * app_cost
+
+            if dist < match_radius and combined_cost < best_cost:
+                best_cost = combined_cost
                 best_match_id = disp_id
                 matched_from_active_raw = old_raw_id
 
@@ -2727,38 +3191,81 @@ def assign_display_id(raw_id, cx=None, cy=None, box=None):
         else:
             inactive_tracks.pop(best_match_id, None)
 
+        # Instantly remove stale box from coasting so no stuck ghost box is emitted
+        display_coasting_boxes.pop(best_match_id, None)
+
         track_display_ids[raw_id] = best_match_id
         track_missed_counts[raw_id] = 0
-        track_hit_streaks[raw_id] = 2  # Require at least 1 more confident hit before re-confirming
+        track_confirmed_raw_ids.add(raw_id)  # Preserved confirmation for seamless handoff
+        track_hit_streaks[raw_id] = 2
         if cx is not None and cy is not None:
             track_last_positions[raw_id] = (cx, cy, curr_time)
             update_track_velocity(best_match_id, cx, cy, curr_time)
+        if app_info is not None:
+            update_chicken_appearance_profile(best_match_id, app_info)
 
         if best_match_id not in track_first_seen:
             track_first_seen[best_match_id] = curr_time
         return best_match_id
 
-    # 3. New Chicken: Allocate the lowest available ID between 1 and MAX_TRACKED_CHICKENS
+    # 3. New Chicken Allocation or Steal Unmatched Stale Slot:
+    # First: Check for an unoccupied slot strictly between 1 and max_slots
     active_display_ids = set(track_display_ids.values())
-    for cand in range(1, MAX_TRACKED_CHICKENS + 1):
+    for cand in range(1, max_slots + 1):
         if cand not in active_display_ids:
             # Purge any previous history/verdicts for this slot so new chicken starts completely fresh!
             purge_display_id_data(cand)
+            display_coasting_boxes.pop(cand, None)
             track_display_ids[raw_id] = cand
             track_missed_counts[raw_id] = 0
             if cx is not None and cy is not None:
                 track_last_positions[raw_id] = (cx, cy, curr_time)
                 update_track_velocity(cand, cx, cy, curr_time)
+            if app_info is not None:
+                update_chicken_appearance_profile(cand, app_info)
             track_first_seen[cand] = curr_time
             track_stationary_duration[cand] = 0.0
             return cand
 
-    # All slots (1..MAX_TRACKED_CHICKENS) occupied.
+    # Second: All slots (1..max_slots) are currently mapped in track_display_ids, but
+    # this frame has a new detected chicken that wasn't matched spatially.
+    # By pigeonhole principle, one of the chickens in track_display_ids was missed in this frame!
+    # Recycle the slot of the chicken that has been absent the longest (highest missed count > 0).
+    stale_candidates = []
+    for r_id, d_id in list(track_display_ids.items()):
+        if d_id <= max_slots:
+            m_cnt = track_missed_counts.get(r_id, 0)
+            if m_cnt > 0:
+                stale_candidates.append((m_cnt, r_id, d_id))
+
+    if stale_candidates:
+        stale_candidates.sort(key=lambda x: x[0], reverse=True)
+        _, victim_raw_id, recycled_disp_id = stale_candidates[0]
+
+        track_display_ids.pop(victim_raw_id, None)
+        track_missed_counts.pop(victim_raw_id, None)
+        track_last_positions.pop(victim_raw_id, None)
+        track_hit_streaks.pop(victim_raw_id, None)
+        track_confirmed_raw_ids.discard(victim_raw_id)
+        display_coasting_boxes.pop(recycled_disp_id, None)
+
+        track_display_ids[raw_id] = recycled_disp_id
+        track_missed_counts[raw_id] = 0
+        track_confirmed_raw_ids.add(raw_id)
+        track_hit_streaks[raw_id] = 2
+        if cx is not None and cy is not None:
+            track_last_positions[raw_id] = (cx, cy, curr_time)
+            update_track_velocity(recycled_disp_id, cx, cy, curr_time)
+        if app_info is not None:
+            update_chicken_appearance_profile(recycled_disp_id, app_info)
+        return recycled_disp_id
+
+    # All slots (1..max_slots) actively seen in this exact frame; suppress extra phantom detections
     return None
 
 
-def cleanup_stale_ids(active_raw_ids, max_missed=45):
-    """Keeps tracks alive through brief occlusions / fast movement (45 frames = 1.5 seconds)
+def cleanup_stale_ids(active_raw_ids, max_missed=25):
+    """Keeps tracks alive through brief occlusions / fast movement (25 frames = ~0.8 seconds)
     and archives inactive chickens for seamless spatial re-identification."""
     curr_time = time.time()
 
@@ -3239,7 +3746,7 @@ def index():
         </header>
 
         <div class="video-card">
-            <img class="video-feed" src="/raw_video_feed" alt="PoultrySense Live AI Stream">
+            <img class="video-feed" src="/video_feed" alt="PoultrySense Live AI Stream">
             <canvas id="detection-overlay"></canvas>
         </div>
 
@@ -3265,7 +3772,7 @@ def index():
         <div class="nav-actions">
             <a class="btn" href="/video_feed" target="_blank">📺 Detection Feed</a>
             <a class="btn" href="/raw_video_feed" target="_blank">📹 Streaming Feed</a>
-            <button class="btn" onclick="toggleFeedMode()" id="btn-toggle-feed">Switch to Streaming</button>
+            <button class="btn" onclick="toggleFeedMode()" id="btn-toggle-feed">Switch to Clean Stream</button>
             <a class="btn" href="/status" target="_blank">📊 JSON Telemetry</a>
             <button class="btn" onclick="fetch('/reset_ids').then(() => alert('IDs Reset!'));">🔄 Reset Tracking IDs</button>
         </div>
@@ -3283,9 +3790,16 @@ def index():
 
         function toggleFeedMode() {
             isStreaming = !isStreaming;
-            document.getElementById('btn-toggle-feed').innerText =
-                isStreaming ? 'Switch to Detection' : 'Switch to Streaming';
-            if (isStreaming) clearOverlay();
+            const img = document.querySelector('.video-feed');
+            if (isStreaming) {
+                if (img) img.src = '/raw_video_feed';
+                document.getElementById('btn-toggle-feed').innerText = 'Switch to Detection Feed';
+                clearOverlay();
+            } else {
+                if (img) img.src = '/video_feed';
+                document.getElementById('btn-toggle-feed').innerText = 'Switch to Clean Stream';
+                clearOverlay();
+            }
         }
 
         // The server publishes detections at ~9 Hz. Instead of snapping boxes on
@@ -3315,9 +3829,9 @@ def index():
                 overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
                 overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-                // Frame-rate independent easing (~110 ms convergence).
-                const posFactor = 1 - Math.exp(-14 * dt);
-                const alphaFactor = 1 - Math.exp(-10 * dt);
+                // Responsive real-time tracking (immediate snap, zero float/lag).
+                const posFactor = 1 - Math.exp(-35 * dt);
+                const alphaFactor = 1 - Math.exp(-25 * dt);
                 let stillAnimating = false;
 
                 trackedBoxes.forEach((box, key) => {
@@ -3371,7 +3885,11 @@ def index():
         }
 
         function drawDetections(payload) {
-            if (isStreaming) return;
+            const img = document.querySelector('.video-feed');
+            if (isStreaming || (img && img.src.includes('video_feed') && !img.src.includes('raw_video_feed'))) {
+                clearOverlay();
+                return;
+            }
 
             const img = document.querySelector('.video-feed');
             const rect = img.getBoundingClientRect();
@@ -3444,8 +3962,7 @@ def index():
 
             trackedBoxes.forEach((box, key) => {
                 if (!seen.has(key)) {
-                    box.targetAlpha = 0;
-                    box.alive = false;
+                    trackedBoxes.delete(key);
                 }
             });
 
@@ -3461,7 +3978,7 @@ def index():
                 .then(drawDetections)
                 .catch(() => {})
                 .finally(() => { detectionsFetchInFlight = false; });
-        }, 100);
+        }, 40);
 
         setInterval(() => {
             fetch('/status')
@@ -3614,6 +4131,19 @@ def camera_loop():
                     print(f"[WARN] Accelerated load notice ({ex_ov}); falling back to native PyTorch .pt: {det_path}")
                     det_model = YOLO(det_path, task='detect')
                     resolved_det = det_path
+
+                actual_det_imgsz = DETECTOR_IMGSZ
+                meta_file = os.path.join(resolved_det, "metadata.yaml") if (isinstance(resolved_det, str) and os.path.isdir(resolved_det)) else None
+                if meta_file and os.path.exists(meta_file):
+                    try:
+                        import yaml
+                        with open(meta_file, "r") as mf:
+                            mdata = yaml.safe_load(mf)
+                            if "imgsz" in mdata and isinstance(mdata["imgsz"], (list, tuple)):
+                                actual_det_imgsz = int(mdata["imgsz"][0])
+                                print(f"[OpenVINO] Detector compiled input matches metadata imgsz={actual_det_imgsz}")
+                    except Exception:
+                        pass
 
                 print("[INFO] YOLO Detection Model loaded successfully!")
 
@@ -3788,6 +4318,19 @@ def camera_loop():
         last_generation = generation
         rate_gate.mark()
 
+        # Handle simulation video loop rewind: reset all tracking and tracker state
+        # so frame 0 starts fresh with Chickens #1, #2, #3 instead of incrementing IDs
+        if getattr(cam, "was_rewound", False):
+            cam.was_rewound = False
+            reset_all_tracking_state()
+            cached_display_items = []
+            if hasattr(det_model, "predictor") and getattr(det_model.predictor, "trackers", None):
+                for trk in det_model.predictor.trackers:
+                    try:
+                        trk.reset()
+                    except Exception:
+                        pass
+
         # Detection draws HUD boxes on its own copy; the preview stays clean.
         frame = frame.copy()
         h_frame, w_frame, _ = frame.shape
@@ -3833,7 +4376,7 @@ def camera_loop():
                     classes=chicken_classes,
                     conf=DETECTOR_CONF,  # Low: lets BoT-SORT's 2nd association stage keep fast/blurry chickens
                     iou=0.50,
-                    imgsz=DETECTOR_IMGSZ,
+                    imgsz=actual_det_imgsz,
                     max_det=20,
                     device=_track_device(exec_device, resolved_det),
                     verbose=False
@@ -3873,35 +4416,82 @@ def camera_loop():
                                 size_dropped += 1
                                 continue
 
+                            # Confidence gate: reject low-confidence noise/dirt/wall detections
+                            if float(conf) < DETECTION_CONF:
+                                lowconf_dropped += 1
+                                continue
+
                             raw_boxes.append(box)
                             raw_confs.append(float(conf))
                             active_raw_ids.append(int(raw_id))
+
+                        # Suppress overlapping duplicate boxes among raw detections
+                        if len(raw_boxes) > 1:
+                            kept_indices = []
+                            order = np.argsort(-np.array(raw_confs))
+                            for idx in order:
+                                b = raw_boxes[idx]
+                                overlap = False
+                                for k_idx in kept_indices:
+                                    kb = raw_boxes[k_idx]
+                                    xA = max(b[0], kb[0])
+                                    yA = max(b[1], kb[1])
+                                    xB = min(b[2], kb[2])
+                                    yB = min(b[3], kb[3])
+                                    interArea = max(0.0, xB - xA) * max(0.0, yB - yA)
+                                    bArea = max(1.0, (b[2] - b[0]) * (b[3] - b[1]))
+                                    kbArea = max(1.0, (kb[2] - kb[0]) * (kb[3] - kb[1]))
+                                    iou_val = interArea / float(bArea + kbArea - interArea)
+                                    if iou_val > 0.40:
+                                        overlap = True
+                                        break
+                                if not overlap:
+                                    kept_indices.append(idx)
+                            raw_boxes = [raw_boxes[i] for i in kept_indices]
+                            raw_confs = [raw_confs[i] for i in kept_indices]
+                            active_raw_ids = [active_raw_ids[i] for i in kept_indices]
             except Exception as det_ex:
                 detection_error = f"{type(det_ex).__name__}: {det_ex}"
                 print(f"[DETECTION] Exception: {detection_error}")
+                if "incompatible" in str(det_ex).lower() or "shape" in str(det_ex).lower():
+                    print(f"[AI ENGINE] Shape mismatch detected; reloading native PyTorch detector {det_path}")
+                    try:
+                        det_model = YOLO(det_path, task='detect')
+                        actual_det_imgsz = DETECTOR_IMGSZ
+                    except Exception:
+                        pass
                 tracking_unavailable = True
 
             # Collect display items (both active detections and motion-extrapolated coasting tracks)
+            display_items = []
+            seen_display_ids = set()
+
             if tracking_unavailable:
-                display_items = cached_display_items
+                display_items = list(cached_display_items)
+                seen_display_ids = {item["display_id"] for item in display_items if "display_id" in item}
             else:
                 cleanup_stale_ids(active_raw_ids, max_missed=max_missed_detections)
 
-                display_items = []
-                seen_display_ids = set()
+            is_sim = getattr(cam, "is_video_file", False)
 
             for box, conf, raw_id in zip(raw_boxes, raw_confs, active_raw_ids):
                 cx = (box[0] + box[2]) / 2.0
                 cy = (box[1] + box[3]) / 2.0
 
-                # 1. Spatial/Motion-Predictive Display ID allocation (instant handoff for running chickens)
-                display_id = assign_display_id(raw_id, cx=cx, cy=cy, box=box)
+                # Crop for visual biometric appearance profiling (wings, size, plumage patterns)
+                x1_c, y1_c = max(0, int(box[0])), max(0, int(box[1]))
+                x2_c, y2_c = min(w_frame, int(box[2])), min(h_frame, int(box[3]))
+                c_crop = frame[y1_c:y2_c, x1_c:x2_c] if (x2_c > x1_c and y2_c > y1_c) else None
+
+                # 1. Spatial/Appearance-Predictive Display ID allocation (instant handoff for running chickens)
+                display_id = assign_display_id(raw_id, cx=cx, cy=cy, box=box, crop=c_crop)
                 if display_id is None:
                     no_slot_dropped += 1
                     continue
 
                 # 2. Debounce & Frozen Crop Check (filters out hands, furniture, and room artifacts)
-                if raw_id not in track_confirmed_raw_ids:
+                # Motionless chickens standing still must NEVER be dropped or frozen!
+                if raw_id not in track_confirmed_raw_ids and not is_sim:
                     if _crop_is_frozen(frame, box, raw_id):
                         track_frozen_streaks[raw_id] += 1
                         if track_frozen_streaks[raw_id] >= CHURN_MAX_FROZEN:
@@ -3910,7 +4500,7 @@ def camera_loop():
                     else:
                         track_frozen_streaks[raw_id] = 0
                     track_hit_streaks[raw_id] += 1
-                    required_hits = 1  # Immediate 1st-frame appearance — zero confirmation lag
+                    required_hits = 1  # Instant responsiveness: eliminates 2-frame box lag and running disconnects
                     if track_hit_streaks[raw_id] >= required_hits:
                         track_confirmed_raw_ids.add(raw_id)
                     else:
@@ -3937,21 +4527,44 @@ def camera_loop():
                     "is_coasting": False
                 })
 
-            # Anti-blink coasting: hold the last known box for a brief detector
-            # dropout. We deliberately do NOT extrapolate along the velocity
-            # vector here: the velocity is one or two frames stale, so a bird
-            # that slows or turns would see its box sail past it. Freezing the
-            # box is always less wrong than guessing forward.
+            # Anti-blink motion coasting: hold confirmed tracks for up to COAST_MAX_FRAMES missed frames
+            flock_limit = MAX_TRACKED_CHICKENS
+            if getattr(cam, "is_video_file", False) and "POULTRYSENSE_MAX_TRACKED_CHICKENS" not in os.environ:
+                flock_limit = 3
+
             if not tracking_unavailable:
-                for disp_id in list(display_coasting_boxes.keys()):
+                if len(seen_display_ids) < flock_limit and COAST_MAX_FRAMES > 0:
+                    for disp_id in list(display_coasting_boxes.keys()):
                         if disp_id not in seen_display_ids:
                             c_info = display_coasting_boxes[disp_id]
                             c_info["missed"] += 1
                             if c_info["missed"] <= COAST_MAX_FRAMES:
-                                # Drop the cached velocity so a re-acquired track
-                                # does not inherit stale motion into the next
-                                # prediction step.
-                                track_velocities[disp_id] = (0.0, 0.0)
+                                # Anti-duplicate check: if another active chicken is detected within 160px, suppress ghost coasting
+                                is_duplicate = False
+                                for item in display_items:
+                                    if not item.get("is_coasting", False):
+                                        if np.hypot(c_info["cx"] - item["cx"], c_info["cy"] - item["cy"]) < 160.0:
+                                            is_duplicate = True
+                                            break
+                                if is_duplicate:
+                                    del display_coasting_boxes[disp_id]
+                                    continue
+
+                                vx, vy = track_velocities.get(disp_id, (0.0, 0.0))
+                                # Extrapolate box position along running velocity vector
+                                shift_x = float(vx * dt)
+                                shift_y = float(vy * dt)
+                                old_box = c_info["box"]
+                                new_box = np.array([
+                                    max(0.0, float(old_box[0] + shift_x)),
+                                    max(0.0, float(old_box[1] + shift_y)),
+                                    min(float(w_frame), float(old_box[2] + shift_x)),
+                                    min(float(h_frame), float(old_box[3] + shift_y))
+                                ], dtype=np.float32)
+
+                                c_info["box"] = new_box
+                                c_info["cx"] += shift_x
+                                c_info["cy"] += shift_y
                                 display_items.append({
                                     "display_id": disp_id,
                                     "box": c_info["box"],
@@ -3963,6 +4576,12 @@ def camera_loop():
                                 })
                             else:
                                 del display_coasting_boxes[disp_id]
+                elif len(seen_display_ids) >= flock_limit:
+                    # All flock members are actively visible; clear any leftover coasting boxes
+                    # so no phantom/stuck boxes can linger
+                    for disp_id in list(display_coasting_boxes.keys()):
+                        if disp_id not in seen_display_ids:
+                            del display_coasting_boxes[disp_id]
 
             if MAX_DISPLAY_BOXES > 0:
                 display_items = display_items[:MAX_DISPLAY_BOXES]
@@ -4079,20 +4698,9 @@ def camera_loop():
                     behavior_time = 0
                     health_time = 0
 
-            # Keep behavior classification low-rate. Health classification is only
-            # requested after a sustained local risk cue, never for every bird.
-            likely_health_risk = (
-                stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC
-                or (is_isolated and stationary_sec >= 15.0)
-            )
-            run_behavior = curr_time - behavior_time >= CLASSIFIER_INTERVAL_SEC
-            run_health = likely_health_risk and (
-                curr_time - health_time >= HEALTH_CLASSIFIER_INTERVAL_SEC
-            )
-
-            # Drop stale work when full. The camera loop always wins over a
-            # secondary classifier task.
-            if not is_coasting and (run_behavior or run_health) and crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
+            # Queue crop to background worker if expired (>3.5s old) without blocking video stream.
+            # Throttling to 3.5s per chicken prevents CPU starvation on the main detection thread.
+            if not is_coasting and (curr_time - last_time > 3.5) and crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
                 try:
                     classification_queue.put_nowait((display_id, crop.copy(), run_behavior, run_health))
                 except queue.Full:
@@ -4107,18 +4715,40 @@ def camera_loop():
                 except Exception:
                     pass
 
-            # Real-time Motion fusion heuristic:
-            # Active locomotion / foraging requires optical motion. A motionless chicken cannot be walking or pecking.
-            if motion > 4.5:
-                behavior_label = "walk"
-            elif motion < 1.6:
-                # Chicken is motionless / stationary on the litter
-                if unhealthy_prob >= 0.45:
-                    behavior_label = "recumbent"  # Down / paralyzed / unable to stand
-                elif stationary_sec >= 15.0:
-                    behavior_label = "rest"
-                elif behavior_label not in ("rest", "stand"):
-                    behavior_label = "stand"
+            # Temporal Behavior Smoothing with Biological Posture & Locomotion Gating
+            vx, vy = track_velocities.get(display_id, (0.0, 0.0))
+            centroid_speed = float(np.hypot(vx, vy))
+            aspect_ratio = float(box_w / max(1.0, box_h))
+            cx = int((x1 + x2) / 2)
+            cy = int((y1 + y2) / 2)
+
+            if display_id not in track_behavior_smoothers:
+                track_behavior_smoothers[display_id] = TemporalBehaviorFilter(window_sec=2.0)
+
+            behavior_label = track_behavior_smoothers[display_id].update(
+                raw_beh=behavior_label,
+                speed=centroid_speed,
+                aspect_ratio=aspect_ratio,
+                stationary_sec=stationary_sec,
+                curr_time=curr_time,
+                motion=motion,
+                top_y=y1,
+                cy=cy,
+                cx=cx,
+                box_h=box_h
+            )
+
+            # Locomotion Recovery: if the chicken is actively moving, walking, or foraging,
+            # reset stationary duration to 0.0 immediately and clear any stale stationary alerts.
+            if behavior_label in ("walk", "peck") or motion >= 1.6:
+                track_stationary_duration[display_id] = 0.0
+                stationary_sec = 0.0
+                if display_id in gemini_escalator.verdicts:
+                    old_v = gemini_escalator.verdicts[display_id]
+                    if old_v.get("tier") in ("Suspicious", "High Concern"):
+                        print(f"[AI Vision] Chicken #{display_id} resumed active locomotion ({behavior_label}) — resetting alert to Normal.")
+                        gemini_escalator.verdicts.pop(display_id, None)
+                        gemini_escalator.active_alerts.pop(display_id, None)
 
             # 1. Sample behavior history at 2 Hz. Recomputing a 180-second
             # history on every detection tick is expensive and adds no useful
@@ -4158,7 +4788,8 @@ def camera_loop():
                     baseline=baseline,
                     unhealthy_prob=unhealthy_prob,
                     is_isolated=is_isolated,
-                    stationary_sec=stationary_sec
+                    stationary_sec=stationary_sec,
+                    behavior_label=behavior_label
                 )
                 anomaly_score = anomaly_info["anomaly_score"]
                 anomaly_tier = anomaly_info["anomaly_tier"]
@@ -4172,14 +4803,18 @@ def camera_loop():
                         health_detail = "Active Foraging Behavior"
                     elif behavior_label in ("rest", "sleep") or stationary_sec >= 15.0:
                         health_detail = f"Normal Resting / Sleeping ({stationary_sec:.0f}s)"
+                    elif behavior_label == "stand":
+                        health_detail = "Normal Standing Posture"
                     else:
                         health_detail = "Adequate Movement Detected"
                     color = get_id_color(display_id)
                     healthy_count += 1
                 elif anomaly_tier == "Monitor":
                     health_label = "Monitor"
-                    if unhealthy_prob >= 0.45 or behavior_label == "recumbent":
+                    if behavior_label == "recumbent":
                         health_detail = f"Recumbent / Low Activity ({int(unhealthy_prob * 100)}% visual severity)"
+                    elif behavior_label == "stand":
+                        health_detail = f"Standing Upright ({stationary_sec:.0f}s)"
                     elif is_isolated:
                         health_detail = "Flock Edge / Moderate Separation"
                     elif stationary_sec >= 25.0:
@@ -4190,8 +4825,10 @@ def camera_loop():
                     observing_count += 1
                 elif anomaly_tier == "Suspicious":
                     health_label = "Needs Attention"
-                    if unhealthy_prob >= 0.45 or behavior_label == "recumbent":
+                    if behavior_label == "recumbent":
                         health_detail = f"Recumbent / Lethargic Posture ({int(unhealthy_prob * 100)}% visual severity)"
+                    elif behavior_label == "stand":
+                        health_detail = f"Stationary Standing ({stationary_sec:.0f}s)"
                     elif is_isolated and stats["isolation_pct"] >= 50.0:
                         health_detail = "Persistent Isolation & Inactivity"
                     elif stationary_sec >= 45.0:
@@ -4202,8 +4839,10 @@ def camera_loop():
                     warning_count += 1
                 else:  # High Concern (>= 80)
                     health_label = "High Concern"
-                    if unhealthy_prob >= 0.45 or behavior_label == "recumbent":
-                        health_detail = f"Recumbent / Paralyzed Posture ({int(unhealthy_prob * 100)}%)"
+                    if behavior_label == "recumbent":
+                        health_detail = f"Recumbent / Down on Ground ({int(unhealthy_prob * 100)}%)"
+                    elif behavior_label == "stand":
+                        health_detail = f"Immobile Standing ({stationary_sec:.0f}s)"
                     else:
                         health_detail = f"Severe Lethargy Marker ({stationary_sec:.0f}s immobile)"
                     # Prior to Gemini confirmation, hold at Amber-Orange (Suspicious/Evaluating) instead of Red
@@ -4218,15 +4857,17 @@ def camera_loop():
                 # - Thermal stress (ambient temperature > 30°C or < 18°C from ESP32 DHT22)
                 # - Composite anomaly tier (Suspicious / High Concern)
                 abnormal_triggers = []
-                if behavior_label == "recumbent" or unhealthy_prob >= 0.45:
+                if behavior_label == "recumbent":
                     abnormal_triggers.append(f"Abnormal recumbent posture / unable to stand ({unhealthy_prob:.2f})")
+                elif unhealthy_prob >= 0.75:
+                    abnormal_triggers.append(f"Visual posture/plumage anomaly ({unhealthy_prob:.2f})")
 
                 if stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC:
                     abnormal_triggers.append(f"Prolonged immobility ({stationary_sec:.0f}s >= {DAYTIME_RECUMBENT_THRESHOLD_SEC:.0f}s threshold)")
                 elif stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC and behavior_label in ("rest", "stand", "sit", "recumbent"):
                     abnormal_triggers.append(f"Extended stationary resting ({stationary_sec:.0f}s >= {GEMINI_TRIGGER_STATIONARY_SEC:.0f}s)")
 
-                if unhealthy_prob >= 0.45 or anomaly_info.get("sub_scores", {}).get("posture", 0) >= 45.0:
+                if unhealthy_prob >= 0.75 or anomaly_info.get("sub_scores", {}).get("posture", 0) >= 60.0:
                     abnormal_triggers.append(f"Lethargic posture / visual anomaly score ({unhealthy_prob:.2f})")
 
                 if is_isolated and (stats.get("isolation_pct", 0) >= 40.0 and elapsed_obs >= OBSERVATION_WINDOW):
@@ -4244,19 +4885,23 @@ def camera_loop():
 
                 # Sustained observation gate: Gemini evaluates ONLY when abnormal behavior is sustained,
                 # never on immediate single-frame transients or newly appeared chickens still calibrating.
+                obs_threshold = 6.0 if is_sim else (15.0 if unhealthy_prob >= 0.85 else OBSERVATION_WINDOW)
+                stat_trigger_sec = 6.0 if is_sim else (15.0 if unhealthy_prob >= 0.85 else GEMINI_TRIGGER_STATIONARY_SEC)
+                daytime_threshold = 12.0 if is_sim else DAYTIME_RECUMBENT_THRESHOLD_SEC
+
                 is_sustained_recumbency = (
-                    (behavior_label == "recumbent" or unhealthy_prob >= 0.50)
-                    and (stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC or (unhealthy_prob >= 0.85 and stationary_sec >= 30.0))
-                    and elapsed_obs >= OBSERVATION_WINDOW
+                    behavior_label == "recumbent"
+                    and (stationary_sec >= stat_trigger_sec or stationary_sec >= (4.0 if is_sim else 15.0))
+                    and elapsed_obs >= obs_threshold
                 )
                 is_prolonged_immobility = (
-                    stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC
-                    and elapsed_obs >= OBSERVATION_WINDOW
+                    stationary_sec >= daytime_threshold
+                    and elapsed_obs >= obs_threshold
                 )
                 is_sustained_anomaly = (
                     (anomaly_tier in ("Suspicious", "High Concern") or anomaly_score >= 65)
-                    and stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC
-                    and elapsed_obs >= OBSERVATION_WINDOW
+                    and stationary_sec >= stat_trigger_sec
+                    and elapsed_obs >= obs_threshold
                 )
 
                 is_abnormal_flagged = (
@@ -4305,13 +4950,12 @@ def camera_loop():
                 gemini_severity = "Low"
 
                 # Condition-Collapse Invalidation Guard:
-                # If a bird was previously evaluated as Normal, but NOW collapses (recumbent posture,
-                # acute visual sickness >= 0.50, or prolonged immobility >= 60s):
-                # The old Normal verdict is INVALIDATED and purged so sickness is NEVER hidden!
+                # If a bird was previously evaluated as Normal, but NOW collapses into true recumbent posture
+                # or experiences prolonged immobility >= 60s with severe visual sickness:
+                # The old Normal verdict is INVALIDATED and purged so acute sickness is NEVER hidden!
                 is_condition_collapsed = (
                     behavior_label == "recumbent"
-                    or unhealthy_prob >= 0.50
-                    or (stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC and unhealthy_prob >= 0.35)
+                    or (stationary_sec >= DAYTIME_RECUMBENT_THRESHOLD_SEC and unhealthy_prob >= 0.75)
                 )
                 if gemini_verdict and gemini_verdict.get("tier") == "Normal" and is_condition_collapsed:
                     gemini_escalator.verdicts.pop(display_id, None)
@@ -4373,15 +5017,26 @@ def camera_loop():
             if elapsed_obs < OBSERVATION_WINDOW and unhealthy_prob < 0.45:
                 badge_text = f"#{display_id} {behavior_label.upper()}"
             elif gemini_verified:
-                badge_text = f"#{display_id} {gemini_severity.upper()}{gemini_check}"
+                if anomaly_tier == "Normal":
+                    badge_text = f"#{display_id} {behavior_label.upper()}{gemini_check}"
+                elif anomaly_tier == "Monitor":
+                    badge_text = f"#{display_id} WATCH{gemini_check}"
+                elif anomaly_tier == "Suspicious":
+                    badge_text = f"#{display_id} ATTENTION{gemini_check}"
+                else:
+                    badge_text = f"#{display_id} CRITICAL ALERT{gemini_check}"
             elif behavior_label == "recumbent":
                 badge_text = f"#{display_id} RECUMBENT"
+            elif behavior_label in ("walk", "peck") or stationary_sec < 5.0:
+                badge_text = f"#{display_id} {behavior_label.upper()}"
             elif anomaly_tier == "Normal":
                 badge_text = f"#{display_id} {behavior_label.upper()}"
-            elif anomaly_tier == "Monitor":
+            elif anomaly_tier in ("Monitor", "Suspicious"):
                 badge_text = f"#{display_id} WATCH"
+            elif anomaly_tier == "High Concern":
+                badge_text = f"#{display_id} EVALUATING..."
             else:
-                badge_text = f"#{display_id} {anomaly_tier.upper()} {anomaly_score}%"
+                badge_text = f"#{display_id} WATCH"
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.45

@@ -124,18 +124,23 @@ class AlertsFragment : Fragment() {
                         val behavior = verdict["behavior"]?.toString().orEmpty()
                         val timestamp = verdict["timestamp"]?.toString().orEmpty()
                         val tag = ChickenTagHelper.getTagInfo(cid)
+                        val isHealthyText = summary.contains("no signs of illness", ignoreCase = true) ||
+                            summary.contains("rather than pathological", ignoreCase = true) ||
+                            summary.contains("normal physiological", ignoreCase = true) ||
+                            reason.contains("no signs of illness", ignoreCase = true)
                         val isNormal = tier.equals("Normal", ignoreCase = true) ||
                             tier.equals("Healthy", ignoreCase = true) ||
-                            severity.equals("Low", ignoreCase = true)
+                            severity.equals("Low", ignoreCase = true) ||
+                            (isHealthyText && !severity.equals("Critical", ignoreCase = true) && !tier.equals("High Concern", ignoreCase = true))
 
                         // Cleared / Normal birds are not active alerts requiring intervention
                         if (isNormal) {
                             continue
                         }
 
-                        val critical = severity.equals("Critical", ignoreCase = true) ||
-                            tier.equals("High Concern", ignoreCase = true) ||
-                            score >= 70
+                        val critical = (severity.equals("Critical", ignoreCase = true) ||
+                            tier.equals("High Concern", ignoreCase = true)) &&
+                            score >= 80
                         val alertSeverity = when {
                             critical -> AlertSeverity.CRITICAL
                             tier.equals("Suspicious", ignoreCase = true) ||
@@ -275,7 +280,10 @@ class AlertsFragment : Fragment() {
         val tag = ChickenTagHelper.getTagInfo(detail.chickenId)
         val tier = detail.anomalyTier?.ifBlank { "Needs Attention" } ?: "Needs Attention"
         val isNormal = tier.equals("Normal", ignoreCase = true) || tier.equals("Healthy", ignoreCase = true)
-        val critical = !isNormal && (tier.equals("High Concern", ignoreCase = true) || detail.anomalyScore >= 70)
+        val critical = !isNormal && (
+            tier.equals("High Concern", ignoreCase = true) ||
+            detail.anomalyTier?.equals("High Concern", ignoreCase = true) == true
+        ) && detail.anomalyScore >= 80
         val alertSeverity = when {
             isNormal -> AlertSeverity.INFO
             critical -> AlertSeverity.CRITICAL

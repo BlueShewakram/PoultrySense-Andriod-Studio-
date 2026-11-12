@@ -72,3 +72,22 @@ file-system.probe
 
 # AGY / Antigravity IDE
 .agents/
+
+# Large video test files (local testing only)
+*.mp4
+
+# Large model binaries at root
+/*.pt
+/*.onnx
+
+# Test images (local)
+poultrysense_ai/*.jfif
+poultrysense_ai/*.jpg
+!poultrysense_ai/.env.example
+
+# Model backup dirs
+poultrysense_ai/models/*_backup*/
+
+# Generated architecture diagrams (keep locally, too large for git)
+# poultry_sense_algorithm_architecture.png
+# poultry_sense_ai_infographic.jpg

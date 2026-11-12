@@ -550,7 +550,7 @@ class MonitorFragment : Fragment() {
                                             val tag = ChickenTagHelper.getTagInfo(cId)
                                             val isCrit = alertItem.severity.equals("critical", ignoreCase = true) ||
                                                 alertItem.anomalyTier.equals("High Concern", ignoreCase = true) ||
-                                                (alertItem.anomalyScore ?: 0) >= 70
+                                                (alertItem.anomalyScore ?: 0) >= 80
                                             val alert = FarmAlert(
                                                 id = "alert-ai-c$cId",
                                                 severity = if (isCrit) AlertSeverity.CRITICAL else AlertSeverity.WARNING,
@@ -699,8 +699,6 @@ class MonitorFragment : Fragment() {
         val trackId = detection.trackId ?: index
         val tagInfo = ChickenTagHelper.getTagInfo(trackId)
         val conf = ((detection.confidence ?: 0.0) * 100).toInt()
-        val behavior = detection.behavior?.replaceFirstChar { it.uppercase() } ?: "Active"
-        val health = detection.health ?: "Healthy"
         val detail = detection.healthDetail?.takeIf { it.isNotEmpty() } ?: "Normal Locomotion"
         val tier = detection.anomalyTier ?: "Normal"
         val gemini = detection.geminiSummary?.takeIf { it.isNotEmpty() }
@@ -718,15 +716,26 @@ class MonitorFragment : Fragment() {
         tvNum.background = numDrawable
         tvNum.setTextColor(Color.parseColor(tagInfo.textColorHex))
 
+        val behaviorLower = detection.behavior?.lowercase(Locale.getDefault()).orEmpty()
+        val isWalking = behaviorLower == "walk" || ((detection.motion ?: 0.0) >= 2.0 && (detection.stationarySec ?: 0.0) < 3.0)
+        val isPecking = behaviorLower == "peck"
+        val isResting = behaviorLower in listOf("rest", "resting", "sleep", "sleeping")
+        val isActivelyMoving = isWalking || isPecking || (detection.motion ?: 0.0) >= 1.5
+        val hasGeminiAlert = geminiVerified && tier.equals("High Concern", ignoreCase = true)
+
         if (gemini != null) {
             tvSub.text = "$gemini"
         } else {
-            tvSub.text = "ByteTrack Conf $conf% • $behavior • $detail"
+            val behaviorDisplay = when {
+                isResting -> "Resting / Sleep"
+                isWalking -> "Walking"
+                isPecking -> "Feeding / Pecking"
+                else -> "Standing (Alert)"
+            }
+            tvSub.text = "ByteTrack Conf $conf% • $behaviorDisplay • $detail"
         }
 
         val ctx = context ?: return
-        val hasGeminiAlert = (geminiVerified || !gemini.isNullOrBlank()) &&
-            (tier.equals("High Concern", ignoreCase = true) || health.lowercase(Locale.getDefault()) == "high concern")
 
         when {
             hasGeminiAlert -> {
@@ -734,12 +743,17 @@ class MonitorFragment : Fragment() {
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.critical))
                 tvStatus.text = TierLabels.ALERT.uppercase(Locale.getDefault())
             }
-            tier == "High Concern" || tier == "Suspicious" || health.lowercase(Locale.getDefault()) in listOf("high concern", "needs attention", "warning", "needs review") -> {
+            geminiVerified && tier.equals("Suspicious", ignoreCase = true) -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
-                tvStatus.text = if (tier == "High Concern") "EVALUATING" else TierLabels.ATTENTION.uppercase(Locale.getDefault())
+                tvStatus.text = TierLabels.ATTENTION.uppercase(Locale.getDefault())
             }
-            tier == "Monitor" -> {
+            tier.equals("High Concern", ignoreCase = true) -> {
+                tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
+                tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
+                tvStatus.text = "EVALUATING"
+            }
+            !isActivelyMoving && (tier.equals("Suspicious", ignoreCase = true) || tier.equals("Monitor", ignoreCase = true)) -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_warning_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.warning))
                 tvStatus.text = TierLabels.WATCH.uppercase(Locale.getDefault())
@@ -747,7 +761,12 @@ class MonitorFragment : Fragment() {
             else -> {
                 tvStatus.setBackgroundResource(R.drawable.bg_healthy_badge)
                 tvStatus.setTextColor(ContextCompat.getColor(ctx, R.color.primary))
-                tvStatus.text = if (geminiVerified) "✓ HEALTHY" else TierLabels.NORMAL.uppercase(Locale.getDefault())
+                tvStatus.text = when {
+                    geminiVerified -> "✓ HEALTHY"
+                    isResting -> "✓ RESTING"
+                    isWalking -> "✓ WALKING"
+                    else -> TierLabels.NORMAL.uppercase(Locale.getDefault())
+                }
             }
         }
     }

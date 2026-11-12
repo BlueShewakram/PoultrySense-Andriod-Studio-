@@ -1,14 +1,13 @@
 # PoultrySense tracker config for BoT-SORT (chicken tracking)
-# Optimized for fast-running chickens & occlusion recovery
+# Optimized for high-FPS CPU tracking without ReID inference bottleneck
 tracker_type: botsort
-# Detector reports down to DETECTOR_CONF (0.15) so the tracker's second
-# association stage can keep a track alive through motion blur. New tracks
-# still require DETECTION_CONF (0.45) via new_track_thresh.
-track_high_thresh: 0.45
+# Detector reports down to DETECTOR_CONF (0.25) so the tracker's second
+# association stage can keep a track alive through motion blur.
+track_high_thresh: 0.35
 track_low_thresh: 0.15
-new_track_thresh: 0.45
-track_buffer: 180
-match_thresh: 0.70
+new_track_thresh: 0.35
+track_buffer: 60
+match_thresh: 0.50
 fuse_score: true
 
 # BoT-SORT specifics
@@ -17,14 +16,8 @@ fuse_score: true
 # sparseOptFlow is lighter than ORB/SIFT and is appropriate for this live feed.
 gmc_method: sparseOptFlow
 
-# ReID is DISABLED on purpose. The only appearance model shipped with the
-# project (yolo26n-reid.onnx) is a generic person-ReID network: its embeddings
-# are meaningless for chickens, so appearance matching adds latency and can
-# hijack a correct IoU/Kalman association. BoT-SORT without ReID uses the
-# same IoU + Kalman association as ByteTrack, which is what commercial fixed-camera
-# trackers (DeepStream, Frigate) run. Set with_reid: true only if you train a
-# chicken-specific ReID model and point `model:` at it.
-proximity_thresh: 0.85
-appearance_thresh: 0.55
+# Fast Kalman & spatial tracking without CPU ReID bottleneck
+proximity_thresh: 0.80
+appearance_thresh: 0.25
 with_reid: false
-model: yolo26n-reid.onnx
+model: auto

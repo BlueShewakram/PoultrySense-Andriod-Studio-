@@ -12324,8 +12324,8 @@
 		<edge from-layer="635" from-port="2" to-layer="636" to-port="0" />
 	</edges>
 	<rt_info>
-		<info name="OpenVINO Runtime" value="2026.4.0-22959-99c81491cc3-releases/2026/4" />
-		<Runtime_version value="2026.4.0-22959-99c81491cc3-releases/2026/4" />
+		<info name="OpenVINO Runtime" value="2026.4.1-22982-e213a147257-releases/2026/4" />
+		<Runtime_version value="2026.4.1-22982-e213a147257-releases/2026/4" />
 		<conversion_parameters>
 			<framework value="pytorch" />
 			<is_python_object value="True" />

@@ -1,10 +1,26 @@
 {
   "rules": {
     "sensor_data": {
-      ".read": "auth != null",
+      ".read": true,
       ".write": true
     },
     "system_control": {
+      ".read": true,
+      ".write": true
+    },
+    "active_alerts": {
+      ".read": true,
+      ".write": true
+    },
+    "diagnostic_verdicts": {
+      ".read": true,
+      ".write": true
+    },
+    "alerts": {
+      ".read": true,
+      ".write": true
+    },
+    "chicken_baselines": {
       ".read": true,
       ".write": true
     },

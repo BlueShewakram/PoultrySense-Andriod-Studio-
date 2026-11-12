@@ -51,9 +51,7 @@ class DetectionOverlayView @JvmOverloads constructor(
         var currentAlpha: Float = 0f,
         var targetAlpha: Float = 1f,
         var isAlive: Boolean = true,
-        var velocityX: Float = 0f,
-        var velocityY: Float = 0f,
-        var targetChangedAtMs: Long = 0L
+        var lastSeenMs: Long = SystemClock.uptimeMillis()
     )
 
     private val activeTracks = mutableMapOf<Int, TrackedBox>()
@@ -89,6 +87,8 @@ class DetectionOverlayView @JvmOverloads constructor(
 
         val now = SystemClock.uptimeMillis()
         val seenKeys = mutableSetOf<Int>()
+        data class PendingItem(val key: Int, val rect: RectF, val item: DetectionItem)
+        val incoming = mutableListOf<PendingItem>()
 
         items.orEmpty().forEachIndexed { index, item ->
             val bbox = item.bbox
@@ -100,80 +100,119 @@ class DetectionOverlayView @JvmOverloads constructor(
             if (right <= left || bottom <= top) return@forEachIndexed
 
             val trackId = item.trackId ?: 0
-            // Unique key for tracking; fallback to negative index if trackId <= 0
             val key = if (trackId > 0) trackId else -(index + 1000)
             seenKeys.add(key)
+            incoming.add(PendingItem(key, RectF(left, top, right, bottom), item))
+        }
+
+        val now = SystemClock.uptimeMillis()
+
+        incoming.forEach { pending ->
+            val key = pending.key
+            val newTarget = pending.rect
+            val item = pending.item
+            val trackId = item.trackId ?: 0
 
             val tier = item.anomalyTier ?: "Normal"
-            val hasGeminiAlert = (item.geminiVerified == true || !item.geminiSummary.isNullOrBlank()) &&
-                (tier.equals("High Concern", ignoreCase = true) || tier.equals("Suspicious", ignoreCase = true))
+            val isGemini = item.geminiVerified == true
+            val isHighConcern = tier.equals("High Concern", ignoreCase = true)
+            val isSuspicious = tier.equals("Suspicious", ignoreCase = true)
+            val isMonitor = tier.equals("Monitor", ignoreCase = true)
+            val isRecumbent = item.behavior?.equals("recumbent", ignoreCase = true) == true
+            val behaviorLower = item.behavior?.lowercase(java.util.Locale.getDefault()).orEmpty()
+            val isWalking = behaviorLower == "walk" || ((item.motion ?: 0.0) >= 2.0 && (item.stationarySec ?: 0.0) < 3.0)
+            val isPecking = behaviorLower == "peck"
+            val isResting = behaviorLower in listOf("rest", "resting", "sleep", "sleeping")
+            val isStanding = behaviorLower == "stand" || (!isWalking && !isPecking && !isResting && !isRecumbent)
+            val isActivelyMoving = isWalking || isPecking || (item.motion ?: 0.0) >= 1.5
 
             val label = buildString {
                 if (trackId > 0) append('#').append(trackId) else append("CHICKEN")
                 when {
-                    hasGeminiAlert && tier.equals("High Concern", ignoreCase = true) -> append(" CRITICAL ALERT")
-                    tier.equals("High Concern", ignoreCase = true) -> append(" EVALUATING...")
-                    item.behavior?.equals("recumbent", ignoreCase = true) == true -> append(" RECUMBENT")
-                    tier.equals("Suspicious", ignoreCase = true) -> append(" ATTENTION")
-                    tier.equals("Monitor", ignoreCase = true) -> append(" WATCH")
-                    else -> item.behavior?.takeIf { it.isNotBlank() }?.let {
-                        append(' ').append(it.uppercase(java.util.Locale.getDefault()))
+                    // Authoritative Gemini clinical diagnosis
+                    isGemini && isHighConcern -> append(" CRITICAL ALERT \u2713")
+                    isGemini && isSuspicious -> append(" ATTENTION \u2713")
+                    isGemini && isMonitor -> append(" WATCH \u2713")
+                    isGemini -> {
+                        val beh = when {
+                            isWalking -> "WALK"
+                            isPecking -> "PECK"
+                            isResting -> "REST"
+                            isRecumbent -> "RECUMBENT"
+                            else -> "STAND"
+                        }
+                        append(' ').append(beh).append(" \u2713")
                     }
+                    // Local Heuristics
+                    // 1. High Concern -> Evaluating (prior to Gemini)
+                    isHighConcern -> append(" EVALUATING...")
+                    // 2. Recumbent -> Recumbent
+                    isRecumbent -> append(" RECUMBENT")
+                    // 3. Resting / Sleep (eyes closed, calm on litter, non-locomoting)
+                    isResting && !isActivelyMoving -> append(" REST")
+                    // 4. Actively walking / locomotion
+                    isWalking -> append(" WALK")
+                    // 5. Feeding / Pecking ground
+                    isPecking -> append(" PECK")
+                    // 6. Extended stationary observation -> WATCH (never Attention until Gemini verifies)
+                    isSuspicious || isMonitor -> append(" WATCH")
+                    // 7. Normal standing / looking around
+                    else -> append(" STAND")
                 }
-                if (item.geminiVerified == true) append(" \u2713")
             }
-            val color = colorForDetection(tier, hasGeminiAlert)
-            val newTarget = RectF(left, top, right, bottom)
-            val velocityX = item.velocity?.getOrNull(0)?.toFloat() ?: 0f
-            val velocityY = item.velocity?.getOrNull(1)?.toFloat() ?: 0f
+            val color = colorForDetection(tier, isGemini, isRecumbent, isActivelyMoving || isStanding || isResting)
 
             val existing = activeTracks[key]
             if (existing != null) {
-                val wasAlive = existing.isAlive
-                val jumped = abs(existing.targetRect.left - newTarget.left) > SNAP_DISTANCE_PX ||
-                    abs(existing.targetRect.top - newTarget.top) > SNAP_DISTANCE_PX ||
-                    abs(existing.targetRect.right - newTarget.right) > SNAP_DISTANCE_PX ||
-                    abs(existing.targetRect.bottom - newTarget.bottom) > SNAP_DISTANCE_PX
-                val targetMoved = jumped ||
-                    abs(existing.targetRect.left - newTarget.left) > 0.5f ||
-                    abs(existing.targetRect.top - newTarget.top) > 0.5f ||
-                    abs(existing.targetRect.right - newTarget.right) > 0.5f ||
-                    abs(existing.targetRect.bottom - newTarget.bottom) > 0.5f
-                if (targetMoved || !wasAlive) {
-                    existing.targetRect.set(newTarget)
-                    existing.targetChangedAtMs = now
-                }
-                // Reappearing after occlusion, or a genuine teleport: snap instead
-                // of sliding the box across the screen.
-                if (!wasAlive || jumped) {
-                    existing.currentRect.set(newTarget)
-                }
-                existing.velocityX = velocityX
-                existing.velocityY = velocityY
+                existing.targetRect.set(newTarget)
                 existing.label = label
                 existing.color = color
                 existing.targetAlpha = 1f
-                existing.currentAlpha = 1f
                 existing.isAlive = true
+                existing.lastSeenMs = now
             } else {
-                // New detection appears instantly with full opacity (no fade delay)
+                // Running chicken handoff check: if a new box appears near an un-seen old box,
+                // immediately hand off position and purge the old box so no stuck duplicate appears!
+                val newCenterX = newTarget.centerX()
+                val newCenterY = newTarget.centerY()
+                var handedOffRect: RectF? = null
+
+                val unseenIter = activeTracks.entries.iterator()
+                while (unseenIter.hasNext()) {
+                    val entry = unseenIter.next()
+                    if (entry.key !in seenKeys) {
+                        val oldTrack = entry.value
+                        val oldCenterX = oldTrack.currentRect.centerX()
+                        val oldCenterY = oldTrack.currentRect.centerY()
+                        val dist = Math.hypot(
+                            (newCenterX - oldCenterX).toDouble(),
+                            (newCenterY - oldCenterY).toDouble()
+                        )
+                        // If within 250px, this is the same chicken running fast
+                        if (dist < 250.0) {
+                            handedOffRect = RectF(oldTrack.currentRect)
+                            unseenIter.remove() // Instantly delete the old stuck box!
+                            break
+                        }
+                    }
+                }
+
+                val initialRect = handedOffRect ?: RectF(newTarget)
                 activeTracks[key] = TrackedBox(
                     key = key,
-                    currentRect = RectF(newTarget),
+                    currentRect = initialRect,
                     targetRect = RectF(newTarget),
                     label = label,
                     color = color,
                     currentAlpha = 1f,
                     targetAlpha = 1f,
                     isAlive = true,
-                    velocityX = velocityX,
-                    velocityY = velocityY,
-                    targetChangedAtMs = now
+                    lastSeenMs = now
                 )
             }
         }
 
-        // Mark missing tracks to fade out quickly
+        // Departed tracks: immediately start smooth fast fade-out so no box is left stuck on screen
         activeTracks.values.forEach { track ->
             if (track.key !in seenKeys) {
                 track.targetAlpha = 0f
@@ -181,8 +220,7 @@ class DetectionOverlayView @JvmOverloads constructor(
             }
         }
 
-        // Do not touch lastFrameTimeMs here: onDraw owns it so the smoothing
-        // timestep stays continuous across payload updates.
+        lastFrameTimeMs = now
         postInvalidateOnAnimation()
     }
 
@@ -193,12 +231,22 @@ class DetectionOverlayView @JvmOverloads constructor(
         }
     }
 
-    private fun colorForDetection(tier: String, hasGeminiAlert: Boolean): Int = when {
-        // Red ONLY when confirmed as an anomaly/alert by Gemini!
-        hasGeminiAlert && tier.equals("High Concern", ignoreCase = true) -> Color.parseColor("#FF4646")
-        // If locally high concern or suspicious, show Orange (under observation) prior to Gemini verdict
-        tier.equals("High Concern", ignoreCase = true) || tier.equals("Suspicious", ignoreCase = true) -> Color.parseColor("#FF8C00")
-        tier.equals("Monitor", ignoreCase = true) -> Color.parseColor("#00D7FF")
+    private fun colorForDetection(
+        tier: String,
+        isGeminiVerified: Boolean,
+        isRecumbent: Boolean,
+        isHealthyActivity: Boolean
+    ): Int = when {
+        // Red ONLY when confirmed as High Concern / Critical by Gemini!
+        isGeminiVerified && tier.equals("High Concern", ignoreCase = true) -> Color.parseColor("#FF4646")
+        // Orange ONLY when Gemini verified Attention/Suspicious, or locally recumbent/evaluating
+        isGeminiVerified && tier.equals("Suspicious", ignoreCase = true) -> Color.parseColor("#FF8C00")
+        isRecumbent -> Color.parseColor("#FF8C00")
+        tier.equals("High Concern", ignoreCase = true) -> Color.parseColor("#FF8C00")
+        // Normal healthy activities (Walking, Standing, Resting, Pecking) are ALWAYS vibrant green!
+        isHealthyActivity && (tier.equals("Normal", ignoreCase = true) || !isGeminiVerified && !tier.equals("Suspicious", ignoreCase = true) && !tier.equals("Monitor", ignoreCase = true)) -> Color.parseColor("#00E676")
+        // Extended stationary observation: Cyan/Blue for WATCH
+        tier.equals("Monitor", ignoreCase = true) || tier.equals("Suspicious", ignoreCase = true) -> Color.parseColor("#00D7FF")
         else -> Color.parseColor("#00E676")
     }
 
@@ -229,31 +277,25 @@ class DetectionOverlayView @JvmOverloads constructor(
         while (iterator.hasNext()) {
             val track = iterator.next()
 
-            // Glide the box between detector updates: dead-reckon forward using
-            // the server-reported velocity (clamped) and ease toward that point.
             if (track.isAlive) {
-                val ageSec = ((now - track.targetChangedAtMs) / 1000f)
-                    .coerceIn(0f, MAX_EXTRAPOLATION_SEC)
-                var leadX = track.velocityX * ageSec
-                var leadY = track.velocityY * ageSec
-                val leadMag = hypot(leadX, leadY)
-                if (leadMag > MAX_EXTRAPOLATION_PX) {
-                    val k = MAX_EXTRAPOLATION_PX / leadMag
-                    leadX *= k
-                    leadY *= k
-                }
-                track.currentRect.set(
-                    lerp(track.currentRect.left, track.targetRect.left + leadX, smooth),
-                    lerp(track.currentRect.top, track.targetRect.top + leadY, smooth),
-                    lerp(track.currentRect.right, track.targetRect.right + leadX, smooth),
-                    lerp(track.currentRect.bottom, track.targetRect.bottom + leadY, smooth)
-                )
+                // Silky-smooth 60 FPS motion interpolation (glides continuously without jerky snaps)
+                val factor = 0.22f
+                track.currentRect.left = lerp(track.currentRect.left, track.targetRect.left, factor)
+                track.currentRect.top = lerp(track.currentRect.top, track.targetRect.top, factor)
+                track.currentRect.right = lerp(track.currentRect.right, track.targetRect.right, factor)
+                track.currentRect.bottom = lerp(track.currentRect.bottom, track.targetRect.bottom, factor)
                 track.currentAlpha = 1f
-                // Keep redrawing at display rate while any box is live.
-                needsAnotherFrame = true
+
+                val diff = Math.abs(track.currentRect.left - track.targetRect.left) +
+                           Math.abs(track.currentRect.top - track.targetRect.top) +
+                           Math.abs(track.currentRect.right - track.targetRect.right) +
+                           Math.abs(track.currentRect.bottom - track.targetRect.bottom)
+                if (diff > 0.15f) {
+                    needsAnotherFrame = true
+                }
             } else {
-                // Smooth fast fade-out for occluded/departed tracks
-                track.currentAlpha = lerp(track.currentAlpha, 0f, 0.40f)
+                // Smooth fast fade-out for departed tracks (clean, non-lingering exit)
+                track.currentAlpha = lerp(track.currentAlpha, 0f, 0.25f)
                 if (track.currentAlpha > 0.03f) {
                     needsAnotherFrame = true
                 }
