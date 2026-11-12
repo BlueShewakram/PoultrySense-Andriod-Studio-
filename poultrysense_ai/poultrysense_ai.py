@@ -735,7 +735,7 @@ MAX_TRACKED_CHICKENS = int(os.environ.get("POULTRYSENSE_MAX_TRACKED_CHICKENS", "
 # --- Camera Configuration ---
 # Camera index: 1 = external USB camera ("HD Camera")
 #               0 = built-in laptop camera (fallback)
-EXTERNAL_CAMERA_INDEX = 1
+EXTERNAL_CAMERA_INDEX = int(os.environ.get("POULTRYSENSE_CAM_INDEX", "1"))
 FALLBACK_CAMERA_INDEX = 0
 
 
