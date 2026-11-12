@@ -55,6 +55,10 @@ poultrysense_ai/training/
 
 # OpenVINO export cache (regenerated locally on first run — delete to roll back to torch)
 *_openvino_model/
+# Old exports parked when the size/precision changes (kept for rollback, not tracked)
+*_openvino_model_backup*/
+# Temp dirs left behind by test runs
+poultrysense_ai/tmp*/
 
 # OS
 .DS_Store

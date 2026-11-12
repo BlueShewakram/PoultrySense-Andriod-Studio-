@@ -5,6 +5,7 @@ Run from the repository root:
 """
 
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -52,25 +53,26 @@ class MinBoxScalingTests(unittest.TestCase):
 
 
 class ExportSizeKeyingTests(unittest.TestCase):
-    def test_marker_round_trip(self):
+    def make_export_dir(self):
         d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
         export = os.path.join(d, "model_openvino_model")
         os.makedirs(export)
+        return d, export
+
+    def test_marker_round_trip(self):
+        _, export = self.make_export_dir()
         ps._mark_export_imgsz(export, 320)
         self.assertTrue(ps._export_imgsz_matches(export, 320))
         self.assertFalse(ps._export_imgsz_matches(export, 224))
 
     def test_unmarked_export_never_matches(self):
-        d = tempfile.mkdtemp()
-        export = os.path.join(d, "model_openvino_model")
-        os.makedirs(export)
+        _, export = self.make_export_dir()
         self.assertFalse(ps._export_imgsz_matches(export, 224))
         self.assertFalse(ps._export_imgsz_matches(export, 320))
 
     def test_park_export_renames_not_deletes(self):
-        d = tempfile.mkdtemp()
-        export = os.path.join(d, "model_openvino_model")
-        os.makedirs(export)
+        d, export = self.make_export_dir()
         ps._park_export(export)
         self.assertFalse(os.path.exists(export))
         # something renamed

@@ -143,6 +143,19 @@ DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "25.0"))
 # DETECTION_CONF is what may create a new track or a new box on screen.
 DETECTOR_CONF = float(os.environ.get("POULTRYSENSE_DETECTOR_CONF", "0.15"))
 DETECTOR_IMGSZ = int(os.environ.get("POULTRYSENSE_DETECTOR_IMGSZ", "640"))
+# Detector precision. INT8 is OPT-IN: it needs a calibration dataset, and an
+# uncalibrated INT8 model can lose far more accuracy than the speed is worth.
+#   POULTRYSENSE_INT8=1          enable INT8 for the detector only
+#   POULTRYSENSE_CALIB_DATA=...  path to a YOLO data.yaml (recommended)
+#   POULTRYSENSE_CALIB_DIR=...   folder of representative images
+# With neither set, the bundled chicken dataset is used. Classifiers always
+# stay FP32: a 2-class head is too easy to flip with quantization.
+INT8_ENABLED = os.environ.get("POULTRYSENSE_INT8", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
+DETECTOR_PRECISION = "int8" if INT8_ENABLED else "fp32"
+CALIB_DATA = os.environ.get("POULTRYSENSE_CALIB_DATA", "").strip()
+CALIB_DIR = os.environ.get("POULTRYSENSE_CALIB_DIR", "").strip()
 DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.45"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
@@ -1914,17 +1927,35 @@ def enable_directml_providers():
     return True
 
 
-def resolve_accelerated_model(pt_path, imgsz=640):
+def resolve_accelerated_model(pt_path, imgsz=640, precision="fp32"):
     """Exports and resolves the fastest hardware-accelerated model.
 
     1. OpenVINO export directory (*_openvino_model) for high-speed AVX2 execution (~32ms/frame).
     2. Fallback: PyTorch model (*.pt)."""
-    return resolve_openvino(pt_path, imgsz=imgsz)
+    return resolve_openvino(pt_path, imgsz=imgsz, precision=precision)
 
 
 def _imgsz_marker_path(export_path):
-    """Sidecar file recording the input size an export was built for."""
+    """Sidecar file recording the input size and precision an export was built for."""
     return export_path.rstrip("\\/") + ".poultysense_imgsz"
+
+
+def _read_export_marker(export_path):
+    """Return ``(imgsz, precision)`` from the sidecar, or ``(None, None)``.
+
+    Legacy markers contain only the size (``"640"``); those were always FP32.
+    """
+    try:
+        with open(_imgsz_marker_path(export_path), "r", encoding="utf-8") as fh:
+            raw = fh.read().strip()
+    except Exception:
+        return None, None
+    size_s, _, prec = raw.partition(":")
+    try:
+        size = int(size_s)
+    except ValueError:
+        return None, None
+    return size, (prec.strip().lower() or "fp32")
 
 
 def _export_imgsz_matches(export_path, imgsz):
@@ -1933,19 +1964,96 @@ def _export_imgsz_matches(export_path, imgsz):
     Without this check a cached 224 export is silently reused for a 320
     request, which is how a model resize can appear to work and change nothing.
     """
+    size, _ = _read_export_marker(export_path)
+    return size == int(imgsz)
+
+
+def _export_matches(export_path, imgsz, precision="fp32"):
+    """True only when the export matches BOTH input size and precision.
+
+    Size alone is not enough: an FP32 export silently reused for an INT8
+    request (or the reverse) would make a benchmark measure the wrong model.
+    """
+    size, prec = _read_export_marker(export_path)
+    return size == int(imgsz) and prec == precision.lower()
+
+
+def _mark_export(export_path, imgsz, precision="fp32"):
     try:
-        with open(_imgsz_marker_path(export_path), "r", encoding="utf-8") as fh:
-            return int(fh.read().strip()) == int(imgsz)
+        with open(_imgsz_marker_path(export_path), "w", encoding="utf-8") as fh:
+            fh.write(f"{int(imgsz)}:{precision.lower()}")
+    except Exception as exc:
+        print(f"[OpenVINO] Notice writing export marker: {exc}")
+
+
+def _mark_export_imgsz(export_path, imgsz):
+    """Backwards-compatible wrapper that marks an FP32 export."""
+    _mark_export(export_path, imgsz, "fp32")
+
+
+def _write_calib_yaml(image_dir):
+    """Wrap a folder of images in a minimal YOLO data.yaml for calibration.
+
+    Unlabelled images are fine: INT8 calibration only needs input activations,
+    and Ultralytics tolerates missing label files in a non-augmented split.
+    """
+    import tempfile
+    abs_dir = os.path.abspath(image_dir).replace("\\", "/")
+    fd, path = tempfile.mkstemp(prefix="poultysense_calib_", suffix=".yaml")
+    os.close(fd)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(f'path: "{abs_dir}"\ntrain: .\nval: .\nnc: 1\nnames: [\'chicken\']\n')
+    return path
+
+
+def _resolve_calibration_data(calib_data=None, calib_dir=None, bundled=None):
+    """Return a YOLO dataset YAML usable for INT8 calibration, or None.
+
+    Resolution order:
+      1. ``POULTRYSENSE_CALIB_DATA`` — an explicit YOLO data.yaml (recommended).
+      2. ``POULTRYSENSE_CALIB_DIR``  — a folder of representative images.
+      3. The bundled chicken dataset, which ships with real labels.
+    """
+    if calib_data is None:
+        calib_data = CALIB_DATA
+    if calib_dir is None:
+        calib_dir = CALIB_DIR
+    if bundled is None:
+        bundled = os.path.join(SCRIPT_DIR, "datasets", "chicken_det", "data.yaml")
+
+    if calib_data:
+        return calib_data if os.path.isfile(calib_data) else None
+    if calib_dir and os.path.isdir(calib_dir):
+        return _write_calib_yaml(calib_dir)
+    if bundled and os.path.isfile(bundled):
+        return bundled
+    return None
+
+
+def _supports_quantize_kwarg():
+    """True when the installed Ultralytics uses ``quantize=`` instead of ``int8=``."""
+    try:
+        from ultralytics.cfg import DEFAULT_CFG_DICT
+        return "quantize" in DEFAULT_CFG_DICT
     except Exception:
         return False
 
 
-def _mark_export_imgsz(export_path, imgsz):
-    try:
-        with open(_imgsz_marker_path(export_path), "w", encoding="utf-8") as fh:
-            fh.write(str(int(imgsz)))
-    except Exception as exc:
-        print(f"[OpenVINO] Notice writing export marker: {exc}")
+def _openvino_export_kwargs(imgsz, precision, calib_data):
+    """Build ``YOLO.export()`` kwargs for the requested precision.
+
+    Returns ``(kwargs, effective_precision)``. INT8 degrades to FP32 when no
+    calibration dataset is available rather than shipping an uncalibrated model.
+    """
+    kwargs = {"format": "openvino", "imgsz": imgsz}
+    if precision != "int8" or not calib_data:
+        return kwargs, "fp32"
+    kwargs["data"] = calib_data
+    if _supports_quantize_kwarg():
+        kwargs["quantize"] = 8
+    else:
+        kwargs["int8"] = True
+    return kwargs, "int8"
 
 
 def _park_export(export_path):
@@ -1965,8 +2073,12 @@ def _park_export(export_path):
         print(f"[OpenVINO] Notice parking stale export: {exc}")
 
 
-def resolve_openvino(pt_path, imgsz=640):
-    """Resolves OpenVINO export format if supported, else returns PyTorch .pt path."""
+def resolve_openvino(pt_path, imgsz=640, precision="fp32"):
+    """Resolves OpenVINO export format if supported, else returns PyTorch .pt path.
+
+    The export cache is keyed by input size AND precision, so asking for INT8
+    never silently returns a cached FP32 graph (or vice versa).
+    """
     if not pt_path or not pt_path.endswith(".pt"):
         return pt_path
 
@@ -1980,25 +2092,41 @@ def resolve_openvino(pt_path, imgsz=640):
         return pt_path
 
     import shutil
+    calib_path = _resolve_calibration_data() if precision == "int8" else None
     try:
         from ultralytics import YOLO
         abs_pt = os.path.abspath(pt_path)
         stem = os.path.splitext(os.path.basename(abs_pt))[0] + "_openvino_model"
         beside = os.path.join(os.path.dirname(abs_pt), stem)
         if os.path.isdir(beside):
-            if _export_imgsz_matches(beside, imgsz):
-                print(f"[OpenVINO] Using cached model export: {beside} (imgsz={imgsz})")
+            if _export_matches(beside, imgsz, precision):
+                print(
+                    f"[OpenVINO] Using cached model export: {beside} "
+                    f"(imgsz={imgsz}, precision={precision})"
+                )
                 return beside
             print(
                 f"[OpenVINO] Cached export {os.path.basename(beside)} was NOT built for "
-                f"imgsz={imgsz}; rebuilding at the requested size."
+                f"imgsz={imgsz} precision={precision}; rebuilding."
             )
             _park_export(beside)
 
-        print(f"[OpenVINO] Exporting {os.path.basename(abs_pt)} (imgsz={imgsz})...")
-        YOLO(abs_pt).export(format="openvino", imgsz=imgsz)
+        export_kwargs, effective_precision = _openvino_export_kwargs(
+            imgsz, precision, calib_path
+        )
+        if precision == "int8" and effective_precision != "int8":
+            print(
+                "[OpenVINO] INT8 requested but no calibration dataset was found; "
+                "exporting FP32 instead. Set POULTRYSENSE_CALIB_DATA or "
+                "POULTRYSENSE_CALIB_DIR."
+            )
+        print(
+            f"[OpenVINO] Exporting {os.path.basename(abs_pt)} "
+            f"(imgsz={imgsz}, precision={effective_precision})..."
+        )
+        YOLO(abs_pt).export(**export_kwargs)
         if os.path.isdir(beside):
-            _mark_export_imgsz(beside, imgsz)
+            _mark_export(beside, imgsz, effective_precision)
             print(f"[OpenVINO] Export ready: {beside}")
             return beside
         cwd_copy = os.path.join(os.getcwd(), stem)
@@ -2006,11 +2134,18 @@ def resolve_openvino(pt_path, imgsz=640):
             if os.path.isdir(beside):
                 shutil.rmtree(beside)
             shutil.move(cwd_copy, beside)
-            _mark_export_imgsz(beside, imgsz)
+            _mark_export(beside, imgsz, effective_precision)
             print(f"[OpenVINO] Export ready: {beside}")
             return beside
     except Exception as e:
         print(f"[AI ENGINE] OpenVINO notice ({e}); using native PyTorch .pt engine.")
+    finally:
+        # A calibration YAML generated for a folder of images is throwaway.
+        if calib_path and os.path.basename(calib_path).startswith("poultysense_calib_"):
+            try:
+                os.remove(calib_path)
+            except OSError:
+                pass
     return pt_path
 
 
@@ -3322,6 +3457,12 @@ def camera_loop():
 
     backend, exec_device, model_format = get_inference_backend()
     print(f"[AI ENGINE] Backend={backend} device={exec_device} format={model_format}")
+    if INT8_ENABLED and model_format != "openvino":
+        print(
+            f"[WARN] POULTRYSENSE_INT8 is set but the detector backend is "
+            f"'{model_format}'. INT8 quantization is only wired for the OpenVINO "
+            f"path, so the detector stays FP32."
+        )
     if backend == "directml":
         enable_directml_providers()
 
@@ -3340,7 +3481,10 @@ def camera_loop():
                 if model_format == "onnx":
                     resolved_det = resolve_onnx(det_path, imgsz=DETECTOR_IMGSZ)
                 elif model_format == "openvino":
-                    resolved_det = resolve_accelerated_model(det_path, imgsz=DETECTOR_IMGSZ)
+                    print(f"[INFO] Detector precision: {DETECTOR_PRECISION}")
+                    resolved_det = resolve_accelerated_model(
+                        det_path, imgsz=DETECTOR_IMGSZ, precision=DETECTOR_PRECISION
+                    )
                 else:
                     resolved_det = det_path
                 print(f"[INFO] Loading Detection Model from: {resolved_det}")
