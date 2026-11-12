@@ -1716,6 +1716,7 @@ class ThreadedCamera:
                     candidate_paths.append(os.path.join(SCRIPT_DIR, video_src + img_ext))
 
             candidate_paths.extend([
+                os.path.join(SCRIPT_DIR, "moving chicken.mp4"),
                 os.path.join(SCRIPT_DIR, "5mins chicken.mp4"),
                 os.path.join(SCRIPT_DIR, "4mins chicken.mp4"),
                 os.path.join(SCRIPT_DIR, "picture of bantres.jfif"),
@@ -1789,6 +1790,26 @@ class ThreadedCamera:
         for index in self._index_candidates(camera_index):
             if self._try_open(index):
                 return True
+
+        # Fallback to local simulation video if no physical camera could be opened
+        for fallback_vid in ["moving chicken.mp4", "5mins chicken.mp4", "4mins chicken.mp4", "bantres.mp4"]:
+            fb_path = os.path.join(SCRIPT_DIR, fallback_vid)
+            if os.path.exists(fb_path):
+                print(f"[INFO] No camera available. Auto-switching to simulation video: {fallback_vid}")
+                cap = cv2.VideoCapture(fb_path)
+                if cap.isOpened():
+                    self.cap = cap
+                    self.index = fb_path
+                    self.backend_name = "VideoSimulation"
+                    self.is_video_file = True
+                    self.is_image_file = False
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 640)
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 480)
+                    fps = float(cap.get(cv2.CAP_PROP_FPS) or 30.0)
+                    self.fps = fps if fps > 0 else 30.0
+                    print(f"[INFO] Running in SIMULATION MODE with video: {fb_path} ({w}x{h} @ {self.fps:.0f} FPS)")
+                    return True
+
         print("[ERROR] No camera could be opened!")
         return False
 

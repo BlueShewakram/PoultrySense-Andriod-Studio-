@@ -105,8 +105,6 @@ class DetectionOverlayView @JvmOverloads constructor(
             incoming.add(PendingItem(key, RectF(left, top, right, bottom), item))
         }
 
-        val now = SystemClock.uptimeMillis()
-
         incoming.forEach { pending ->
             val key = pending.key
             val newTarget = pending.rect
@@ -258,11 +256,7 @@ class DetectionOverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (activeTracks.isEmpty() || width == 0 || height == 0) return
 
-        val now = SystemClock.uptimeMillis()
-        val dtSec = ((now - lastFrameTimeMs) / 1000f).coerceIn(0f, 0.1f)
-        lastFrameTimeMs = now
-        // First-order ease toward the predicted box; ~0.43 per 60 Hz frame.
-        val smooth = 1f - exp(-dtSec / SMOOTH_TAU_SEC)
+        lastFrameTimeMs = SystemClock.uptimeMillis()
 
         // Center-crop projection transform matching ImageView
         val scale = maxOf(width.toFloat() / sourceWidth, height.toFloat() / sourceHeight)

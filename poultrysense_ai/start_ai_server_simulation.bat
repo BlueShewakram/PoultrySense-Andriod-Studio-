@@ -1,15 +1,15 @@
 @echo off
-TITLE PoultrySense AI Vision Server (5mins Chicken Simulation)
+TITLE PoultrySense AI Vision Server (Moving Chicken Simulation)
 COLOR 0B
 
 echo =================================================================
-echo    POULTRYSENSE AI - CHICKEN VISION SERVER (5MINS CHICKEN FEED)
+echo    POULTRYSENSE AI - CHICKEN VISION SERVER (MOVING CHICKEN FEED)
 echo =================================================================
-echo [INFO] Video source: 5mins chicken.mp4 (5.7 min real footage)
+echo [INFO] Video source: moving chicken.mp4
 echo [INFO] Real-time HUD Detection Feed, conf=0.22, 384px High-FPS
 echo.
 
-set POULTRYSENSE_VIDEO_SOURCE=5mins chicken.mp4
+set POULTRYSENSE_VIDEO_SOURCE=moving chicken.mp4
 set POULTRYSENSE_DETECTOR_CONF=0.18
 set POULTRYSENSE_DETECTION_CONF=0.22
 set POULTRYSENSE_DETECTOR_IMGSZ=384
