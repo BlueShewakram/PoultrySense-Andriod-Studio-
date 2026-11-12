@@ -686,15 +686,14 @@ track_frozen_streaks = defaultdict(int)     # raw_id -> consecutive pixel-identi
 
 # Pixel-churn gate tuning: mean-abs-diff (/255) below CHURN_EPS counts as frozen;
 # CHURN_MAX_FROZEN consecutive frozen observations veto a confirmation hit.
+# Four consecutive frozen observations instead of two: a genuinely still
+# chicken (resting, dust-bathing, broody) must not be mistaken for a frozen poster.
 CHURN_EPS = 2.0
-CHURN_MAX_FROZEN = 2
+CHURN_MAX_FROZEN = 4
 # Hold the last known box for ~0.4 s of missed detections so a brief detector
 # dropout does not blank a chicken's box. Time-based, so changing the detection
-# rate does not silently shorten it.
+# rate does not silently shorten it. The box is frozen, never extrapolated.
 COAST_MAX_FRAMES = max(3, int(round(0.4 * DETECTION_MAX_RATE_HZ)))
-# Coasting stops extrapolating after this many frames and holds position, so a
-# stale velocity cannot fling the box across the frame.
-COAST_EXTRAPOLATE_FRAMES = max(2, int(round(0.2 * DETECTION_MAX_RATE_HZ)))
 # Minimum box side as a fraction of frame width. Resolution-independent: 45 px
 # on 640 px wide, 90 px on 1280 px, instead of a fixed 45 px everywhere.
 MIN_BOX_FRACTION = float(os.environ.get("POULTRYSENSE_MIN_BOX_FRACTION", "0.07"))
@@ -3673,31 +3672,24 @@ def camera_loop():
                     "is_coasting": False
                 })
 
-            # Anti-blink motion coasting: hold confirmed tracks for up to 2 missed frames (~66ms)
+            # Anti-blink coasting: hold the last known box for a brief detector
+            # dropout. We deliberately do NOT extrapolate along the velocity
+            # vector here: the velocity is one or two frames stale, so a bird
+            # that slows or turns would see its box sail past it. Freezing the
+            # box is always less wrong than guessing forward.
             if not tracking_unavailable:
                 for disp_id in list(display_coasting_boxes.keys()):
                         if disp_id not in seen_display_ids:
                             c_info = display_coasting_boxes[disp_id]
                             c_info["missed"] += 1
                             if c_info["missed"] <= COAST_MAX_FRAMES:
-                                vx, vy = track_velocities.get(disp_id, (0.0, 0.0))
-                                # Extrapolate box position along running velocity vector
-                                shift_x = float(vx * dt)
-                                shift_y = float(vy * dt)
-                                old_box = c_info["box"]
-                                new_box = np.array([
-                                    max(0.0, float(old_box[0] + shift_x)),
-                                    max(0.0, float(old_box[1] + shift_y)),
-                                    min(float(w_frame), float(old_box[2] + shift_x)),
-                                    min(float(h_frame), float(old_box[3] + shift_y))
-                                ], dtype=np.float32)
-
-                                c_info["box"] = new_box
-                                c_info["cx"] += shift_x
-                                c_info["cy"] += shift_y
+                                # Drop the cached velocity so a re-acquired track
+                                # does not inherit stale motion into the next
+                                # prediction step.
+                                track_velocities[disp_id] = (0.0, 0.0)
                                 display_items.append({
                                     "display_id": disp_id,
-                                    "box": new_box,
+                                    "box": c_info["box"],
                                     "conf": c_info["conf"],
                                     "raw_id": c_info["raw_id"],
                                     "cx": c_info["cx"],
@@ -4113,10 +4105,20 @@ def camera_loop():
             cv2.putText(frame, badge_text, (x1 + pad_x, label_y - 1), font, font_scale, color, 1, cv2.LINE_AA)
 
 
+            # Centroid velocity in source px/sec. Clients use it to glide the
+            # box between detection frames; coasting boxes report zero so the
+            # client holds position exactly like the server does.
+            if is_coasting:
+                _vx, _vy = 0.0, 0.0
+            else:
+                _vx, _vy = track_velocities.get(display_id, (0.0, 0.0))
+
             detection_list.append({
                 "track_id": display_id,
                 "class": "chicken",
                 "confidence": round(conf, 2),
+                "velocity": [round(float(_vx), 1), round(float(_vy), 1)],
+                "coasting": bool(is_coasting),
                 "behavior": behavior_label,
                 "health": health_label,
                 "health_detail": health_detail,

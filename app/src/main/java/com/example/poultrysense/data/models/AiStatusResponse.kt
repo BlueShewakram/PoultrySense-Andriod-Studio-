@@ -20,6 +20,8 @@ data class DetectionItem(
     @SerializedName("track_id") val trackId: Int? = 0,
     @SerializedName("class") val className: String? = "chicken",
     @SerializedName("confidence") val confidence: Double? = 0.0,
+    @SerializedName("velocity") val velocity: List<Double>? = emptyList(),
+    @SerializedName("coasting") val coasting: Boolean? = false,
     @SerializedName("behavior") val behavior: String? = "",
     @SerializedName("health") val health: String? = "Healthy",
     @SerializedName("health_detail") val healthDetail: String? = "",

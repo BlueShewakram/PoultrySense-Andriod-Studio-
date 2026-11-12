@@ -10,20 +10,37 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.View
 import com.example.poultrysense.data.models.DetectionItem
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.hypot
 
 /**
- * Draws AI bounding boxes on top of the smooth raw camera preview with
- * 60 FPS temporal interpolation (Lerp) and fade transitions.
+ * Draws AI bounding boxes on top of the smooth raw camera preview.
  *
- * Even though the server publishes AI detections at 2-3 Hz, this overlay
- * continuously interpolates box coordinates at display refresh rate,
- * eliminating jitter and teleporting boxes while keeping video at full camera FPS.
+ * The server publishes boxes at the detector rate (~20-30 Hz) while the screen
+ * refreshes at 60 Hz. Snapping the box on every payload makes it stutter; a
+ * plain lerp makes it trail the bird. So each track keeps the last target box
+ * plus the server-reported centroid velocity, and on every display frame the
+ * box is dead-reckoned forward by `velocity * age` (clamped) and eased toward
+ * that predicted position. That hides the detection interval without letting a
+ * stale velocity fling the box past the bird.
  */
 class DetectionOverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
+
+    private companion object {
+        /** Never lead the true box by more than this many source pixels. */
+        const val MAX_EXTRAPOLATION_PX = 24f
+        /** Longest stretch of dead reckoning before we assume the bird stopped. */
+        const val MAX_EXTRAPOLATION_SEC = 0.08f
+        /** Exponential smoothing time constant for the box position. */
+        const val SMOOTH_TAU_SEC = 0.030f
+        /** A target jump larger than this is a real teleport, not motion. */
+        const val SNAP_DISTANCE_PX = 120f
+    }
 
     private class TrackedBox(
         val key: Int,
@@ -33,7 +50,10 @@ class DetectionOverlayView @JvmOverloads constructor(
         var color: Int,
         var currentAlpha: Float = 0f,
         var targetAlpha: Float = 1f,
-        var isAlive: Boolean = true
+        var isAlive: Boolean = true,
+        var velocityX: Float = 0f,
+        var velocityY: Float = 0f,
+        var targetChangedAtMs: Long = 0L
     )
 
     private val activeTracks = mutableMapOf<Int, TrackedBox>()
@@ -67,6 +87,7 @@ class DetectionOverlayView @JvmOverloads constructor(
         sourceWidth = frameWidth.coerceAtLeast(1)
         sourceHeight = frameHeight.coerceAtLeast(1)
 
+        val now = SystemClock.uptimeMillis()
         val seenKeys = mutableSetOf<Int>()
 
         items.orEmpty().forEachIndexed { index, item ->
@@ -103,12 +124,32 @@ class DetectionOverlayView @JvmOverloads constructor(
             }
             val color = colorForDetection(tier, hasGeminiAlert)
             val newTarget = RectF(left, top, right, bottom)
+            val velocityX = item.velocity?.getOrNull(0)?.toFloat() ?: 0f
+            val velocityY = item.velocity?.getOrNull(1)?.toFloat() ?: 0f
 
             val existing = activeTracks[key]
             if (existing != null) {
-                // Instant zero-lag lock to detected position
-                existing.currentRect.set(newTarget)
-                existing.targetRect.set(newTarget)
+                val wasAlive = existing.isAlive
+                val jumped = abs(existing.targetRect.left - newTarget.left) > SNAP_DISTANCE_PX ||
+                    abs(existing.targetRect.top - newTarget.top) > SNAP_DISTANCE_PX ||
+                    abs(existing.targetRect.right - newTarget.right) > SNAP_DISTANCE_PX ||
+                    abs(existing.targetRect.bottom - newTarget.bottom) > SNAP_DISTANCE_PX
+                val targetMoved = jumped ||
+                    abs(existing.targetRect.left - newTarget.left) > 0.5f ||
+                    abs(existing.targetRect.top - newTarget.top) > 0.5f ||
+                    abs(existing.targetRect.right - newTarget.right) > 0.5f ||
+                    abs(existing.targetRect.bottom - newTarget.bottom) > 0.5f
+                if (targetMoved || !wasAlive) {
+                    existing.targetRect.set(newTarget)
+                    existing.targetChangedAtMs = now
+                }
+                // Reappearing after occlusion, or a genuine teleport: snap instead
+                // of sliding the box across the screen.
+                if (!wasAlive || jumped) {
+                    existing.currentRect.set(newTarget)
+                }
+                existing.velocityX = velocityX
+                existing.velocityY = velocityY
                 existing.label = label
                 existing.color = color
                 existing.targetAlpha = 1f
@@ -124,7 +165,10 @@ class DetectionOverlayView @JvmOverloads constructor(
                     color = color,
                     currentAlpha = 1f,
                     targetAlpha = 1f,
-                    isAlive = true
+                    isAlive = true,
+                    velocityX = velocityX,
+                    velocityY = velocityY,
+                    targetChangedAtMs = now
                 )
             }
         }
@@ -137,7 +181,8 @@ class DetectionOverlayView @JvmOverloads constructor(
             }
         }
 
-        lastFrameTimeMs = SystemClock.uptimeMillis()
+        // Do not touch lastFrameTimeMs here: onDraw owns it so the smoothing
+        // timestep stays continuous across payload updates.
         postInvalidateOnAnimation()
     }
 
@@ -165,7 +210,11 @@ class DetectionOverlayView @JvmOverloads constructor(
         super.onDraw(canvas)
         if (activeTracks.isEmpty() || width == 0 || height == 0) return
 
-        lastFrameTimeMs = SystemClock.uptimeMillis()
+        val now = SystemClock.uptimeMillis()
+        val dtSec = ((now - lastFrameTimeMs) / 1000f).coerceIn(0f, 0.1f)
+        lastFrameTimeMs = now
+        // First-order ease toward the predicted box; ~0.43 per 60 Hz frame.
+        val smooth = 1f - exp(-dtSec / SMOOTH_TAU_SEC)
 
         // Center-crop projection transform matching ImageView
         val scale = maxOf(width.toFloat() / sourceWidth, height.toFloat() / sourceHeight)
@@ -180,10 +229,28 @@ class DetectionOverlayView @JvmOverloads constructor(
         while (iterator.hasNext()) {
             val track = iterator.next()
 
-            // Zero-lag tracking: active tracks lock directly to detected box coordinates
+            // Glide the box between detector updates: dead-reckon forward using
+            // the server-reported velocity (clamped) and ease toward that point.
             if (track.isAlive) {
-                track.currentRect.set(track.targetRect)
+                val ageSec = ((now - track.targetChangedAtMs) / 1000f)
+                    .coerceIn(0f, MAX_EXTRAPOLATION_SEC)
+                var leadX = track.velocityX * ageSec
+                var leadY = track.velocityY * ageSec
+                val leadMag = hypot(leadX, leadY)
+                if (leadMag > MAX_EXTRAPOLATION_PX) {
+                    val k = MAX_EXTRAPOLATION_PX / leadMag
+                    leadX *= k
+                    leadY *= k
+                }
+                track.currentRect.set(
+                    lerp(track.currentRect.left, track.targetRect.left + leadX, smooth),
+                    lerp(track.currentRect.top, track.targetRect.top + leadY, smooth),
+                    lerp(track.currentRect.right, track.targetRect.right + leadX, smooth),
+                    lerp(track.currentRect.bottom, track.targetRect.bottom + leadY, smooth)
+                )
                 track.currentAlpha = 1f
+                // Keep redrawing at display rate while any box is live.
+                needsAnotherFrame = true
             } else {
                 // Smooth fast fade-out for occluded/departed tracks
                 track.currentAlpha = lerp(track.currentAlpha, 0f, 0.40f)

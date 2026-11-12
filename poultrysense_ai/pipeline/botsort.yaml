@@ -14,8 +14,14 @@ fuse_score: true
 # BoT-SORT specifics
 gmc_method: none # static USB coop camera: GMC burns CPU for zero gain
 
-# ReID: appearance memory per track
+# ReID is DISABLED on purpose. The only appearance model shipped with the
+# project (yolo26n-reid.onnx) is a generic person-ReID network: its embeddings
+# are meaningless for chickens, so appearance matching adds latency and can
+# hijack a correct IoU/Kalman association. BoT-SORT without ReID uses the
+# same IoU + Kalman association as ByteTrack, which is what commercial fixed-camera
+# trackers (DeepStream, Frigate) run. Set with_reid: true only if you train a
+# chicken-specific ReID model and point `model:` at it.
 proximity_thresh: 0.85
 appearance_thresh: 0.55
-with_reid: true
+with_reid: false
 model: yolo26n-reid.onnx
