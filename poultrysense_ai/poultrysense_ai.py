@@ -157,6 +157,7 @@ DETECTOR_PRECISION = "int8" if INT8_ENABLED else "fp32"
 CALIB_DATA = os.environ.get("POULTRYSENSE_CALIB_DATA", "").strip()
 CALIB_DIR = os.environ.get("POULTRYSENSE_CALIB_DIR", "").strip()
 DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.45"))
+MAX_DISPLAY_BOXES = int(os.environ.get("POULTRYSENSE_MAX_DISPLAY_BOXES", "0"))
 STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
 # hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
@@ -3939,6 +3940,8 @@ def camera_loop():
                             else:
                                 del display_coasting_boxes[disp_id]
 
+            if MAX_DISPLAY_BOXES > 0:
+                display_items = display_items[:MAX_DISPLAY_BOXES]
             cached_display_items = display_items
 
             if DEBUG_TRACK:
