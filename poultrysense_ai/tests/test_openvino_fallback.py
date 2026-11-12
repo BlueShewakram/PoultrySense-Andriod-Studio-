@@ -88,6 +88,49 @@ class CachedExportTests(_TempDirTestCase):
         )
 
 
+class PrecisionSuffixedExportTests(_TempDirTestCase):
+    def test_int8_export_dir_is_adopted_and_marked(self):
+        """Ultralytics names INT8 exports <stem>_int8_openvino_model.
+
+        The app must adopt that directory (moving it to the canonical
+        <stem>_openvino_model path) instead of silently returning the .pt.
+        """
+        d, export, pt = self.make_export("640:fp32")
+        int8_dir = os.path.join(d, "model_int8_openvino_model")
+
+        import ultralytics
+
+        class _FakeYOLO:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def export(self, **kwargs):
+                os.makedirs(int8_dir, exist_ok=True)
+                with open(os.path.join(int8_dir, "model.xml"), "w", encoding="utf-8") as fh:
+                    fh.write("<xml/>")
+                return int8_dir + os.sep
+
+        orig_yolo = ultralytics.YOLO
+        ultralytics.YOLO = _FakeYOLO
+        self.addCleanup(setattr, ultralytics, "YOLO", orig_yolo)
+        orig_nncf = ps._nncf_available
+        ps._nncf_available = lambda: True
+        self.addCleanup(setattr, ps, "_nncf_available", orig_nncf)
+        orig_calib = ps._resolve_calibration_data
+        ps._resolve_calibration_data = lambda *a, **k: "calib.yaml"
+        self.addCleanup(setattr, ps, "_resolve_calibration_data", orig_calib)
+
+        resolved = ps.resolve_openvino(pt, imgsz=480, precision="int8")
+
+        self.assertEqual(os.path.normpath(resolved), os.path.normpath(export))
+        self.assertTrue(ps._export_matches(export, 480, "int8"))
+        self.assertFalse(
+            os.path.isdir(int8_dir), "precision-suffixed dir was not moved into place"
+        )
+        backups = [n for n in os.listdir(d) if "_backup" in n]
+        self.assertEqual(len(backups), 1, "previous FP32 export should be parked")
+
+
 class ExportFailureRecoveryTests(_TempDirTestCase):
     def test_failed_export_restores_parked_export(self):
         """A raised export must leave the previous working export in place."""

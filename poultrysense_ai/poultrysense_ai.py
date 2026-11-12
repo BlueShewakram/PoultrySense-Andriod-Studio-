@@ -2180,19 +2180,32 @@ def resolve_openvino(pt_path, imgsz=640, precision="fp32"):
             f"[OpenVINO] Exporting {os.path.basename(abs_pt)} "
             f"(imgsz={imgsz}, precision={effective_precision})..."
         )
-        YOLO(abs_pt).export(**export_kwargs)
-        if os.path.isdir(beside):
-            _mark_export(beside, imgsz, effective_precision)
-            print(f"[OpenVINO] Export ready: {beside}")
-            return beside
-        cwd_copy = os.path.join(os.getcwd(), stem)
-        if os.path.isdir(cwd_copy):
-            if os.path.isdir(beside):
-                shutil.rmtree(beside)
-            shutil.move(cwd_copy, beside)
-            _mark_export(beside, imgsz, effective_precision)
-            print(f"[OpenVINO] Export ready: {beside}")
-            return beside
+        produced = YOLO(abs_pt).export(**export_kwargs)
+        # Ultralytics names quantized exports <stem>_int8_openvino_model, so the
+        # canonical path is not the only place the result can land. Trust the
+        # returned path, then normalise whatever we find to `beside`.
+        int8_stem = stem.replace("_openvino_model", "_int8_openvino_model")
+        produced_dir = str(produced).rstrip("\\/") if produced else ""
+        candidates = [
+            beside,
+            produced_dir,
+            os.path.join(os.path.dirname(abs_pt), int8_stem),
+            os.path.join(os.getcwd(), stem),
+            os.path.join(os.getcwd(), int8_stem),
+        ]
+        for candidate in candidates:
+            if candidate and os.path.isdir(candidate):
+                if os.path.normpath(candidate) != os.path.normpath(beside):
+                    if os.path.isdir(beside):
+                        shutil.rmtree(beside)
+                    shutil.move(candidate, beside)
+                _mark_export(beside, imgsz, effective_precision)
+                print(f"[OpenVINO] Export ready: {beside}")
+                return beside
+        raise RuntimeError(
+            "export finished but produced no OpenVINO directory for "
+            f"{os.path.basename(abs_pt)}"
+        )
     except Exception as e:
         print(f"[AI ENGINE] OpenVINO notice ({e}); using native PyTorch .pt engine.")
         # Never leave the app worse off than before the attempt.
