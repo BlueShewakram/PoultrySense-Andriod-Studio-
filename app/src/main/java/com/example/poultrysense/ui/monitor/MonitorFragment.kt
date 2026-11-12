@@ -871,7 +871,6 @@ class MonitorFragment : Fragment() {
             startSessionTicker()
         } else {
             binding.tvSessionTitle.text = "Ai Anomaly Checkup"
-            binding.tvSessionSubtitle.text = "Continuous 24/7 AI Anomaly Monitoring"
             binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.text_muted)
             binding.btnToggleSession.text = "Run Anomaly Scan"
             binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.primary)
