@@ -4706,8 +4706,8 @@ def camera_loop():
                 cached = track_classifications.get(display_id)
                 if cached:
                     behavior_label = cached.get("behavior", "stand")
-                    behavior_time = cached.get("behavior_time", cached.get("time", 0))
-                    health_time = cached.get("health_time", 0)
+                    behavior_time = cached.get("behavior_time", cached.get("time", 0.0))
+                    health_time = cached.get("health_time", 0.0)
                     unhealthy_prob = (
                         cached.get("unhealthy_prob", 0.0)
                         if curr_time - health_time <= HEALTH_CLASSIFICATION_MAX_AGE_SEC
@@ -4716,12 +4716,17 @@ def camera_loop():
                 else:
                     behavior_label = "stand"
                     unhealthy_prob = 0.0
-                    behavior_time = 0
-                    health_time = 0
+                    behavior_time = 0.0
+                    health_time = 0.0
 
-            # Queue crop to background worker if expired (>3.5s old) without blocking video stream.
-            # Throttling to 3.5s per chicken prevents CPU starvation on the main detection thread.
-            if not is_coasting and (curr_time - last_time > 3.5) and crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
+            # Determine whether behavior or health classifiers should refresh
+            run_behavior = (curr_time - behavior_time >= CLASSIFIER_INTERVAL_SEC)
+            run_health = (curr_time - health_time >= HEALTH_CLASSIFIER_INTERVAL_SEC)
+            should_classify = run_behavior or run_health
+
+            # Queue crop to background worker if expired without blocking video stream.
+            # Throttling to CLASSIFIER_INTERVAL_SEC prevents CPU starvation on the main detection thread.
+            if not is_coasting and should_classify and crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
                 try:
                     classification_queue.put_nowait((display_id, crop.copy(), run_behavior, run_health))
                 except queue.Full:
