@@ -80,7 +80,9 @@ class ExportKwargsTests(unittest.TestCase):
         self.assertNotIn("int8", kwargs)
 
     def test_int8_with_calibration_requests_quantization(self):
-        kwargs, effective = ps._openvino_export_kwargs(480, "int8", "calib.yaml")
+        kwargs, effective = ps._openvino_export_kwargs(
+            480, "int8", "calib.yaml", nncf_ok=True
+        )
         self.assertEqual(effective, "int8")
         self.assertEqual(kwargs["data"], "calib.yaml")
         # Ultralytics 8.4+ uses quantize=8; older releases only know int8=True.

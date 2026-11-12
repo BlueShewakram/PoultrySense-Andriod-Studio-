@@ -2039,14 +2039,31 @@ def _supports_quantize_kwarg():
         return False
 
 
-def _openvino_export_kwargs(imgsz, precision, calib_data):
+def _nncf_available():
+    """True when NNCF is installed; Ultralytics needs it for OpenVINO INT8.
+
+    Without NNCF the export raises, and a raised export used to leave the app
+    with no OpenVINO model at all. Check first so INT8 can degrade to FP32
+    instead of failing.
+    """
+    try:
+        import importlib.util
+        return importlib.util.find_spec("nncf") is not None
+    except Exception:
+        return False
+
+
+def _openvino_export_kwargs(imgsz, precision, calib_data, nncf_ok=None):
     """Build ``YOLO.export()`` kwargs for the requested precision.
 
     Returns ``(kwargs, effective_precision)``. INT8 degrades to FP32 when no
-    calibration dataset is available rather than shipping an uncalibrated model.
+    calibration dataset is available or NNCF (the quantizer Ultralytics uses)
+    is missing, rather than shipping an uncalibrated model or crashing.
     """
+    if nncf_ok is None:
+        nncf_ok = _nncf_available()
     kwargs = {"format": "openvino", "imgsz": imgsz}
-    if precision != "int8" or not calib_data:
+    if precision != "int8" or not calib_data or not nncf_ok:
         return kwargs, "fp32"
     kwargs["data"] = calib_data
     if _supports_quantize_kwarg():
@@ -2060,6 +2077,7 @@ def _park_export(export_path):
     """Move a stale export aside instead of deleting it, then return nothing.
 
     Old IRs are kept (renamed) so they can be restored, per project policy.
+    Returns the parked path (or None) so a failed rebuild can restore it.
     """
     import shutil
     n = 1
@@ -2069,8 +2087,37 @@ def _park_export(export_path):
     try:
         shutil.move(export_path, target)
         print(f"[OpenVINO] Parked stale export as {os.path.basename(target)} (kept, not deleted)")
+        return target
     except Exception as exc:
         print(f"[OpenVINO] Notice parking stale export: {exc}")
+        return None
+
+
+def _restore_export(parked_path, export_path):
+    """Put a parked export back after a failed rebuild.
+
+    Without this, one bad export (e.g. INT8 without NNCF) leaves the app with
+    no accelerated model and it silently drops to PyTorch.
+    """
+    import shutil
+    if not parked_path or not os.path.isdir(parked_path):
+        return False
+    if os.path.exists(export_path):
+        # A half-written export can be left behind by the failed attempt.
+        failed = f"{export_path}_failed"
+        try:
+            shutil.move(export_path, failed)
+            print(f"[OpenVINO] Kept failed partial export as {os.path.basename(failed)}")
+        except Exception as exc:
+            print(f"[OpenVINO] Notice removing partial export: {exc}")
+            return False
+    try:
+        shutil.move(parked_path, export_path)
+        print(f"[OpenVINO] Restored previous export: {export_path}")
+        return True
+    except Exception as exc:
+        print(f"[OpenVINO] Notice restoring previous export: {exc}")
+        return False
 
 
 def resolve_openvino(pt_path, imgsz=640, precision="fp32"):
@@ -2093,33 +2140,42 @@ def resolve_openvino(pt_path, imgsz=640, precision="fp32"):
 
     import shutil
     calib_path = _resolve_calibration_data() if precision == "int8" else None
+    # Decide the precision BEFORE touching the cache. A missing NNCF or
+    # calibration set must degrade to FP32 quietly, not park a working export.
+    export_kwargs, effective_precision = _openvino_export_kwargs(
+        imgsz, precision, calib_path
+    )
+    if precision == "int8" and effective_precision != "int8":
+        if not _nncf_available():
+            print(
+                "[OpenVINO] INT8 requested but 'nncf' is not installed; using FP32 "
+                'instead. Install it with: venv\\Scripts\\pip install "nncf>=2.14.0,<3.0.0"'
+            )
+        else:
+            print(
+                "[OpenVINO] INT8 requested but no calibration dataset was found; "
+                "using FP32 instead. Set POULTRYSENSE_CALIB_DATA or "
+                "POULTRYSENSE_CALIB_DIR."
+            )
+    parked = None
     try:
         from ultralytics import YOLO
         abs_pt = os.path.abspath(pt_path)
         stem = os.path.splitext(os.path.basename(abs_pt))[0] + "_openvino_model"
         beside = os.path.join(os.path.dirname(abs_pt), stem)
         if os.path.isdir(beside):
-            if _export_matches(beside, imgsz, precision):
+            if _export_matches(beside, imgsz, effective_precision):
                 print(
                     f"[OpenVINO] Using cached model export: {beside} "
-                    f"(imgsz={imgsz}, precision={precision})"
+                    f"(imgsz={imgsz}, precision={effective_precision})"
                 )
                 return beside
             print(
                 f"[OpenVINO] Cached export {os.path.basename(beside)} was NOT built for "
-                f"imgsz={imgsz} precision={precision}; rebuilding."
+                f"imgsz={imgsz} precision={effective_precision}; rebuilding."
             )
-            _park_export(beside)
+            parked = _park_export(beside)
 
-        export_kwargs, effective_precision = _openvino_export_kwargs(
-            imgsz, precision, calib_path
-        )
-        if precision == "int8" and effective_precision != "int8":
-            print(
-                "[OpenVINO] INT8 requested but no calibration dataset was found; "
-                "exporting FP32 instead. Set POULTRYSENSE_CALIB_DATA or "
-                "POULTRYSENSE_CALIB_DIR."
-            )
         print(
             f"[OpenVINO] Exporting {os.path.basename(abs_pt)} "
             f"(imgsz={imgsz}, precision={effective_precision})..."
@@ -2139,6 +2195,9 @@ def resolve_openvino(pt_path, imgsz=640, precision="fp32"):
             return beside
     except Exception as e:
         print(f"[AI ENGINE] OpenVINO notice ({e}); using native PyTorch .pt engine.")
+        # Never leave the app worse off than before the attempt.
+        if parked:
+            _restore_export(parked, beside)
     finally:
         # A calibration YAML generated for a folder of images is throwaway.
         if calib_path and os.path.basename(calib_path).startswith("poultysense_calib_"):
@@ -3450,6 +3509,22 @@ def stream_publisher(cam, frame_buffer, stop_event):
 
 
 # --- Main Inference & Camera Loop ---
+def _track_device(exec_device, model_path):
+    """Return a device string Ultralytics/torch can actually accept.
+
+    ``intel:gpu`` and friends are OpenVINO-only names. ``select_device()``
+    passes them straight through, so handing one to a PyTorch/ONNX model
+    crashes inside ``torch.device()`` with "Invalid device string". When the
+    OpenVINO export is missing and we fall back to ``.pt``, the device has to
+    fall back too.
+    """
+    dev = str(exec_device or "")
+    path = str(model_path or "").rstrip("\\/").lower()
+    if dev.startswith(("intel", "tpu", "vulkan")) and not path.endswith("_openvino_model"):
+        return "cpu"
+    return dev
+
+
 def camera_loop():
     global latest_frame, latest_jpeg_bytes, latest_raw_jpeg_bytes, latest_status, _last_cooldown_log_time
 
@@ -3476,6 +3551,7 @@ def camera_loop():
     if HAS_YOLO:
         # 1. Chicken Detection Model
         det_path = get_model_path(DET_MODELS)
+        resolved_det = det_path
         if det_path:
             try:
                 if model_format == "onnx":
@@ -3488,11 +3564,18 @@ def camera_loop():
                 else:
                     resolved_det = det_path
                 print(f"[INFO] Loading Detection Model from: {resolved_det}")
+                if _track_device(exec_device, resolved_det) != exec_device:
+                    print(
+                        "[WARN] Accelerated OpenVINO model unavailable; the detector "
+                        "will run on CPU via PyTorch (slower). Check the [OpenVINO] "
+                        "lines above for the export error."
+                    )
                 try:
                     det_model = YOLO(resolved_det, task='detect')
                 except Exception as ex_ov:
                     print(f"[WARN] Accelerated load notice ({ex_ov}); falling back to native PyTorch .pt: {det_path}")
                     det_model = YOLO(det_path, task='detect')
+                    resolved_det = det_path
 
                 print("[INFO] YOLO Detection Model loaded successfully!")
 
@@ -3714,7 +3797,7 @@ def camera_loop():
                     iou=0.50,
                     imgsz=DETECTOR_IMGSZ,
                     max_det=20,
-                    device=exec_device,
+                    device=_track_device(exec_device, resolved_det),
                     verbose=False
                 )[0]
 
