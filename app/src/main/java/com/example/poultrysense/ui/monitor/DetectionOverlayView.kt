@@ -33,11 +33,11 @@ class DetectionOverlayView @JvmOverloads constructor(
 
     private companion object {
         /** Never lead the true box by more than this many source pixels. */
-        const val MAX_EXTRAPOLATION_PX = 24f
+        const val MAX_EXTRAPOLATION_PX = 12f
         /** Longest stretch of dead reckoning before we assume the bird stopped. */
         const val MAX_EXTRAPOLATION_SEC = 0.08f
         /** Exponential smoothing time constant for the box position. */
-        const val SMOOTH_TAU_SEC = 0.030f
+        const val SMOOTH_TAU_SEC = 0.015f
         /** A target jump larger than this is a real teleport, not motion. */
         const val SNAP_DISTANCE_PX = 120f
     }
@@ -142,6 +142,9 @@ class DetectionOverlayView @JvmOverloads constructor(
                 if (targetMoved || !wasAlive) {
                     existing.targetRect.set(newTarget)
                     existing.targetChangedAtMs = now
+                    // Snap instantly so the box never trails behind a fresh
+                    // detection — glide only happens between detections.
+                    existing.currentRect.set(newTarget)
                 }
                 // Reappearing after occlusion, or a genuine teleport: snap instead
                 // of sliding the box across the screen.
