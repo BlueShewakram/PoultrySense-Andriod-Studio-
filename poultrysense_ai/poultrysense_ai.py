@@ -1415,11 +1415,18 @@ def classification_worker(beh_model, hlth_model, beh_imgsz=None, hlth_imgsz=None
 # frames that are already several frames old. DSHOW never implemented that
 # property (get() returns -1, set() returns False), so it falls back to a
 # driver-managed queue that we can only flush at open time.
-CAMERA_BACKEND_PREFERENCE = (
-    ("MSMF", "CAP_MSMF"),
-    ("DSHOW", "CAP_DSHOW"),
-    ("ANY", "CAP_ANY"),
-)
+# Camera backends in order of preference. MSMF first (buffer control), DSHOW
+# second (higher resolutions on some cameras). Override with
+# POULTRYSENSE_CAMERA_BACKEND=DSHOW (or MSMF/ANY) to force a backend.
+_forced_backend = os.environ.get("POULTRYSENSE_CAMERA_BACKEND", "").strip().upper()
+if _forced_backend in ("MSMF", "DSHOW", "ANY"):
+    CAMERA_BACKEND_PREFERENCE = ((_forced_backend, "CAP_" + _forced_backend),)
+else:
+    CAMERA_BACKEND_PREFERENCE = (
+        ("MSMF", "CAP_MSMF"),
+        ("DSHOW", "CAP_DSHOW"),
+        ("ANY", "CAP_ANY"),
+    )
 
 
 def fourcc_to_str(value):
