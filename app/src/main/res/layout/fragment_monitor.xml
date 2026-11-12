@@ -1005,11 +1005,11 @@
                                 android:id="@+id/tvSessionSubtitle"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="1dp"
                                 android:fontFamily="sans-serif"
-                                android:text="Continuous 24/7 AI Anomaly Monitoring"
+                                android:text=""
                                 android:textColor="#64748B"
-                                android:textSize="11.5sp" />
+                                android:textSize="12sp" />
+
                         </LinearLayout>
                     </LinearLayout>
 
