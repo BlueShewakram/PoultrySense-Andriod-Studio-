@@ -864,6 +864,7 @@ class MonitorFragment : Fragment() {
         if (isActive) {
             binding.tvSessionTitle.text = "Diagnostic Scan Active"
             binding.tvSessionSubtitle.text = "Analyzing flock behavior & logging telemetry"
+            binding.tvSessionSubtitle.visibility = View.VISIBLE
             binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.accent_green)
             binding.btnToggleSession.text = "Stop Anomaly Scan"
             binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.critical)
@@ -871,6 +872,7 @@ class MonitorFragment : Fragment() {
             startSessionTicker()
         } else {
             binding.tvSessionTitle.text = "Ai Anomaly Checkup"
+            binding.tvSessionSubtitle.visibility = View.GONE
             binding.viewSessionDot.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.text_muted)
             binding.btnToggleSession.text = "Run Anomaly Scan"
             binding.btnToggleSession.backgroundTintList = ContextCompat.getColorStateList(ctx, R.color.primary)
