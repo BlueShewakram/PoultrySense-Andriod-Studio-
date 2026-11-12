@@ -143,7 +143,7 @@ DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "10.0"))
 # disables track_low_thresh.
 # DETECTION_CONF is what may create a new track or a new box on screen.
 DETECTOR_CONF = float(os.environ.get("POULTRYSENSE_DETECTOR_CONF", "0.15"))
-DETECTOR_IMGSZ = int(os.environ.get("POULTRYSENSE_DETECTOR_IMGSZ", "640"))
+DETECTOR_IMGSZ = int(os.environ.get("POULTRYSENSE_DETECTOR_IMGSZ", "320"))
 # Detector precision. INT8 is OPT-IN: it needs a calibration dataset, and an
 # uncalibrated INT8 model can lose far more accuracy than the speed is worth.
 #   POULTRYSENSE_INT8=1          enable INT8 for the detector only
