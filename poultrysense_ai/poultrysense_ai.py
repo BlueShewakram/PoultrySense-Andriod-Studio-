@@ -131,8 +131,9 @@ def load_env_file():
 
 load_env_file()
 
-# Detection rate cap: set to 25 FPS for ultra-smooth real-time HUD box tracking
-DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "25.0"))
+# Detection is the expensive stage. The preview remains smooth on its own
+# thread, while boxes update at a sustainable production cadence.
+DETECTION_MAX_RATE_HZ = float(os.environ.get("DETECTION_MAX_RATE_HZ", "10.0"))
 
 # Two thresholds, deliberately different:
 #
@@ -158,10 +159,11 @@ CALIB_DATA = os.environ.get("POULTRYSENSE_CALIB_DATA", "").strip()
 CALIB_DIR = os.environ.get("POULTRYSENSE_CALIB_DIR", "").strip()
 DETECTION_CONF = float(os.environ.get("POULTRYSENSE_DETECTION_CONF", "0.45"))
 MAX_DISPLAY_BOXES = int(os.environ.get("POULTRYSENSE_MAX_DISPLAY_BOXES", "0"))
-STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "75"))
+STREAM_JPEG_QUALITY = int(os.environ.get("STREAM_JPEG_QUALITY", "70"))
 # Cap preview publishing so a fast/virtual camera cannot burn CPU encoding
-# hundreds of JPEGs per second. 30 FPS matches the camera target and the app.
-STREAM_MAX_FPS = float(os.environ.get("STREAM_MAX_FPS", "30"))
+# hundreds of JPEGs per second. 20 FPS is smooth enough for monitoring while
+# leaving CPU/GPU time for detection.
+STREAM_MAX_FPS = float(os.environ.get("STREAM_MAX_FPS", "20"))
 
 # --- Firebase & Twilio Alert Dispatch Logic ---
 FIREBASE_DATABASE_URL = os.environ.get(
@@ -714,21 +716,31 @@ MIN_BOX_FRACTION = float(os.environ.get("POULTRYSENSE_MIN_BOX_FRACTION", "0.07")
 MIN_BOX_PX_FLOOR = int(os.environ.get("POULTRYSENSE_MIN_BOX_PX", "24"))
 # A classification older than this is ignored instead of being reported forever.
 CLASSIFICATION_MAX_AGE_SEC = float(os.environ.get("POULTRYSENSE_CLASSIFICATION_MAX_AGE_SEC", "5.0"))
+HEALTH_CLASSIFICATION_MAX_AGE_SEC = float(os.environ.get("POULTRYSENSE_HEALTH_CLASSIFICATION_MAX_AGE_SEC", "20.0"))
 # Classifier input sizes in ONE place each. Changing them must also re-export the
 # OpenVINO/ONNX model, which is now keyed by size (see resolve_openvino).
 CLASSIFIER_IMGSZ = int(os.environ.get("POULTRYSENSE_CLASSIFIER_IMGSZ", "224"))
 # Health classifier is trained/exported/inferred at 320 per project spec.
 HEALTH_CLASSIFIER_IMGSZ = int(os.environ.get("POULTRYSENSE_HEALTH_CLASSIFIER_IMGSZ", "320"))
-# Human/face veto cadence. Runs on its own thread so it never delays a box.
-VETO_HZ = float(os.environ.get("POULTRYSENSE_VETO_HZ", "8"))
+# Human/face veto cadence. This is a secondary safety model, so keep it low
+# enough that it does not compete with the chicken detector.
+VETO_HZ = float(os.environ.get("POULTRYSENSE_VETO_HZ", "2"))
 # Appearance (ReID) encoder device. Measured on this machine: CPU 1.8 ms/crop,
 # OpenVINO GPU 3.0 ms/crop + 15s compile + 9s first inference — GPU is far
 # slower for this small model, so CPU is the default. Set
 # POULTRYSENSE_REID_DEVICE=gpu to force OpenVINO GPU (opt-in).
 REID_DEVICE = os.environ.get("POULTRYSENSE_REID_DEVICE", "cpu").strip().lower()
 DEBUG_TRACK = os.environ.get("POULTRYSENSE_DEBUG_TRACK", "").strip().lower() in {"1", "true", "yes"}
-classification_queue = queue.Queue(maxsize=6)
+# Secondary classifiers are intentionally bounded. New evidence replaces stale
+# work instead of allowing a backlog to consume all available compute.
+CLASSIFIER_INTERVAL_SEC = float(os.environ.get("POULTRYSENSE_CLASSIFIER_INTERVAL_SEC", "4.0"))
+HEALTH_CLASSIFIER_INTERVAL_SEC = float(os.environ.get("POULTRYSENSE_HEALTH_CLASSIFIER_INTERVAL_SEC", "10.0"))
+BEHAVIOR_HISTORY_SAMPLE_SEC = float(os.environ.get("POULTRYSENSE_HISTORY_SAMPLE_SEC", "0.5"))
+classification_queue = queue.Queue(maxsize=2)
 classification_lock = threading.Lock()
+behavior_history_sample_times = {}
+behavior_stats_cache = {}
+behavior_baseline_cache = {}
 
 # Limit active tracked subjects for ultra-smooth high FPS (supports 6 to 10 chickens)
 MAX_TRACKED_CHICKENS = int(os.environ.get("POULTRYSENSE_MAX_TRACKED_CHICKENS", "10"))
@@ -1018,7 +1030,7 @@ GEMINI_SYSTEM_INSTRUCTION = (
 
 class GeminiVerdictEngine:
     """
-    Multimodal Gemini 3.6 Flash Health Diagnostic Engine for PoultrySense.
+    Multimodal Gemini 2.5 Flash Health Diagnostic Engine for PoultrySense.
 
     Architecture:
     1. YOLO/ByteTrack or environmental sensors detect abnormal behaviors (prolonged immobility, lethargic posture,
@@ -1026,7 +1038,7 @@ class GeminiVerdictEngine:
     2. Automatically crops and saves temporary snapshot ('flagged_chicken.jpg').
     3. Global timestamp-based cooldown (15 minutes = 900 seconds) ensures no duplicate queries or SMS alerts across the entire flock,
        preventing duplicate notifications when tracker IDs switch upon exit/re-entry.
-    4. Gemini 3.6 Flash evaluates both cropped image and text telemetry with enforced JSON schema.
+    4. Gemini 2.5 Flash evaluates both cropped image and text telemetry with enforced JSON schema.
     5. Saves diagnostic verdict directly to Firebase Realtime Database.
     6. Dispatches Twilio SMS alert if severity is High or Critical, wrapped in try-except.
     """
@@ -1035,6 +1047,8 @@ class GeminiVerdictEngine:
         self.verdicts = {}              # track_id -> full verdict dict from Gemini
         self.active_alerts = {}         # track_id -> alert dict (for /alerts endpoint)
         self.chicken_summaries = {}     # track_id -> 1-sentence reason (backwards compat)
+        # Gemini is an escalation layer, never part of the live frame path.
+        # An environment variable or local configuration can still override this.
         self.model_name = "gemini-3.6-flash"
         self.api_key = self._find_api_key()
         self.client = None
@@ -1097,17 +1111,17 @@ class GeminiVerdictEngine:
         if self.api_key and HAS_GEMINI:
             try:
                 self.client = genai.Client(api_key=self.api_key)
-                print(f"[Gemini 3.6 Flash] ✓ Initialized multimodal diagnostic engine ({self.model_name}).")
+                print(f"[Gemini] ✓ Initialized multimodal diagnostic engine ({self.model_name}).")
             except Exception as e:
-                print(f"[Gemini 3.6 Flash] Client init notice: {e}")
+                print(f"[Gemini] Client init notice: {e}")
         else:
             if not self.api_key:
-                print("[Gemini 3.6 Flash] Notice: GEMINI_API_KEY not found. Operating in local heuristic-only mode.")
+                print("[Gemini] Notice: GEMINI_API_KEY not found. Operating in local heuristic-only mode.")
                 print("                  Add key to poultrysense_ai/gemini_config.json to enable Gemini multimodal verdicts.")
 
     def request_verdict_async(self, track_id, stats, baseline, anomaly_info, crop, curr_time, is_isolated, stationary_sec, snapshot_path=None, abnormal_flags=None, behavior_label="stand"):
         """
-        Triggers asynchronous multimodal analysis with Gemini 3.6 Flash.
+        Triggers asynchronous multimodal analysis with Gemini.
         Each chicken has its own cooldown; a short system-wide gap keeps calls
         from firing at the same instant.
         """
@@ -1119,19 +1133,15 @@ class GeminiVerdictEngine:
         #    not when Gemini answers.
         record_track_alert(track_id, curr_time)
 
-        # Save temporary snapshot of flagged chicken (per-bird filename to avoid
-        # races when multiple birds are queued).
+        # The crop is copied into the background queue. Disk encoding happens in
+        # that worker so a flagged event never pauses live detection.
         if snapshot_path is None:
             snapshot_path = os.path.join(SCRIPT_DIR, f"flagged_chicken_{track_id}.jpg")
-        if crop is not None and crop.size > 0:
-            try:
-                cv2.imwrite(snapshot_path, crop)
-            except Exception as ex_save:
-                print(f"[Vision Engine] Notice saving flagged snapshot: {ex_save}")
+        snapshot_crop = crop.copy() if crop is not None and crop.size > 0 else None
 
         # 3. Enqueue for the sequential background worker (non-blocking).
         self._verdict_queue.put((
-            track_id, stats, baseline, anomaly_info, snapshot_path,
+            track_id, stats, baseline, anomaly_info, snapshot_path, snapshot_crop,
             curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label
         ))
 
@@ -1144,8 +1154,13 @@ class GeminiVerdictEngine:
             except Exception:
                 continue
             try:
-                (track_id, stats, baseline, anomaly_info, snapshot_path,
+                (track_id, stats, baseline, anomaly_info, snapshot_path, snapshot_crop,
                  curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label) = item
+                if snapshot_crop is not None:
+                    try:
+                        cv2.imwrite(snapshot_path, snapshot_crop)
+                    except Exception as ex_save:
+                        print(f"[Vision Engine] Notice saving flagged snapshot: {ex_save}")
                 self._verdict_worker(
                     track_id, stats, baseline, anomaly_info, snapshot_path,
                     curr_time, is_isolated, stationary_sec, abnormal_flags, behavior_label
@@ -1159,7 +1174,7 @@ class GeminiVerdictEngine:
 
     def _verdict_worker(self, track_id, stats, baseline, anomaly_info, snapshot_path, curr_time, is_isolated, stationary_sec, abnormal_flags=None, behavior_label="stand"):
         """
-        Background worker: passes cropped image snapshot and telemetry vectors to Gemini 3.6 Flash,
+        Background worker: passes cropped image snapshot and telemetry vectors to Gemini,
         enforces schema and saves the verdict to Firebase RTDB. Per-bird SMS is not
         sent here; the farmer gets one summary when the scan completes.
         """
@@ -1188,7 +1203,7 @@ class GeminiVerdictEngine:
             verdict_reason = f"Chicken #{track_id} flagged: {flags_summary} (Local score: {score}%)."
             verdict_farmer_action = "Continue monitoring flock; ensure adequate ventilation and clean water."
 
-            # Multimodal Gemini 3.6 Flash Analysis
+            # Multimodal Gemini analysis
             if self.client is not None and os.path.exists(snapshot_path):
                 try:
                     with open(snapshot_path, "rb") as f:
@@ -1267,10 +1282,10 @@ class GeminiVerdictEngine:
                         verdict_reason = parsed_data.get("reason", verdict_reason)
                         verdict_farmer_action = parsed_data.get("farmer_action", verdict_farmer_action)
 
-                        print(f"[Gemini 1.5 Flash] ✓ Verdict for Chicken #{track_id}: {verdict_severity} — {verdict_reason}")
+                        print(f"[Gemini] ✓ Verdict for Chicken #{track_id}: {verdict_severity} — {verdict_reason}")
 
                 except Exception as ex:
-                    print(f"[Gemini 1.5 Flash] API error for Chicken #{track_id}: {ex}")
+                    print(f"[Gemini] API error for Chicken #{track_id}: {ex}")
 
             # Map severity to internal tier and label
             SEV_TO_TIER = {
@@ -1379,21 +1394,21 @@ def classification_worker(beh_model, hlth_model, beh_imgsz=None, hlth_imgsz=None
 
     while True:
         try:
-            disp_id, crop = classification_queue.get(timeout=1.0)
+            disp_id, crop, run_behavior, run_health = classification_queue.get(timeout=1.0)
         except Exception:
             continue
 
         b_label = None
         unhealthy_prob = None
 
-        if beh_model is not None:
+        if run_behavior and beh_model is not None:
             try:
                 b_res = beh_model.predict(source=crop, imgsz=beh_imgsz, verbose=False)[0]
                 b_label = BEHAVIOR_NAMES.get(int(b_res.probs.top1), "stand")
             except Exception as ex_beh:
                 print(f"[CLASSIFY] Behavior inference failed: {ex_beh}")
 
-        if hlth_model is not None:
+        if run_health and hlth_model is not None:
             try:
                 h_res = hlth_model.predict(source=crop, imgsz=hlth_imgsz, verbose=False)[0]
                 # In PoultrySense_HealthClassifier: index 0 is Healthy, index 1 is Unhealthy
@@ -1409,13 +1424,16 @@ def classification_worker(beh_model, hlth_model, beh_imgsz=None, hlth_imgsz=None
 
         with classification_lock:
             previous = track_classifications.get(disp_id, {})
+            updated_at = time.time()
             track_classifications[disp_id] = {
                 "behavior": b_label if b_label is not None else previous.get("behavior", "stand"),
                 "unhealthy_prob": (
                     unhealthy_prob if unhealthy_prob is not None
                     else previous.get("unhealthy_prob", 0.0)
                 ),
-                "time": time.time()
+                "behavior_time": updated_at if b_label is not None else previous.get("behavior_time", 0.0),
+                "health_time": updated_at if unhealthy_prob is not None else previous.get("health_time", 0.0),
+                "time": updated_at
             }
 
 
@@ -2560,6 +2578,9 @@ def purge_display_id_data(disp_id):
     track_motion_windows.pop(disp_id, None)
     track_last_hist_time.pop(disp_id, None)
     track_classifications.pop(disp_id, None)
+    behavior_history_sample_times.pop(disp_id, None)
+    behavior_stats_cache.pop(disp_id, None)
+    behavior_baseline_cache.pop(disp_id, None)
     track_velocities.pop(disp_id, None)
     display_id_last_positions.pop(disp_id, None)
     display_coasting_boxes.pop(disp_id, None)
@@ -2595,6 +2616,9 @@ def reset_all_tracking_state():
     track_last_positions.clear()
     track_motion_windows.clear()
     track_last_hist_time.clear()
+    behavior_history_sample_times.clear()
+    behavior_stats_cache.clear()
+    behavior_baseline_cache.clear()
     inactive_tracks.clear()
     track_velocities.clear()
     display_id_last_positions.clear()
@@ -2949,7 +2973,7 @@ def scan_stop_route():
 
 @flask_app.route('/api/alerts')
 def api_alerts():
-    """Returns active chicken health alerts generated by the vision engine and Gemini 1.5 Flash."""
+    """Returns active chicken health alerts generated by the vision engine and Gemini."""
     with frame_lock:
         return jsonify({
             "status": "success",
@@ -4040,28 +4064,44 @@ def camera_loop():
             # Read non-blocking classification from background worker thread (0ms latency on video!)
             with classification_lock:
                 cached = track_classifications.get(display_id)
-                if cached and (curr_time - cached.get("time", 0)) <= CLASSIFICATION_MAX_AGE_SEC:
+                if cached:
                     behavior_label = cached.get("behavior", "stand")
-                    unhealthy_prob = cached.get("unhealthy_prob", 0.0)
-                    last_time = cached.get("time", 0)
+                    behavior_time = cached.get("behavior_time", cached.get("time", 0))
+                    health_time = cached.get("health_time", 0)
+                    unhealthy_prob = (
+                        cached.get("unhealthy_prob", 0.0)
+                        if curr_time - health_time <= HEALTH_CLASSIFICATION_MAX_AGE_SEC
+                        else 0.0
+                    )
                 else:
                     behavior_label = "stand"
                     unhealthy_prob = 0.0
-                    last_time = 0
+                    behavior_time = 0
+                    health_time = 0
 
-            # Queue crop to background worker if expired (>1.5s old) without blocking video stream.
-            # Drop the oldest item instead of skipping when the queue is full, so a
-            # busy worker never starves a bird of classification forever.
-            if not is_coasting and (curr_time - last_time > 1.5) and crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
+            # Keep behavior classification low-rate. Health classification is only
+            # requested after a sustained local risk cue, never for every bird.
+            likely_health_risk = (
+                stationary_sec >= GEMINI_TRIGGER_STATIONARY_SEC
+                or (is_isolated and stationary_sec >= 15.0)
+            )
+            run_behavior = curr_time - behavior_time >= CLASSIFIER_INTERVAL_SEC
+            run_health = likely_health_risk and (
+                curr_time - health_time >= HEALTH_CLASSIFIER_INTERVAL_SEC
+            )
+
+            # Drop stale work when full. The camera loop always wins over a
+            # secondary classifier task.
+            if not is_coasting and (run_behavior or run_health) and crop.size > 0 and crop.shape[0] >= 24 and crop.shape[1] >= 24:
                 try:
-                    classification_queue.put_nowait((display_id, crop.copy()))
+                    classification_queue.put_nowait((display_id, crop.copy(), run_behavior, run_health))
                 except queue.Full:
                     try:
                         classification_queue.get_nowait()
                     except Exception:
                         pass
                     try:
-                        classification_queue.put_nowait((display_id, crop.copy()))
+                        classification_queue.put_nowait((display_id, crop.copy(), run_behavior, run_health))
                     except Exception:
                         pass
                 except Exception:
@@ -4080,12 +4120,26 @@ def camera_loop():
                 elif behavior_label not in ("rest", "stand"):
                     behavior_label = "stand"
 
-            # 1. Update ChickenBehaviorHistory
+            # 1. Sample behavior history at 2 Hz. Recomputing a 180-second
+            # history on every detection tick is expensive and adds no useful
+            # signal for a farm-health alert.
             cx = int((x1 + x2) / 2)
             cy = int((y1 + y2) / 2)
-            behavior_history.record(display_id, curr_time, behavior_label, motion, is_isolated, (cx, cy))
-            stats = behavior_history.get_stats(display_id, curr_time)
-            baseline = behavior_history.get_baseline(display_id)
+            last_sample_time = behavior_history_sample_times.get(display_id, 0.0)
+            if curr_time - last_sample_time >= BEHAVIOR_HISTORY_SAMPLE_SEC:
+                behavior_history.record(display_id, curr_time, behavior_label, motion, is_isolated, (cx, cy))
+                behavior_history_sample_times[display_id] = curr_time
+                behavior_stats_cache[display_id] = behavior_history.get_stats(display_id, curr_time)
+                behavior_baseline_cache[display_id] = behavior_history.get_baseline(display_id)
+
+            stats = behavior_stats_cache.get(display_id)
+            if stats is None:
+                behavior_history.record(display_id, curr_time, behavior_label, motion, is_isolated, (cx, cy))
+                behavior_history_sample_times[display_id] = curr_time
+                stats = behavior_history.get_stats(display_id, curr_time)
+                behavior_stats_cache[display_id] = stats
+                behavior_baseline_cache[display_id] = behavior_history.get_baseline(display_id)
+            baseline = behavior_baseline_cache.get(display_id, behavior_history.get_baseline(display_id))
 
             # 2. Calibration vs 5-Component Weighted Anomaly Evaluation
             if elapsed_obs < OBSERVATION_WINDOW:
@@ -4156,7 +4210,7 @@ def camera_loop():
                     color = (0, 140, 255)  # Bright Amber-Orange
                     unhealthy_count += 1
 
-                # 5. Multimodal Abnormal Behavior & Sensor Stress Analysis with Gemini 3.6 Flash
+                # 5. Multimodal abnormal-behavior and sensor-stress analysis with Gemini.
                 # Triggered when ANY abnormal behavior or environmental stress is detected:
                 # - Prolonged immobility / recumbency
                 # - Lethargic posture (classifier / posture sub-score)
@@ -4244,7 +4298,7 @@ def camera_loop():
                     except Exception as ex_cd:
                         print(f"[COOLDOWN] Warning during alert cooldown check: {ex_cd}")
 
-                # 6. GEMINI VERDICT OVERRIDE — Gemini 3.6 Flash is the DEFINITIVE AUTHORITY
+                # 6. GEMINI VERDICT OVERRIDE — Gemini is the definitive authority.
                 gemini_verdict = gemini_escalator.get_verdict(display_id)
                 gemini_summary = ""
                 gemini_verified = False
