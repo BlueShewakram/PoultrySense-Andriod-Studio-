@@ -7,12 +7,15 @@ tracker_type: botsort
 track_high_thresh: 0.45
 track_low_thresh: 0.15
 new_track_thresh: 0.45
-track_buffer: 90
+track_buffer: 180
 match_thresh: 0.70
 fuse_score: true
 
 # BoT-SORT specifics
-gmc_method: none # static USB coop camera: GMC burns CPU for zero gain
+# Compensate for hand-held camera pans/shakes before matching boxes. Without
+# this, every chicken jumps on screen together and BoT-SORT can create/swap IDs.
+# sparseOptFlow is lighter than ORB/SIFT and is appropriate for this live feed.
+gmc_method: sparseOptFlow
 
 # ReID is DISABLED on purpose. The only appearance model shipped with the
 # project (yolo26n-reid.onnx) is a generic person-ReID network: its embeddings
