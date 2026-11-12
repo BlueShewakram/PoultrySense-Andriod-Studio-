@@ -4212,11 +4212,11 @@ def camera_loop():
                 )
 
                 if is_abnormal_flagged and crop.size > 0 and crop.shape[0] >= 20 and crop.shape[1] >= 20:
+                    # Snapshot is written inside request_verdict_async (once per
+                    # cooldown window), so we must NOT write it here every frame:
+                    # a per-frame disk write on the main loop is what caused the
+                    # visible lag / FPS collapse during EVALUATING.
                     snapshot_file = os.path.join(SCRIPT_DIR, "flagged_chicken.jpg")
-                    try:
-                        cv2.imwrite(snapshot_file, crop)
-                    except Exception as ex_crop:
-                        print(f"[Vision Engine] Notice saving flagged snapshot: {ex_crop}")
 
                     # Per-chicken cooldown: one bird's alert never blocks the flock.
                     try:
