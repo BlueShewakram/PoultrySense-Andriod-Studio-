@@ -1,0 +1,20 @@
+# PoultrySense tracker config for BoT-SORT (chicken tracking)
+# Tuned for high-accuracy chicken tracking without phantom boxes on Ryzen 5 3500 + RX 580 (DirectML).
+tracker_type: botsort
+# Detector reports down to DETECTOR_CONF (0.12) so the tracker's second
+# association stage can keep a track alive through motion blur, turned-away poses, and occlusions.
+track_high_thresh: 0.30
+track_low_thresh: 0.15
+new_track_thresh: 0.38
+# Keep a track alive longer so a chicken that is occluded when passing another bird keeps its ID
+track_buffer: 120
+match_thresh: 0.65
+fuse_score: true
+
+# BoT-SORT specifics
+gmc_method: sparseOptFlow
+
+with_reid: false
+model: auto
+proximity_thresh: 0.50
+appearance_thresh: 0.25
